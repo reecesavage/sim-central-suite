@@ -21,8 +21,6 @@ This release rolls up:
 
 - Nova **2.7.19+**
 
-That's it. The suite is fully self-contained &mdash; no other Nova extensions, mods, or PHP libraries required. Earlier releases of the standalone extensions needed `jquery`, `timepicker`, and the `parser_events` Nova mod; the suite vendors a small copy of the jQuery-generator DSL and handles the rest internally. If you have those installed for other extensions, leave them; the suite simply doesn't depend on any of them.
-
 ## Installation
 
 1. Copy the entire directory into `application/extensions/nova_ext_sim_central`.
