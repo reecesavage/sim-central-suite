@@ -58,6 +58,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['title']    = 'Sim Central Suite';
 		$data['jsons']    = $this->_loadConfig($configPath);
 		$data['features'] = $this->_featuresWithStatus($data['jsons']);
+		$data['version']  = \nova_ext_sim_central\Config::version();
+		$data['update']   = \nova_ext_sim_central\UpdateCheck::latest();
 
 		$this->_regions['title']  .= 'Sim Central Suite';
 		$this->_regions['content'] = $this->extension['nova_ext_sim_central']

@@ -12,6 +12,27 @@
 
 <?php echo text_output($title, 'h1', 'page-head');?>
 
+<p class="fontSmall gray">
+	Installed: <strong>v<?php echo $version;?></strong>
+	<?php
+		$hasLatest = ! empty($update['latest_version']);
+		$newer     = $hasLatest && \nova_ext_sim_central\UpdateCheck::isNewer($update['latest_version'], $version);
+	?>
+	<?php if ($newer): ?>
+		&nbsp;&middot;&nbsp;
+		<span class="orange bold">Update available:</span>
+		v<?php echo htmlspecialchars($update['latest_version'], ENT_QUOTES);?>
+		<?php echo anchor(
+			$update['release_url'] ?: \nova_ext_sim_central\UpdateCheck::releasesUrl(),
+			'View release',
+			array('target' => '_blank', 'rel' => 'noopener')
+		);?>
+	<?php elseif ($hasLatest): ?>
+		&nbsp;&middot;&nbsp;
+		<span class="green">Up to date</span>
+	<?php endif; ?>
+</p>
+
 <p>One dashboard for every Sim Central feature. Each row below is independent - toggle one without touching the others. The suite will refuse to enable a feature whose standalone equivalent is still listed in <code>application/config/extensions.php</code>.</p>
 
 <br>
@@ -115,3 +136,12 @@
 		<?php endforeach; ?>
 	</tbody>
 </table>
+
+<br>
+
+<p class="fontSmall gray align_center">
+	Created and maintained by <a href="https://discord.gg/simcentral" target="_blank" rel="noopener">Sim Central</a>.<br />
+	&copy; <?php echo date('Y');?> Reece Savage of Sim Central.
+	Distributed under the <a href="https://opensource.org/licenses/MIT" target="_blank" rel="noopener">MIT License</a>.<br />
+	Join us on <a href="https://discord.gg/simcentral" target="_blank" rel="noopener">Discord</a>.
+</p>

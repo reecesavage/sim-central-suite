@@ -21,6 +21,12 @@ require_once dirname(__FILE__).'/libraries/Generator.php';
 // config.json so user-modified feature toggles, labels, and settings
 // survive a code upgrade. See libraries/Config.php.
 require_once dirname(__FILE__).'/libraries/Config.php';
+
+// UpdateCheck displays "new version available" on the dashboard. It's
+// dormant unless the dashboard explicitly calls latest(), so loading
+// it unconditionally is cheap.
+require_once dirname(__FILE__).'/libraries/UpdateCheck.php';
+
 $simCentralFeatures = \nova_ext_sim_central\Config::features();
 
 // ---------- Display Name ----------

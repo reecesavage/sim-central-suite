@@ -121,6 +121,22 @@ class Config
 	}
 
 	/**
+	 * Installed version of the suite, read straight from the bundled
+	 * config.json (NOT from the merged state). A version number that
+	 * lives in user state would go stale on upgrade - this is the only
+	 * source of truth for "what code is on disk right now".
+	 */
+	public static function version()
+	{
+		$path = self::configPath();
+		if ( ! file_exists($path)) {
+			return '0.0.0';
+		}
+		$json = json_decode(file_get_contents($path), true);
+		return (is_array($json) && isset($json['version'])) ? (string) $json['version'] : '0.0.0';
+	}
+
+	/**
 	 * Drop the per-request cache. Used by tests / migration tooling;
 	 * normal request flow shouldn't need it.
 	 */
