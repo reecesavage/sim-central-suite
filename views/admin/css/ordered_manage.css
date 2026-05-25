@@ -1,0 +1,15 @@
+.ui-datepicker-trigger {
+	display: block;
+	float: left;
+	margin: 0 -3px 0 0;
+	padding: 3px 8px 4px 6px;
+
+	background: #efefef;
+	border: 1px solid #d5d5d5;
+	border-right: 0;
+
+	border-radius: 3px 0 0 3px;
+	-moz-border-radius: 3px 0 0 3px;
+	-webkit-border-top-left-radius: 3px;
+	-webkit-border-top-right-radius: 3px;
+}

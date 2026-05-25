@@ -1,0 +1,10 @@
+	/* nova_ext_sim_central:display_name v1 START - managed block, do not edit by hand */
+	public function get_character_name($character = '', $showRank = false, $showShortRank = false, $showBioLink = false)
+	{
+		if (class_exists('nova_ext_sim_central\\Character')) {
+			return \nova_ext_sim_central\Character::name($character, $showRank, $showShortRank, $showBioLink);
+		}
+
+		return parent::get_character_name($character, $showRank, $showShortRank, $showBioLink);
+	}
+	/* nova_ext_sim_central:display_name END */

@@ -1,0 +1,77 @@
+{
+	"features": {
+		"display_name": false,
+		"anti_spam": false,
+		"summary": false,
+		"url_parser": false,
+		"ordered_mission_posts": false
+	},
+	"nova_ext_display_name": {
+		"display_name": {
+			"name": "Display Name - Label",
+			"value": "Display Name"
+		}
+	},
+	"nova_ext_mission_post_summary": {
+		"nova_ext_mission_post_summary": {
+			"name": "Summary - Label",
+			"value": "Summary"
+		},
+		"mission_ext_mission_post_summary_enable": {
+			"name": "Summary Field Enable/Disable - Label",
+			"value": "Summary"
+		}
+	},
+	"nova_ext_ordered_mission_posts": {
+		"mission_ext_ordered_config_setting": {
+			"name": "Timeline Configuration - Label",
+			"value": "Timeline Configuration"
+		},
+		"mission_ext_ordered_post_numbering": {
+			"name": "Post Numbering - Label",
+			"value": "Post Numbering"
+		},
+		"mission_ext_ordered_default_stardate": {
+			"name": "Default Stardate - Label",
+			"value": "Default Stardate"
+		},
+		"mission_ext_ordered_legacy_mode": {
+			"name": "Emulate Chronological Mission Posts - Label",
+			"value": "Day Time Legacy Mode"
+		},
+		"mission_ext_ordered_default_date": {
+			"name": "Default Mission Date - Label",
+			"value": "Default Mission Date"
+		},
+		"label_edit_day": {
+			"name": "Mission Post Day - Label",
+			"value": "Mission Day"
+		},
+		"label_edit_date": {
+			"name": "Mission Post Date - Label",
+			"value": "Date"
+		},
+		"label_edit_startdate": {
+			"name": "Mission Post Stardate - Label",
+			"value": "Stardate"
+		},
+		"label_edit_time": {
+			"name": "Mission Post Time - Label",
+			"value": "Time"
+		},
+		"label_view_concat": {
+			"name": "Concat - Label (Mission Day 2 <b>at</b> 2300)",
+			"value": "at"
+		},
+		"label_view_suffix": {
+			"name": "Suffix - Label (Mission Day 2 at 2300 <b>Hours</b>)",
+			"value": ""
+		}
+	},
+	"setting": {
+		"summary_mode": "1",
+		"rows": "5",
+		"legacy_mode": "0",
+		"post_order_column_fallback": "post_date"
+	}
+}

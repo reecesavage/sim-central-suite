@@ -1,0 +1,10 @@
+	/* nova_ext_sim_central:email v1 START - managed block, do not edit by hand */
+	protected function _email($type, $data)
+	{
+		if (class_exists('nova_ext_sim_central\\Email')) {
+			$data = \nova_ext_sim_central\Email::filter($type, $data);
+		}
+
+		parent::_email($type, $data);
+	}
+	/* nova_ext_sim_central:email END */

@@ -1,0 +1,15 @@
+	/* nova_ext_sim_central:feed v1 START - managed block, do not edit by hand */
+	public function posts()
+	{
+		if (class_exists('nova_ext_sim_central\\Feed')) {
+			$data = \nova_ext_sim_central\Feed::buildPosts();
+			header('Content-Type: application/rss+xml');
+			$this->_regions['items'] = Location::view('_base/rss_items', null, null, $data);
+			Template::assign($this->_regions);
+			Template::render();
+			return;
+		}
+
+		parent::posts();
+	}
+	/* nova_ext_sim_central:feed END */

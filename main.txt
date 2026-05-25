@@ -1,0 +1,32 @@
+	/* nova_ext_sim_central:contact v1 START - managed block, do not edit by hand */
+	public function contact()
+	{
+		if (class_exists('nova_ext_sim_central\\AntiSpam')
+			&& \nova_ext_sim_central\AntiSpam::shouldBlock()) {
+			$this->_regions['flash_message'] = Location::view(
+				'flash', $this->skin, 'main',
+				\nova_ext_sim_central\AntiSpam::flashError()
+			);
+			unset($_POST['submit']);
+		}
+
+		parent::contact();
+	}
+	/* nova_ext_sim_central:contact END */
+
+	/* nova_ext_sim_central:join v1 START - managed block, do not edit by hand */
+	public function join()
+	{
+		if (class_exists('nova_ext_sim_central\\AntiSpam')
+			&& \nova_ext_sim_central\AntiSpam::shouldBlock()) {
+			$this->_regions['flash_message'] = Location::view(
+				'flash', $this->skin, 'main',
+				\nova_ext_sim_central\AntiSpam::flashError()
+			);
+			unset($_POST['submit']);
+			$_POST['agree'] = 'agree';
+		}
+
+		parent::join();
+	}
+	/* nova_ext_sim_central:join END */
