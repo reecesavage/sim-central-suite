@@ -1,11 +1,12 @@
 {
-	"version": "1.1.1",
+	"version": "1.2.0",
 	"features": {
 		"display_name": false,
 		"anti_spam": false,
 		"summary": false,
 		"url_parser": false,
-		"ordered_mission_posts": false
+		"ordered_mission_posts": false,
+		"content_filter": false
 	},
 	"nova_ext_display_name": {
 		"display_name": {
@@ -69,12 +70,29 @@
 			"value": ""
 		}
 	},
+	"nova_ext_content_filter": {
+		"definition_sex": {
+			"name": "Sexual content definition (shown to writers when sim allows Sex 3)",
+			"value": "Sexual content expressed in detail"
+		},
+		"definition_violence": {
+			"name": "Violence definition (shown to writers when sim allows Violence 3)",
+			"value": "Explicit violence not depicted"
+		},
+		"notice": {
+			"name": "Notice shown to guests in place of a gated post body",
+			"value": "This post is rated for mature audiences. Log in to view the full content."
+		}
+	},
 	"setting": {
 		"summary_mode": "1",
 		"rows": "5",
 		"legacy_mode": "0",
 		"post_order_column_fallback": "post_date",
 		"date_format": "YYYY-MM-DD",
-		"time_format": "24h"
+		"time_format": "24h",
+		"content_filter_language": 0,
+		"content_filter_sex": 0,
+		"content_filter_violence": 0
 	}
 }

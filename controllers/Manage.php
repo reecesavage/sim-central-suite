@@ -77,6 +77,37 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$this->_featureConfigPage('display_name');
 	}
 
+	public function content_filter()
+	{
+		Auth::check_access('site/settings');
+
+		if ( ! isset($this->features['content_filter'])) {
+			show_404();
+			return;
+		}
+
+		$configPath = dirname(__FILE__).'/../config.json';
+		$action     = isset($_POST['action']) ? $_POST['action'] : '';
+
+		if ($action === 'save_content_filter_config') {
+			$this->_flash($this->_saveContentFilterConfig($configPath));
+		}
+
+		$f               = $this->features['content_filter'];
+		$data            = array();
+		$data['title']   = 'Sim Central Suite - '.$f['name'];
+		$data['feature'] = $f;
+		$data['jsons']   = $this->_loadConfig($configPath);
+		$data['active']  = \nova_ext_sim_central\ContentFilter::isActive();
+
+		$this->_regions['title']  .= $f['name'];
+		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
+			->view('content_filter', $this->skin, 'admin', $data);
+
+		Template::assign($this->_regions);
+		Template::render();
+	}
+
 	public function ordered_mission_posts()
 	{
 		Auth::check_access('site/settings');
@@ -401,6 +432,18 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				'requires_db' => array(),
 				'shims'       => array(),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/url_parser',
+			),
+			'content_filter' => array(
+				'name'        => 'Content Filter',
+				'summary'     => 'Age-gates mission post bodies on the public site and in the RSS feed for sims that allow explicit sexual content or violence (rating 3). Per-post toggle lets writers mark individual posts as safe.',
+				'standalone'  => 'nova_ext_content_filter',
+				'requires_db' => array(
+					'posts' => array(
+						'nova_ext_content_filter_age_gated' => 'TINYINT NOT NULL DEFAULT 1',
+					),
+				),
+				'shims'       => array(),
+				'config_route' => 'extensions/nova_ext_sim_central/Manage/content_filter',
 			),
 			'ordered_mission_posts' => array(
 				'name'        => 'Ordered Mission Posts',
@@ -858,6 +901,42 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 		$this->_saveConfig($configPath, $json);
 		return array('success', 'Configuration saved.');
+	}
+
+	// ---------- content_filter settings save ----------
+
+	private function _saveContentFilterConfig($configPath)
+	{
+		$json = $this->_loadConfig($configPath);
+
+		// Editable label block (definitions + notice text).
+		if (isset($json['nova_ext_content_filter']) && is_array($json['nova_ext_content_filter'])) {
+			foreach ($json['nova_ext_content_filter'] as $key => $field) {
+				if ( ! is_array($field) || ! isset($field['value'])) {
+					continue;
+				}
+				if (isset($_POST[$key])) {
+					$json['nova_ext_content_filter'][$key]['value'] = $_POST[$key];
+				}
+			}
+		}
+
+		// Three sim-wide ratings. Clamp to 0..3.
+		if ( ! isset($json['setting']) || ! is_array($json['setting'])) {
+			$json['setting'] = array();
+		}
+		foreach (array('language', 'sex', 'violence') as $dim) {
+			$key = 'content_filter_'.$dim;
+			if (isset($_POST[$key])) {
+				$n = (int) $_POST[$key];
+				if ($n < 0) $n = 0;
+				if ($n > 3) $n = 3;
+				$json['setting'][$key] = $n;
+			}
+		}
+
+		$this->_saveConfig($configPath, $json);
+		return array('success', 'Content filter configuration saved.');
 	}
 
 	// ---------- anti_spam helpers ----------

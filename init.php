@@ -36,6 +36,12 @@ require_once dirname(__FILE__).'/libraries/Updater.php';
 // gates get it without duplication.
 require_once dirname(__FILE__).'/libraries/TimelineFormat.php';
 
+// ContentFilter is consumed by Feed.php (when the suite feature is on),
+// the content_filter events (when the feature is on), and the Manage
+// controller (so the admin Configure page can render even before the
+// feature has been enabled). Cheap to load unconditionally.
+require_once dirname(__FILE__).'/libraries/ContentFilter.php';
+
 $simCentralFeatures = \nova_ext_sim_central\Config::features();
 
 // ---------- Display Name ----------
@@ -58,11 +64,20 @@ if ( ! empty($simCentralFeatures['anti_spam'])) {
 }
 
 // ---------- Mission Post Summary ----------
-// Feed.php shim is shared with ordered_mission_posts when both are enabled;
-// the Feed library handles each integration based on what's actually enabled
-// in $config['extensions']['enabled'].
-if ( ! empty($simCentralFeatures['summary']) || ! empty($simCentralFeatures['ordered_mission_posts'])) {
+// Feed.php is shared with ordered_mission_posts and content_filter when
+// any of them is enabled; the Feed library handles each integration based
+// on what's actually enabled.
+if ( ! empty($simCentralFeatures['summary'])
+	|| ! empty($simCentralFeatures['ordered_mission_posts'])
+	|| ! empty($simCentralFeatures['content_filter'])) {
 	require_once dirname(__FILE__).'/libraries/Feed.php';
+}
+
+// ---------- Content Filter ----------
+if ( ! empty($simCentralFeatures['content_filter'])) {
+	require_once dirname(__FILE__).'/events/content_filter_db.php';
+	require_once dirname(__FILE__).'/events/content_filter_location_admin_write_missionpost.php';
+	require_once dirname(__FILE__).'/events/content_filter_location_main_sim_viewpost.php';
 }
 if ( ! empty($simCentralFeatures['summary'])) {
 	require_once dirname(__FILE__).'/events/summary_db.php';

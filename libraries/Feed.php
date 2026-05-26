@@ -191,7 +191,16 @@ class Feed
 
 				$data['entries'][$i]['content'] = nl2br($post_header.$post->post_content);
 
-				if (in_array('nova_ext_content_filter', $extensionsConfig['enabled'])) {
+				// Suite content_filter takes precedence: per-post gate based
+				// on the row's stored age-gated flag. Falls back to the
+				// standalone's sim-wide rating check when the suite feature
+				// isn't on and the standalone extension still is.
+				if ( ! empty($suiteFeatures['content_filter'])) {
+					if (ContentFilter::isPostGated($post) && ! \Auth::is_logged_in()) {
+						$body = ContentFilter::noticeText();
+						$data['entries'][$i]['content'] = nl2br($post_header.$body);
+					}
+				} elseif (in_array('nova_ext_content_filter', $extensionsConfig['enabled'])) {
 					if ($json['default']['language'] == 3 || $json['default']['sex'] == 3 || $json['default']['violence'] == 3) {
 						if ( ! \Auth::is_logged_in()) {
 							$post->post_content = 'This post contains content viewable only to persons 18 years of age or older, and is not available for Public viewing.';

@@ -1,13 +1,13 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.1.1"><img src="https://img.shields.io/badge/Version-v1.1.1-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/Version-v1.2.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
 </p>
 
-One Nova extension that consolidates five sim-management features behind a single admin dashboard. Toggle each feature on or off independently, configure them in one place, and let the suite manage the database columns, controller shims, and menu plumbing so you don't have to install or update each one separately.
+One Nova extension that consolidates six sim-management features behind a single admin dashboard. Toggle each feature on or off independently, configure them in one place, and let the suite manage the database columns, controller shims, and menu plumbing so you don't have to install or update each one separately.
 
 This release rolls up:
 
@@ -16,6 +16,7 @@ This release rolls up:
 - **Mission Post Summary** &mdash; short TL;DR field on long posts, also shown in emails and RSS
 - **URL Parser** &mdash; site-wide shortcode tags that expand to anchors (`[docs|getting-started]`)
 - **Ordered Mission Posts** &mdash; order posts by Day/Time, Date/Time, or Stardate; optional post numbering; configurable date + time display formats; HTML5 native date/time inputs; inline word counts on the missions pages
+- **Content Filter** &mdash; age-gates mission post bodies on the public site and in the RSS feed for sims that allow explicit Sex / Violence (rpgrating.com 3), with a per-post writer-attested opt-out toggle
 
 ## Requirements
 
@@ -80,6 +81,7 @@ The suite replaces these standalone Nova extensions:
 | Mission Post Summary    | `nova_ext_mission_post_summary`       |
 | URL Parser              | `nova_ext_url_parser`                 |
 | Ordered Mission Posts   | `nova_ext_ordered_mission_posts`      |
+| Content Filter          | `nova_ext_content_filter`             |
 
 If a standalone equivalent is still enabled in `application/config/extensions.php`, the dashboard refuses to enable the matching suite feature and offers a **Disable Standalone** button instead. Clicking it:
 
@@ -143,6 +145,21 @@ With **Post Numbering** enabled, each post's title is prefixed with its 1-based 
 **Legacy mode**: if `chronological_mission_posts` columns are still present on the posts table, the per-feature config page exposes a toggle that lets existing missions reuse those Day/Time values when set to Day Time.
 
 The suite also shows inline word counts per mission on both the admin **Manage Missions** page (current / upcoming / completed) and the public `/sim/missions` page. Counts are computed in a single batched query per page load.
+
+### Content Filter (v1.2.0+)
+Age-gates mission post bodies on the public site and in the RSS feed for sims that allow explicit content. Useful for protecting minors who hit the public site and for keeping mature content out of automated RSS-driven Discord broadcasts.
+
+Adds a `nova_ext_content_filter_age_gated` column to `posts` (TINYINT, default `1`). The sim's Language / Sex / Violence ratings are configured on the *Content Filter &rarr; Configure* page following the [rpgrating.com](https://rpgrating.com/create) 0&ndash;3 scale. Only **Sex** and **Violence** at rating **3** trigger gating &mdash; Language is recorded for display completeness but never hides anything.
+
+When the sim allows Sex 3 or Violence 3, the write/edit-post form gains an **Age-gate this post** checkbox (checked by default). The toggle's helper text shows only the definitions for whichever dimensions are actually permitted at 3 on this sim &mdash; a 322 sim doesn't ask writers about sexual content. If a writer unchecks the toggle, the submit button triggers a JS confirm that names exactly what they're attesting to.
+
+For gated posts viewed by guests (logged-out users):
+
+- **`/sim/viewpost/N`** &mdash; body replaced with an editable notice (default: *"This post is rated for mature audiences. Log in to view the full content."*).
+- **`/feed/posts`** RSS feed &mdash; entry header (title, authors, mission, timeline, location) preserved so feed consumers know a post exists, but the body is replaced with the same notice.
+- **`/sim/listposts`** and `/sim/missions/id/N` &mdash; unchanged (they never showed the body anyway).
+
+Logged-in users always see everything regardless of gating. If your sim doesn't go above rating 2 in either Sex or Violence, the feature has nothing to gate and can be left disabled.
 
 ## Reset / uninstall
 
