@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/Version-v1.2.0-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.2.1"><img src="https://img.shields.io/badge/Version-v1.2.1-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -108,6 +108,8 @@ When you upgrade the suite (either via the in-app updater or manually), the new 
 ## Update checking
 
 The dashboard checks GitHub once every 24 hours for a newer published release and shows an *Update available* banner if one exists. The check uses a 2&ndash;3 second timeout and degrades silently on network or rate-limit failure, so it never blocks the admin page. Cached result lives in a separate `settings` row (`setting_key = 'sim_central_update_check'`); you can clear it at any time if you want to force a re-check.
+
+Since v1.2.1 the dashboard also shows a *"Last checked X ago"* indicator next to the version line, with a **Check now** button that bypasses the 24h cache and refreshes the check on demand &mdash; useful when you know a new release just dropped and don't want to wait or run SQL.
 
 ## Feature details
 

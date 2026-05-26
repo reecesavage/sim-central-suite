@@ -40,6 +40,17 @@
 		&nbsp;&middot;&nbsp;
 		<span class="green">Up to date</span>
 	<?php endif; ?>
+
+	&nbsp;&middot;&nbsp;
+	<span title="Cached for 24 hours. Click Check now to refresh.">
+		Last checked <?php echo \nova_ext_sim_central\UpdateCheck::relativeCheckedAt(
+			isset($update['checked_at']) ? $update['checked_at'] : 0
+		);?>
+	</span>
+	<?php echo form_open('extensions/nova_ext_sim_central/Manage/index/', array('style' => 'display:inline'));?>
+		<input type="hidden" name="action" value="recheck_update">
+		<button type="submit" class="button-sec"><span>Check now</span></button>
+	<?php echo form_close();?>
 </p>
 
 <p>One dashboard for every Sim Central feature. Each row below is independent - toggle one without touching the others. The suite will refuse to enable a feature whose standalone equivalent is still listed in <code>application/config/extensions.php</code>.</p>

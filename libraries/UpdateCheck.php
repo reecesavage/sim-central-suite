@@ -85,6 +85,26 @@ class UpdateCheck
 		return self::RELEASES_HTML_URL;
 	}
 
+	/**
+	 * Coarse human-readable age for a unix timestamp - "just now",
+	 * "12 min ago", "3 hr ago", "2 days ago", or "never" for empty
+	 * input. Used by the dashboard's "Last checked" indicator next to
+	 * the manual recheck button.
+	 */
+	public static function relativeCheckedAt($timestamp)
+	{
+		$ts = (int) $timestamp;
+		if ($ts <= 0) {
+			return 'never';
+		}
+		$diff = time() - $ts;
+		if ($diff < 60)    return 'just now';
+		if ($diff < 3600)  return floor($diff / 60).' min ago';
+		if ($diff < 86400) return floor($diff / 3600).' hr ago';
+		$days = floor($diff / 86400);
+		return $days.' day'.($days === 1.0 ? '' : 's').' ago';
+	}
+
 	// ---------- internals ----------
 
 	private static function shape(array $cache)

@@ -55,6 +55,11 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		} elseif ($action === 'do_update') {
 			$targetVersion = isset($_POST['target_version']) ? $_POST['target_version'] : '';
 			return $this->_runUpdate($targetVersion);
+		} elseif ($action === 'recheck_update') {
+			// Force-bypass the 24h cache; result lands in the same row
+			// that the regular dashboard render already reads from.
+			\nova_ext_sim_central\UpdateCheck::latest(true);
+			$this->_flash(array('success', 'Update check refreshed.'));
 		}
 
 		$data = array();
