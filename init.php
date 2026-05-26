@@ -27,6 +27,10 @@ require_once dirname(__FILE__).'/libraries/Config.php';
 // it unconditionally is cheap.
 require_once dirname(__FILE__).'/libraries/UpdateCheck.php';
 
+// Updater handles the dashboard's one-click upgrade. Dormant until
+// invoked from the Manage controller's do_update action.
+require_once dirname(__FILE__).'/libraries/Updater.php';
+
 $simCentralFeatures = \nova_ext_sim_central\Config::features();
 
 // ---------- Display Name ----------

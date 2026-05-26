@@ -27,6 +27,15 @@
 			'View release',
 			array('target' => '_blank', 'rel' => 'noopener')
 		);?>
+		&nbsp;
+		<?php echo form_open('extensions/nova_ext_sim_central/Manage/index/', array('style' => 'display:inline'));?>
+			<input type="hidden" name="action" value="do_update">
+			<input type="hidden" name="target_version" value="<?php echo htmlspecialchars($update['latest_version'], ENT_QUOTES);?>">
+			<button type="submit" class="button-sec"
+				onclick="return confirm('Download and install v<?php echo htmlspecialchars($update['latest_version'], ENT_QUOTES);?>?\n\nYour settings will be preserved. The current version (v<?php echo htmlspecialchars($version, ENT_QUOTES);?>) will be backed up alongside the extension directory.\n\nContinue?');">
+				<span>Update Now</span>
+			</button>
+		<?php echo form_close();?>
 	<?php elseif ($hasLatest): ?>
 		&nbsp;&middot;&nbsp;
 		<span class="green">Up to date</span>
