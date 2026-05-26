@@ -25,10 +25,29 @@ $this->event->listen(['location', 'view', 'output', 'admin', 'write_missionpost'
 		? ((int) $post->nova_ext_content_filter_age_gated === 1)
 		: \nova_ext_sim_central\ContentFilter::defaultAgeGate();
 
-	// Confirm-on-submit message names exactly what the writer is attesting to.
+	// Helper text + submit confirmation phrasing flip based on the
+	// admin's age-gate default. When default is ON, the writer is
+	// "opting out" of the safer default - so we use cautionary wording.
+	// When default is OFF, the writer is "opting in" to gating - so we
+	// use encouraging-action wording. The confirm only fires when the
+	// toggle is off at submit time either way (the case where unsafe
+	// content might slip through unprotected).
+	$defaultGated = \nova_ext_sim_central\ContentFilter::defaultAgeGate();
+	$multi        = (count($definitions) !== 1);
+
+	if ($defaultGated) {
+		$helpIntro = $multi
+			? 'Unselect only if this post does NOT contain any of:'
+			: 'Unselect only if this post does NOT contain:';
+	} else {
+		$helpIntro = $multi
+			? 'Select if this post contains any of:'
+			: 'Select if this post contains:';
+	}
+
 	$attest = implode("\n - ", array_values($definitions));
-	$confirmText = "You've marked this post as safe for public viewing.\n\n"
-		."Please confirm the post does NOT contain:\n - ".$attest."\n\n"
+	$confirmText = "Age-gating is OFF for this post - it will be visible to all visitors.\n\n"
+		."Confirm the post does NOT contain:\n - ".$attest."\n\n"
 		."Continue submitting?";
 
 	$data = array(
@@ -36,9 +55,7 @@ $this->event->listen(['location', 'view', 'output', 'admin', 'write_missionpost'
 		'gated'           => $gated,
 		'definitions'     => $definitions,
 		'confirm_text_js' => $confirmText,
-		'help_intro'      => (count($definitions) === 1)
-			? 'Uncheck only if this post does not contain:'
-			: 'Uncheck only if this post does not contain any of:',
+		'help_intro'      => $helpIntro,
 	);
 
 	// Place the block just above the timeline field, same anchor pattern
