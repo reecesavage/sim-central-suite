@@ -1,13 +1,13 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.2.1"><img src="https://img.shields.io/badge/Version-v1.2.1-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.3.0"><img src="https://img.shields.io/badge/Version-v1.3.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
 </p>
 
-One Nova extension that consolidates six sim-management features behind a single admin dashboard. Toggle each feature on or off independently, configure them in one place, and let the suite manage the database columns, controller shims, and menu plumbing so you don't have to install or update each one separately.
+One Nova extension that consolidates seven sim-management features behind a single admin dashboard. Toggle each feature on or off independently, configure them in one place, and let the suite manage the database columns, controller shims, and menu plumbing so you don't have to install or update each one separately.
 
 This release rolls up:
 
@@ -17,13 +17,15 @@ This release rolls up:
 - **URL Parser** &mdash; site-wide shortcode tags that expand to anchors (`[docs|getting-started]`)
 - **Ordered Mission Posts** &mdash; order posts by Day/Time, Date/Time, or Stardate; optional post numbering; configurable date + time display formats; HTML5 native date/time inputs; inline word counts on the missions pages
 - **Content Filter** &mdash; age-gates mission post bodies on the public site and in the RSS feed for sims that allow explicit Sex / Violence (rpgrating.com 3), with a per-post writer-attested opt-out toggle
+- **Discord Sign-In** &mdash; "Sign in with Discord" / "Sign up with Discord" via the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker); one Discord app serves any number of sims (no per-sim redirect URI registration), with link/unlink controls on User Settings
 
 ## Requirements
 
 - Nova **2.7.19+**
 - PHP **8.2+**
-- PHP **cURL** extension (used by the daily update check and the one-click updater)
+- PHP **cURL** extension (used by the daily update check, the one-click updater, and the Discord Sign-In JWKS fetcher)
 - PHP **ZipArchive** extension (used by the one-click updater; ships with almost every PHP build)
+- PHP **OpenSSL** extension (used by Discord Sign-In to verify broker-issued JWTs; ships with virtually every PHP build)
 
 ## Installation
 
@@ -82,6 +84,7 @@ The suite replaces these standalone Nova extensions:
 | URL Parser              | `nova_ext_url_parser`                 |
 | Ordered Mission Posts   | `nova_ext_ordered_mission_posts`      |
 | Content Filter          | `nova_ext_content_filter`             |
+| Discord Sign-In         | `nova_ext_discord_account_confirmation` |
 
 If a standalone equivalent is still enabled in `application/config/extensions.php`, the dashboard refuses to enable the matching suite feature and offers a **Disable Standalone** button instead. Clicking it:
 
@@ -163,6 +166,26 @@ For gated posts viewed by guests (logged-out users):
 
 Logged-in users always see everything regardless of gating. If your sim doesn't go above rating 2 in either Sex or Violence, the feature has nothing to gate and can be left disabled.
 
+### Discord Sign-In (v1.3.0+)
+Lets users sign in or sign up with their Discord account. The actual Discord OAuth dance happens in the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker) (a small Cloudflare Worker hosted at `auth.simcentral.host`), so this sim never has to be registered as a redirect URI in any Discord app. The broker mints a short-lived RSA-signed JWT and bounces the user back to the sim, which verifies the signature locally with the broker's public key.
+
+Adds five columns to `users`: `nova_ext_discord_auth_id` (UNIQUE-indexed Discord snowflake), `_username`, `_avatar`, `_email_verified`, `_linked_at`. Configure on the *Discord Sign-In &rarr; Configure* page:
+
+- **Broker URL** &mdash; defaults to `https://auth.simcentral.host`; override only if you've self-hosted your own broker.
+- **Broker public key (PEM)** &mdash; paste the broker's RSA public key, or click **Fetch from broker JWKS** to retrieve it automatically from `<broker>/.well-known/jwks.json`.
+- **Account creation mode**:
+  - **Link-only** *(default)* &mdash; Discord matches existing users by Discord ID; new users must sign up the normal way first, then link Discord from User Settings.
+  - **Auto-create** &mdash; a Discord sign-in with no matching user creates a new sim account on the spot using the Discord email + username.
+
+The suite always rejects Discord accounts whose email isn't verified (enforced at both the broker and the suite as defense-in-depth).
+
+UI additions when enabled:
+- **Sign in with Discord** button on the login form.
+- **Sign up with Discord** button on the join form *(auto-create mode only)*.
+- **Link Discord / Unlink Discord** section on the admin **User Settings** page. Unlink is gated behind a "you need a password set" check so users can't lock themselves out.
+
+For complete self-hosting instructions, broker architecture, and the security model, see <https://github.com/reecesavage/sim-central-broker>.
+
 ## Reset / uninstall
 
 - **Reset state to defaults**: `DELETE FROM nova_settings WHERE setting_key = 'sim_central_state';` &mdash; on the next page load, state is re-seeded from `config.json` (all features off).
@@ -170,6 +193,7 @@ Logged-in users always see everything regardless of gating. If your sim doesn't 
 - **Remove a shim**: disable the corresponding feature from the dashboard. The shim block is stripped from the target controller, unless another still-enabled feature shares the same file (e.g. summary and ordered both inject into `Feed.php`'s `posts()`).
 - **Full uninstall**: disable every feature (so all shims are removed), then comment out / remove the `$config['extensions']['enabled'][] = 'nova_ext_sim_central';` line and delete the extension folder. Database columns are intentionally left in place.
 - **Clean up update backups**: the in-app updater leaves the previous version in `application/extensions/nova_ext_sim_central.backup-YYYYMMDD-HHMMSS/`. Delete these by hand once you're satisfied with the upgrade. The suite never auto-prunes them.
+- **Unlink everyone's Discord at once**: `UPDATE nova_users SET nova_ext_discord_auth_id = NULL, nova_ext_discord_auth_username = NULL, nova_ext_discord_auth_avatar = NULL, nova_ext_discord_auth_email_verified = NULL, nova_ext_discord_auth_linked_at = NULL;` &mdash; useful if you ever rotate the broker (changing public keys would invalidate every existing token but already-linked rows would still work for matching).
 
 ## Issues
 

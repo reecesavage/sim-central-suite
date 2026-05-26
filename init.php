@@ -79,6 +79,20 @@ if ( ! empty($simCentralFeatures['content_filter'])) {
 	require_once dirname(__FILE__).'/events/content_filter_location_admin_write_missionpost.php';
 	require_once dirname(__FILE__).'/events/content_filter_location_main_sim_viewpost.php';
 }
+
+// ---------- Discord Sign-In ----------
+// Jwt + DiscordAuth load unconditionally so the Manage controller's
+// configure page works even before the feature has been turned on
+// (admin needs to set the broker URL + paste / fetch the public key
+// BEFORE flipping the toggle, otherwise the feature would activate
+// with no working JWT verification).
+require_once dirname(__FILE__).'/libraries/Jwt.php';
+require_once dirname(__FILE__).'/libraries/DiscordAuth.php';
+if ( ! empty($simCentralFeatures['discord_auth'])) {
+	require_once dirname(__FILE__).'/events/discord_auth_location_login_index.php';
+	require_once dirname(__FILE__).'/events/discord_auth_location_main_join_1.php';
+	require_once dirname(__FILE__).'/events/discord_auth_location_admin_site_usersettings.php';
+}
 if ( ! empty($simCentralFeatures['summary'])) {
 	require_once dirname(__FILE__).'/events/summary_db.php';
 	require_once dirname(__FILE__).'/events/summary_location_admin_add_mission.php';

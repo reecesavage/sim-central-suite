@@ -1,12 +1,13 @@
 {
-	"version": "1.2.1",
+	"version": "1.3.0",
 	"features": {
 		"display_name": false,
 		"anti_spam": false,
 		"summary": false,
 		"url_parser": false,
 		"ordered_mission_posts": false,
-		"content_filter": false
+		"content_filter": false,
+		"discord_auth": false
 	},
 	"nova_ext_display_name": {
 		"display_name": {
@@ -93,6 +94,9 @@
 		"time_format": "24h",
 		"content_filter_language": 0,
 		"content_filter_sex": 0,
-		"content_filter_violence": 0
+		"content_filter_violence": 0,
+		"discord_auth_broker_url": "https://auth.simcentral.host",
+		"discord_auth_public_key": "",
+		"discord_auth_mode": "link-only"
 	}
 }

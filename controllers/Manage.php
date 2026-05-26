@@ -82,6 +82,39 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$this->_featureConfigPage('display_name');
 	}
 
+	public function discord_auth()
+	{
+		Auth::check_access('site/settings');
+
+		if ( ! isset($this->features['discord_auth'])) {
+			show_404();
+			return;
+		}
+
+		$configPath = dirname(__FILE__).'/../config.json';
+		$action     = isset($_POST['action']) ? $_POST['action'] : '';
+
+		if ($action === 'save_discord_auth_config') {
+			$this->_flash($this->_saveDiscordAuthConfig($configPath));
+		} elseif ($action === 'fetch_public_key') {
+			$this->_flash($this->_fetchDiscordAuthPublicKey($configPath));
+		}
+
+		$f               = $this->features['discord_auth'];
+		$data            = array();
+		$data['title']   = 'Sim Central Suite - '.$f['name'];
+		$data['feature'] = $f;
+		$data['jsons']   = $this->_loadConfig($configPath);
+		$data['callback_url'] = \nova_ext_sim_central\DiscordAuth::callbackUrl();
+
+		$this->_regions['title']  .= $f['name'];
+		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
+			->view('discord_auth', $this->skin, 'admin', $data);
+
+		Template::assign($this->_regions);
+		Template::render();
+	}
+
 	public function content_filter()
 	{
 		Auth::check_access('site/settings');
@@ -437,6 +470,27 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				'requires_db' => array(),
 				'shims'       => array(),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/url_parser',
+			),
+			'discord_auth' => array(
+				'name'        => 'Discord Sign-In',
+				'summary'     => 'Lets users sign in to the sim with their Discord account via the Sim Central Broker. Existing users can link their Discord; new users can sign up with Discord (when auto-create is on).',
+				'standalone'  => 'nova_ext_discord_account_confirmation',
+				'requires_db' => array(
+					'users' => array(
+						'nova_ext_discord_auth_id'             => 'VARCHAR(32) NULL',
+						'nova_ext_discord_auth_username'       => 'VARCHAR(100) NULL',
+						'nova_ext_discord_auth_avatar'         => 'VARCHAR(64) NULL',
+						'nova_ext_discord_auth_email_verified' => 'TINYINT NULL',
+						'nova_ext_discord_auth_linked_at'      => 'INT NULL',
+					),
+				),
+				'requires_indexes' => array(
+					'users' => array(
+						'nova_ext_discord_auth_id_unique' => '(`nova_ext_discord_auth_id`)',
+					),
+				),
+				'shims'        => array(),
+				'config_route' => 'extensions/nova_ext_sim_central/Manage/discord_auth',
 			),
 			'content_filter' => array(
 				'name'        => 'Content Filter',
@@ -906,6 +960,138 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 		$this->_saveConfig($configPath, $json);
 		return array('success', 'Configuration saved.');
+	}
+
+	// ---------- discord_auth settings save ----------
+
+	private function _saveDiscordAuthConfig($configPath)
+	{
+		$json = $this->_loadConfig($configPath);
+
+		if ( ! isset($json['setting']) || ! is_array($json['setting'])) {
+			$json['setting'] = array();
+		}
+
+		if (isset($_POST['discord_auth_broker_url'])) {
+			$json['setting']['discord_auth_broker_url'] = trim((string) $_POST['discord_auth_broker_url']);
+		}
+		if (isset($_POST['discord_auth_public_key'])) {
+			$json['setting']['discord_auth_public_key'] = (string) $_POST['discord_auth_public_key'];
+		}
+		if (isset($_POST['discord_auth_mode'])) {
+			$mode = (string) $_POST['discord_auth_mode'];
+			$json['setting']['discord_auth_mode'] = ($mode === 'auto-create') ? 'auto-create' : 'link-only';
+		}
+
+		$this->_saveConfig($configPath, $json);
+		return array('success', 'Discord Sign-In configuration saved.');
+	}
+
+	/**
+	 * Hit the broker's /.well-known/jwks.json endpoint, extract the
+	 * first key, convert from JWK to PEM, and store it in the
+	 * discord_auth_public_key setting. Saves the admin from copy-pasting
+	 * the key when their broker is the canonical one or any standard
+	 * JWKS-publishing OAuth broker.
+	 */
+	private function _fetchDiscordAuthPublicKey($configPath)
+	{
+		$json = $this->_loadConfig($configPath);
+		$brokerUrl = isset($json['setting']['discord_auth_broker_url'])
+			? rtrim((string) $json['setting']['discord_auth_broker_url'], '/')
+			: \nova_ext_sim_central\DiscordAuth::DEFAULT_BROKER_URL;
+
+		if ($brokerUrl === '' || strpos($brokerUrl, 'http') !== 0) {
+			return array('error', 'Set a valid Broker URL first, then fetch.');
+		}
+
+		if ( ! function_exists('curl_init')) {
+			return array('error', 'PHP cURL is not available - paste the key manually instead.');
+		}
+
+		$ch = curl_init($brokerUrl.'/.well-known/jwks.json');
+		curl_setopt_array($ch, array(
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_FOLLOWLOCATION => true,
+			CURLOPT_CONNECTTIMEOUT => 3,
+			CURLOPT_TIMEOUT        => 5,
+		));
+		$body = curl_exec($ch);
+		$code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+		curl_close($ch);
+
+		if ($code !== 200 || ! is_string($body)) {
+			return array('error', 'Broker JWKS endpoint returned HTTP '.$code.'. Check the Broker URL.');
+		}
+		$jwks = json_decode($body, true);
+		if ( ! is_array($jwks) || empty($jwks['keys'][0]['n']) || empty($jwks['keys'][0]['e'])) {
+			return array('error', 'Broker JWKS response was not in the expected shape.');
+		}
+
+		$pem = $this->_jwkRsaToPem($jwks['keys'][0]['n'], $jwks['keys'][0]['e']);
+		if ($pem === null) {
+			return array('error', 'Could not convert the JWKS key to PEM. Paste the key manually instead.');
+		}
+
+		$json['setting']['discord_auth_public_key'] = $pem;
+		$this->_saveConfig($configPath, $json);
+		return array('success', 'Fetched and saved public key from the broker.');
+	}
+
+	/**
+	 * Hand-rolled JWK->PEM for RSA public keys. The "right" way is
+	 * phpseclib, but we have a zero-dependency policy. The JWK is just
+	 * the modulus + exponent base64url-encoded; the PEM is a standard
+	 * SPKI envelope around the same bytes ASN.1-encoded.
+	 *
+	 * Returns NULL if the inputs can't be decoded.
+	 */
+	private function _jwkRsaToPem($nB64u, $eB64u)
+	{
+		$n = $this->_b64uDecode($nB64u);
+		$e = $this->_b64uDecode($eB64u);
+		if ($n === false || $e === false) return null;
+
+		$encInt = function($bytes) {
+			// Prepend 0x00 if the high bit is set (so ASN.1 sees it as
+			// a positive INTEGER, not a negative two's-complement).
+			if (ord($bytes[0]) > 0x7F) {
+				$bytes = "\x00".$bytes;
+			}
+			return "\x02".$this->_asn1Len(strlen($bytes)).$bytes;
+		};
+
+		// SEQUENCE { INTEGER n, INTEGER e }
+		$pkSeq = "\x30".$this->_asn1Len(strlen($encInt($n).$encInt($e))).$encInt($n).$encInt($e);
+		// BIT STRING wrapping the above (with the unused-bits byte = 0)
+		$bitStr = "\x03".$this->_asn1Len(strlen("\x00".$pkSeq))."\x00".$pkSeq;
+		// AlgorithmIdentifier for rsaEncryption (1.2.840.113549.1.1.1)
+		$algoOid = "\x06\x09\x2A\x86\x48\x86\xF7\x0D\x01\x01\x01\x05\x00";
+		$algoSeq = "\x30".$this->_asn1Len(strlen($algoOid)).$algoOid;
+		// Outer SEQUENCE { algo, bitstring }
+		$spki    = "\x30".$this->_asn1Len(strlen($algoSeq.$bitStr)).$algoSeq.$bitStr;
+
+		$pem = "-----BEGIN PUBLIC KEY-----\n"
+			.chunk_split(base64_encode($spki), 64, "\n")
+			."-----END PUBLIC KEY-----\n";
+		return $pem;
+	}
+
+	private function _asn1Len($len)
+	{
+		if ($len < 0x80) return chr($len);
+		$hex = dechex($len);
+		if (strlen($hex) % 2) $hex = '0'.$hex;
+		$bytes = hex2bin($hex);
+		return chr(0x80 | strlen($bytes)).$bytes;
+	}
+
+	private function _b64uDecode($s)
+	{
+		$s = strtr((string) $s, '-_', '+/');
+		$pad = strlen($s) % 4;
+		if ($pad) $s .= str_repeat('=', 4 - $pad);
+		return base64_decode($s, true);
 	}
 
 	// ---------- content_filter settings save ----------
