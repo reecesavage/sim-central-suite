@@ -68,10 +68,17 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 		$claims = $payload;
 
 		// 1. Existing user with this Discord ID? Refresh + log them in.
+		// loginUserById enforces the same status / maintenance checks
+		// Nova's email+password login does (pending users can't sign
+		// in, maintenance blocks non-sysadmins), so the Discord path
+		// can't be used to bypass either gate.
 		$user = \nova_ext_sim_central\DiscordAuth::findUserByDiscordId($claims['sub']);
 		if ($user !== null) {
 			\nova_ext_sim_central\DiscordAuth::refreshUserInfo($user, $claims);
-			\nova_ext_sim_central\DiscordAuth::loginUserById($user->userid);
+			list($loginStatus, $loginCode) = \nova_ext_sim_central\DiscordAuth::loginUserById($user->userid);
+			if ($loginStatus !== 'ok') {
+				return $this->_renderError($this->_friendlyError('login_'.$loginCode));
+			}
 			redirect(site_url(''));
 			return;
 		}
@@ -222,6 +229,17 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 			case 'wrong_issuer':
 			case 'wrong_audience':
 				return 'The sign-in token failed verification. Please try again.';
+
+			// Status / maintenance refusals from loginUserById - reuse
+			// Nova's own lang strings so the messages match exactly
+			// what email+password sign-in shows for the same conditions.
+			case 'login_pending':
+				return sprintf(lang('error_login_7'), lang('global_game_master'), lang('global_game_master'));
+			case 'login_maintenance':
+				return lang('error_login_5');
+			case 'login_not_found':
+				return 'The user account linked to this Discord could not be found.';
+
 			default:
 				if (strpos((string) $code, 'missing_claim:') === 0) {
 					return 'Sign-in token was missing required information. Please try again.';

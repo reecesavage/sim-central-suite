@@ -316,18 +316,42 @@ class DiscordAuth
 	 * same ones Nova stamps on a normal password login; if Nova
 	 * extends the session schema in a future release we'd add fields
 	 * here too.
+	 *
+	 * Returns array($status, $code) where $status is 'ok' on success
+	 * or 'error' on refusal. Refusal cases mirror Nova_auth::login()
+	 * exactly so Discord sign-in and email/password sign-in have the
+	 * same gates:
+	 *   - 'not_found'   user row missing
+	 *   - 'pending'     status is pending (awaiting GM approval)
+	 *   - 'maintenance' site is in maintenance and user is not sysadmin
+	 *
+	 * Codes are mapped to lang strings by the caller (using Nova's
+	 * existing error_login_* keys for parity with the password login).
 	 */
 	public static function loginUserById($userId)
 	{
 		$ci =& get_instance();
 		$ci->load->model('users_model', 'user');
+		$ci->load->model('settings_model', 'settings');
 		$ci->load->model('menu_model');
 		$ci->load->model('characters_model', 'char');
 
 		$ci->db->where('userid', (int) $userId);
 		$person = $ci->db->get('users')->row();
 		if ( ! $person) {
-			return false;
+			return array('error', 'not_found');
+		}
+
+		// Status check - parity with Nova_auth::login() case 7.
+		if (isset($person->status) && $person->status === 'pending') {
+			return array('error', 'pending');
+		}
+
+		// Maintenance check - parity with Nova_auth::login() case 5.
+		// Sysadmins bypass maintenance; everyone else can't sign in.
+		$maintenance = $ci->settings->get_setting('maintenance');
+		if ($maintenance === 'on' && (! isset($person->is_sysadmin) || $person->is_sysadmin !== 'y')) {
+			return array('error', 'maintenance');
 		}
 
 		$characters = $ci->char->get_user_characters($person->userid, '', 'array');
@@ -361,7 +385,7 @@ class DiscordAuth
 
 		$ci->user->update_login_record($person->userid, now());
 		$ci->session->set_userdata($array);
-		return true;
+		return array('ok', null);
 	}
 
 	// ---------- internals ----------
