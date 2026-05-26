@@ -50,13 +50,11 @@ $this->event->listen(['location', 'view', 'output', 'main', 'main_join_1'], func
 			? '<p class="orange bold">Linking a Discord account is required to join this sim.</p>'
 			: '<p class="fontSmall gray">Optional. You can also link Discord later from your account page.</p>';
 
+		$btn = \nova_ext_sim_central\DiscordAuth::brandedButtonHtml('Link Discord', $startUrl);
 		$block = '<div class="nova_ext_discord_auth_join" style="margin-bottom:1em; padding:0.5em 1em; background:#f7f7f7; border:1px solid #e1e1e1;">'
 			.'<p><strong>Link your Discord account</strong></p>'
 			.$reqNotice
-			.'<p>'
-			.anchor($startUrl, '<span>Link Discord</span>',
-				array('class' => 'button-sec', 'style' => 'display:inline-block'))
-			.'</p>'
+			.'<p>'.$btn.'</p>'
 			.'</div>';
 
 		if ($required) {

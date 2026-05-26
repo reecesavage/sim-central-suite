@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.3.1"><img src="https://img.shields.io/badge/Version-v1.3.1-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.4.0"><img src="https://img.shields.io/badge/Version-v1.4.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -17,7 +17,7 @@ This release rolls up:
 - **URL Parser** &mdash; site-wide shortcode tags that expand to anchors (`[docs|getting-started]`)
 - **Ordered Mission Posts** &mdash; order posts by Day/Time, Date/Time, or Stardate; optional post numbering; configurable date + time display formats; HTML5 native date/time inputs; inline word counts on the missions pages
 - **Content Filter** &mdash; age-gates mission post bodies on the public site and in the RSS feed for sims that allow explicit Sex / Violence (rpgrating.com 3), with a per-post writer-attested opt-out toggle
-- **Discord Sign-In** &mdash; "Sign in with Discord" / "Sign up with Discord" via the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker); one Discord app serves any number of sims (no per-sim redirect URI registration), with link/unlink controls on User Settings
+- **Discord Sign-In** &mdash; "Sign in with Discord" / "Sign up with Discord" via the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker); one Discord app serves any number of sims (no per-sim redirect URI registration); link/unlink controls on User Account; optional site-wide enforcement that requires every user to keep Discord linked; Discord-branded buttons everywhere
 
 ## Requirements
 
@@ -174,13 +174,15 @@ Adds five columns to `users`: `nova_ext_discord_auth_id` (UNIQUE-indexed Discord
 - **Broker URL** &mdash; defaults to `https://auth.simcentral.host`; override only if you've self-hosted your own broker.
 - **Broker public key (PEM)** &mdash; paste the broker's RSA public key, or click **Fetch from broker JWKS** to retrieve it automatically from `<broker>/.well-known/jwks.json`.
 - **Require linking Discord to join** *(v1.3.1+)* &mdash; when on, the join form refuses to submit unless the user has clicked "Link Discord" first. Client-side enforcement; admins should still verify at character-approval time if strictness matters.
+- **Require all users to keep Discord linked** *(v1.4.0+)* &mdash; site-wide enforcement. Logged-in users without a Discord ID are redirected to a dedicated forced-link page on every request until they link. Unlinking is disabled while this is on; users can still <em>change</em> to a different Discord account. The email + password login form itself is NOT blocked &mdash; users can still sign in with their sim password (so they aren't locked out if Discord OAuth is down), they just can't navigate anywhere except the forced-link page until linking is finished.
 
 The suite always rejects Discord accounts whose email isn't verified (enforced at both the broker and the suite as defense-in-depth).
 
-UI additions when enabled:
+UI additions when enabled (all using Discord-branded buttons in Discord Blurple `#5865F2` with the official Clyde mark):
 - **Sign in with Discord** button on the login form &mdash; logs the user in if their Discord ID is already linked to a sim account.
 - **Link Discord** card at the top of the join form &mdash; pre-fills email from Discord and stamps the Discord identity onto the new user row when the join form is submitted. The character still queues for GM approval like any other join.
-- **Link Discord / Unlink Discord** section on the **User &rarr; My Account** page. Unlink is gated behind a "you need a password set" check so users can't lock themselves out.
+- **Link Discord / Unlink Discord / Change Discord account** section on the **User &rarr; My Account** page. The action shown depends on whether linking is required globally: optional mode shows Unlink, required mode shows Change instead. Unlink is gated behind a "you need a password set" check so users can't lock themselves out.
+- **Forced-link page** at `/extensions/nova_ext_sim_central/DiscordAuth/required` &mdash; the one-page landing the enforcement hook bounces unlinked users to when global require is on.
 
 The suite does not auto-create user accounts from Discord sign-ins &mdash; every new user goes through Nova's normal join flow (including character approval). Discord auth is identity attachment, not a join bypass.
 

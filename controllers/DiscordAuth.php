@@ -117,12 +117,64 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 		);
 	}
 
+	// ---------- /required ----------
+
+	/**
+	 * Forced-link landing page. The init.php enforcement hook redirects
+	 * here whenever a logged-in user has no Discord ID and the suite is
+	 * in "require linked Discord" mode. The page only shows a single
+	 * call to action - link Discord (or sign out).
+	 */
+	public function required()
+	{
+		if ( ! \Auth::is_logged_in()) {
+			redirect(site_url('login'));
+			return;
+		}
+
+		$ci =& get_instance();
+		$ci->load->model('users_model', 'user');
+		$row = $ci->user->get_user((int) $ci->session->userdata('userid'));
+
+		// If they're already linked, bounce them away - no reason to
+		// land them here. Defensive: shouldn't be reachable since the
+		// enforcement hook wouldn't have sent them here, but a stale
+		// open tab could.
+		if ($row && ! empty($row->nova_ext_discord_auth_id)) {
+			redirect(site_url(''));
+			return;
+		}
+
+		$data = array(
+			'title'       => 'Link your Discord to continue',
+			'button_html' => \nova_ext_sim_central\DiscordAuth::brandedButtonHtml(
+				'Link Discord',
+				site_url('extensions/nova_ext_sim_central/DiscordAuth/start?intent=link')
+			),
+			'logout_url'  => site_url('login/logout'),
+		);
+		$this->_regions['title']   .= 'Link your Discord';
+		$this->_regions['content']  = $this->extension['nova_ext_sim_central']
+			->view('discord_auth_required', $this->skin, 'main', $data);
+		Template::assign($this->_regions);
+		Template::render();
+	}
+
 	// ---------- /unlink ----------
 
 	public function unlink()
 	{
 		if ( ! \Auth::is_logged_in()) {
 			redirect(site_url('login'));
+			return;
+		}
+		// Required-link mode disables unlinking entirely. Users in this
+		// mode can still RE-link (which overwrites the existing Discord
+		// ID with a new one); they just can't fully detach.
+		if (\nova_ext_sim_central\DiscordAuth::requiresLink()) {
+			$this->session->set_flashdata('discord_auth_message',
+				'Unlinking Discord is disabled - this sim requires every user to have a Discord account linked. Use "Change Discord account" to switch to a different one.');
+			redirect(site_url('user/account'));
 			return;
 		}
 		$userId = $this->session->userdata('userid');

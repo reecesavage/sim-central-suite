@@ -3,6 +3,7 @@
 	$brokerUrl      = isset($settings['discord_auth_broker_url']) ? $settings['discord_auth_broker_url'] : 'https://auth.simcentral.host';
 	$publicKey      = isset($settings['discord_auth_public_key']) ? $settings['discord_auth_public_key'] : '';
 	$requiredOnJoin = ! empty($settings['discord_auth_required_on_join']);
+	$requiredGlobal = ! empty($settings['discord_auth_required']);
 	$keyConfigured  = trim($publicKey) !== '';
 ?>
 
@@ -75,16 +76,44 @@
 		<input type="hidden" name="discord_auth_required_on_join" value="0">
 		<label>
 			<input type="checkbox" name="discord_auth_required_on_join" value="1"
-				<?php echo $requiredOnJoin ? 'checked' : '';?>>
+				<?php echo ($requiredOnJoin || $requiredGlobal) ? 'checked' : '';?>
+				<?php echo $requiredGlobal ? 'disabled' : '';?>>
 			<strong>Require linking Discord to join</strong>
 		</label>
 	</p>
 	<p class="fontSmall gray italic">
 		When on, the join form refuses to submit unless the user has linked Discord first.
 		Enforced client-side; admins should still verify at character-approval time if strictness matters.
+		<?php if ($requiredGlobal): ?>
+			<br><strong>Implicitly enforced</strong> because <em>Require all users to keep Discord linked</em> is on below.
+		<?php endif; ?>
+	</p>
+
+	<br>
+	<?php echo text_output('Site-wide enforcement', 'h3', 'page-subhead');?>
+
+	<p>
+		<input type="hidden" name="discord_auth_required" value="0">
+		<label>
+			<input type="checkbox" name="discord_auth_required" value="1"
+				<?php echo $requiredGlobal ? 'checked' : '';?>>
+			<strong>Require all users to keep Discord linked</strong>
+		</label>
 	</p>
 	<p class="fontSmall gray italic">
-		The user must have a verified email on Discord either way &mdash; the broker refuses to issue a token otherwise.
+		When on, every logged-in user without a Discord ID is redirected to a forced-link page
+		until they link. Existing users will be prompted on their next page load.
+		<strong>Unlinking is disabled</strong> while this is on &mdash; users can still <em>change</em>
+		to a different Discord account from their User Account page.
+	</p>
+	<p class="fontSmall gray italic">
+		The email + password login form itself is NOT blocked &mdash; users can still sign in with
+		their sim password (useful if Discord OAuth is temporarily unavailable). They just can't
+		navigate anywhere except the forced-link page until they finish linking.
+	</p>
+	<p class="fontSmall gray italic">
+		The user must have a verified email on Discord either way &mdash; the broker refuses to issue
+		a token otherwise.
 	</p>
 
 	<br>

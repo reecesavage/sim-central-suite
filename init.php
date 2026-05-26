@@ -90,9 +90,24 @@ require_once dirname(__FILE__).'/libraries/Jwt.php';
 require_once dirname(__FILE__).'/libraries/DiscordAuth.php';
 if ( ! empty($simCentralFeatures['discord_auth'])) {
 	require_once dirname(__FILE__).'/events/discord_auth_db.php';
+	require_once dirname(__FILE__).'/events/discord_auth_template_render.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_login_index.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_main_join_1.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_admin_user_account.php';
+
+	// Required-link enforcement hook. Runs here (post_controller_constructor
+	// time, before the action method) so a redirect actually short-circuits
+	// the rest of the request. We deliberately don't run for non-feature-
+	// enabled installs because shouldEnforceLink() would just return false
+	// anyway and we'd be paying for a Config::load + session check on
+	// every request.
+	$ci =& get_instance();
+	if ($ci->session && \nova_ext_sim_central\DiscordAuth::shouldEnforceLink($ci->uri->uri_string())) {
+		$ci->session->set_flashdata('discord_auth_message',
+			'This sim requires a linked Discord account before you can continue.');
+		header('Location: '.\nova_ext_sim_central\DiscordAuth::requiredPageUrl(), true, 302);
+		exit;
+	}
 }
 if ( ! empty($simCentralFeatures['summary'])) {
 	require_once dirname(__FILE__).'/events/summary_db.php';

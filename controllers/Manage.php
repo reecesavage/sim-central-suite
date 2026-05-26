@@ -987,6 +987,13 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				((int) $_POST['discord_auth_required_on_join'] === 1) ? 1 : 0;
 		}
 
+		// Global require-link (v1.4.0+). When on, every logged-in user
+		// without a Discord ID gets bounced to the forced-link page.
+		if (isset($_POST['discord_auth_required'])) {
+			$json['setting']['discord_auth_required'] =
+				((int) $_POST['discord_auth_required'] === 1) ? 1 : 0;
+		}
+
 		// Migrate any leftover discord_auth_mode key from v1.3.0 - no
 		// behavioural meaning in v1.3.1+.
 		if (isset($json['setting']['discord_auth_mode'])) {
