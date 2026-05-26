@@ -1,22 +1,14 @@
 $(document).ready(function() {
 
-	var $date = $('.datepick').datepicker({
-		numberOfMonths: 2,
-		showButtonPanel: true
-	});
-	$date.closest('body').find('#ui-datepicker-div').wrap('<span class="UITheme"></span>');
-	$date.datepicker('option', {dateFormat: 'yy-mm-dd'});
+	// Date / time inputs are native HTML5 (type="date" / type="time") as of
+	// v1.0.1. The browser handles the picker UI, value formatting, and
+	// keyboard nav, so there's no jQuery datepicker init or data-value
+	// round-trip required here anymore.
 
 	var mission = $('[name="mission"]').val();
 	if (typeof mission === "undefined") {
 		mission = $('[name="post_mission"]').val();
 	}
-
-	var defaultDate = $('input[name=mission_ext_ordered_default_mission_date]').attr('data-value');
-	$('input[name=mission_ext_ordered_default_mission_date]').val(defaultDate);
-
-	var editDate = $('input[name=nova_ext_ordered_post_date]').attr('data-value');
-	$('input[name=nova_ext_ordered_post_date]').val(editDate);
 
 	var config = $('[name="mission_ext_ordered_config_setting"]').val();
 

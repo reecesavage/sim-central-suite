@@ -74,10 +74,10 @@ $this->event->listen(['location', 'view', 'data', 'admin', 'manage_posts_edit'],
 
 	$event['data']['label']['nova_ext_ordered_post_date']  = $editDateLabel;
 	$event['data']['inputs']['nova_ext_ordered_post_date'] = array(
-		'name'       => 'nova_ext_ordered_post_date',
-		'id'         => 'nova_ext_ordered_post_date',
-		'class'      => 'medium datepick',
-		'data-value' => $post ? $post->nova_ext_ordered_post_date : '',
+		'name'  => 'nova_ext_ordered_post_date',
+		'id'    => 'nova_ext_ordered_post_date',
+		'type'  => 'date',
+		'value' => $post ? $post->nova_ext_ordered_post_date : '',
 	);
 
 	$event['data']['label']['nova_ext_ordered_post_stardate']  = $editStartDateLabel;

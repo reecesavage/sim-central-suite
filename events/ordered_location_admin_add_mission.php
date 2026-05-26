@@ -60,10 +60,10 @@ $this->event->listen(['location', 'view', 'data', 'admin', 'manage_missions_acti
 
 			$event['data']['label']['mission_ext_ordered_default_mission_date']  = $defaultMissionDateLabel;
 			$event['data']['inputs']['mission_ext_ordered_default_mission_date'] = array(
-				'name'       => 'mission_ext_ordered_default_mission_date',
-				'id'         => 'mission_ext_ordered_default_mission_date',
-				'class'      => 'medium datepick',
-				'data-value' => $post ? $post->mission_ext_ordered_default_mission_date : '',
+				'name'  => 'mission_ext_ordered_default_mission_date',
+				'id'    => 'mission_ext_ordered_default_mission_date',
+				'type'  => 'date',
+				'value' => $post ? $post->mission_ext_ordered_default_mission_date : '',
 			);
 
 			$event['data']['label']['mission_ext_ordered_default_stardate']  = $defaultStardateLabel;
@@ -96,6 +96,7 @@ $this->event->listen(['location', 'view', 'output', 'admin', 'manage_missions_ac
 			break;
 		default:
 			$this->config->load('extensions');
+			$event['output'] .= $this->extension['nova_ext_sim_central']->inline_css('ordered_manage', 'admin', $event['data']);
 			$event['output'] .= \nova_ext_sim_central\Generator::select('[name="mission_status"]')->closest('p')
 				->after(
 					$this->extension['nova_ext_sim_central']
