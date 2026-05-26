@@ -1,5 +1,5 @@
 {
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"features": {
 		"display_name": false,
 		"anti_spam": false,
@@ -73,6 +73,8 @@
 		"summary_mode": "1",
 		"rows": "5",
 		"legacy_mode": "0",
-		"post_order_column_fallback": "post_date"
+		"post_order_column_fallback": "post_date",
+		"date_format": "YYYY-MM-DD",
+		"time_format": "24h"
 	}
 }

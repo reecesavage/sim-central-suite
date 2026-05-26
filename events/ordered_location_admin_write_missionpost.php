@@ -75,7 +75,10 @@ $this->event->listen(['location', 'view', 'data', 'admin', 'write_missionpost'],
 						$flag = true;
 					}
 					if ($flag) {
-						$event['data']['inputs']['timeline']['value'] = $viewPrefixLabel.' '.$post->$column.' '.$viewConcatLabel.' '.$post->$columnTime.' '.$viewSuffixLabel;
+						$event['data']['inputs']['timeline']['value'] = \nova_ext_sim_central\TimelineFormat::buildLine(
+							$viewPrefixLabel, $column, $post->$column,
+							$post->$columnTime, $viewConcatLabel, $viewSuffixLabel
+						);
 					}
 				}
 			}

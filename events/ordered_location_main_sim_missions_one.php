@@ -83,7 +83,10 @@ $this->event->listen(['location', 'view', 'data', 'main', 'sim_missions_one'], f
 			if ( ! empty($data['mission_day'])) {
 				$column     = $data['mission_day'];
 				$timeColumn = $data['mission_time'];
-				$timeline   = $viewPrefixLabel.' '.$post->$column.' '.$viewConcatLabel.' '.$post->$timeColumn.' '.$viewSuffixLabel;
+				$timeline   = \nova_ext_sim_central\TimelineFormat::buildLine(
+					$viewPrefixLabel, $column, $post->$column,
+					$post->$timeColumn, $viewConcatLabel, $viewSuffixLabel
+				);
 			} else {
 				$timeline = $post->post_timeline;
 			}

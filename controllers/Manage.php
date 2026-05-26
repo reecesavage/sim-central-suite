@@ -841,6 +841,21 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			$json['setting']['post_order_column_fallback'] = $_POST['post_order_column_fallback'];
 		}
 
+		// Validate date/time format choices against the known keys so a
+		// rogue POST can't park a junk value in the settings row.
+		if (isset($_POST['date_format'])) {
+			$dateChoices = \nova_ext_sim_central\TimelineFormat::dateFormatChoices();
+			if (isset($dateChoices[$_POST['date_format']])) {
+				$json['setting']['date_format'] = $_POST['date_format'];
+			}
+		}
+		if (isset($_POST['time_format'])) {
+			$timeChoices = \nova_ext_sim_central\TimelineFormat::timeFormatChoices();
+			if (isset($timeChoices[$_POST['time_format']])) {
+				$json['setting']['time_format'] = $_POST['time_format'];
+			}
+		}
+
 		$this->_saveConfig($configPath, $json);
 		return array('success', 'Configuration saved.');
 	}

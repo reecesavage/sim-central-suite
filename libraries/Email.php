@@ -106,14 +106,11 @@ class Email
 		$dayValue  = $ci->input->post($dayCol);
 		$timeValue = $ci->input->post($timeCol);
 
-		// HTML5 <input type="time"> submits HH:MM; the website renders from
-		// the DB column which is stored as HHmm. Normalise to HHmm here so
-		// the email matches what the website shows.
-		if ($timeValue !== null && $timeValue !== '') {
-			$timeValue = str_pad(preg_replace('/[^0-9]/', '', (string) $timeValue), 4, '0', STR_PAD_LEFT);
-		}
-
-		return $prefix.' '.$dayValue.' '.$labels['concat'].' '.$timeValue.' '.$labels['suffix'];
+		// HTML5 <input type="time"> submits HH:MM; storage is HHmm. The
+		// TimelineFormat helper normalises whichever shape arrives here.
+		return TimelineFormat::buildLine(
+			$prefix, $dayCol, $dayValue, $timeValue, $labels['concat'], $labels['suffix']
+		);
 	}
 
 	private static function labels()

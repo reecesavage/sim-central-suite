@@ -31,6 +31,11 @@ require_once dirname(__FILE__).'/libraries/UpdateCheck.php';
 // invoked from the Manage controller's do_update action.
 require_once dirname(__FILE__).'/libraries/Updater.php';
 
+// TimelineFormat is consumed by Feed.php (loaded for summary OR ordered)
+// and by ordered_mission_posts events; load unconditionally so both
+// gates get it without duplication.
+require_once dirname(__FILE__).'/libraries/TimelineFormat.php';
+
 $simCentralFeatures = \nova_ext_sim_central\Config::features();
 
 // ---------- Display Name ----------

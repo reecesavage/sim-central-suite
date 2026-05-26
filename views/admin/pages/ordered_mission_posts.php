@@ -23,6 +23,33 @@
 	<?php endif; ?>
 
 	<br>
+	<?php echo text_output('Date and time display', 'h3', 'page-subhead');?>
+
+	<p>
+		How dates and times appear on the public mission view, post view,
+		RSS feed, post-notification emails, and the timeline column on the
+		mission posts list. Storage in the database is unchanged.
+	</p>
+
+	<p>
+		<kbd>Date format</kbd>
+		<?php echo form_dropdown(
+			'date_format',
+			\nova_ext_sim_central\TimelineFormat::dateFormatChoices(),
+			isset($jsons['setting']['date_format']) ? $jsons['setting']['date_format'] : 'YYYY-MM-DD'
+		);?>
+	</p>
+
+	<p>
+		<kbd>Time format</kbd>
+		<?php echo form_dropdown(
+			'time_format',
+			\nova_ext_sim_central\TimelineFormat::timeFormatChoices(),
+			isset($jsons['setting']['time_format']) ? $jsons['setting']['time_format'] : '24h'
+		);?>
+	</p>
+
+	<br>
 	<?php echo text_output('Fallback ordering', 'h3', 'page-subhead');?>
 
 	<p>

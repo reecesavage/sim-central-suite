@@ -175,7 +175,10 @@ class Feed
 					if ( ! empty($data['mission_day'])) {
 						$column     = $data['mission_day'];
 						$timeColumn = $data['mission_time'];
-						$timeline   = $viewPrefixLabel.' '.$post->$column.' '.$viewConcatLabel.' '.$post->$timeColumn.' '.$viewSuffixLabel;
+						$timeline   = TimelineFormat::buildLine(
+							$viewPrefixLabel, $column, $post->$column,
+							$post->$timeColumn, $viewConcatLabel, $viewSuffixLabel
+						);
 					} else {
 						$timeline = $post->post_timeline;
 					}

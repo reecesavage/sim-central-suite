@@ -101,5 +101,8 @@ $this->event->listen(['location', 'view', 'data', 'main', 'sim_viewpost'], funct
 		}
 	}
 
-	$event['data']['timeline'] = $viewPrefixLabel.' '.$post->$column.' '.$viewConcatLabel.' '.$post->$columnTime.' '.$viewSuffixLabel;
+	$event['data']['timeline'] = \nova_ext_sim_central\TimelineFormat::buildLine(
+		$viewPrefixLabel, $column, $post->$column,
+		$post->$columnTime, $viewConcatLabel, $viewSuffixLabel
+	);
 });

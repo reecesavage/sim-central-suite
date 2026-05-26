@@ -1,9 +1,9 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.0.1"><img src="https://img.shields.io/badge/Version-v1.0.1-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.1.1"><img src="https://img.shields.io/badge/Version-v1.1.1-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
-  <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.x-blue.svg"></a>
+  <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
 </p>
 
@@ -15,11 +15,14 @@ This release rolls up:
 - **Anti Spam Questions** &mdash; random security question on the join + contact forms
 - **Mission Post Summary** &mdash; short TL;DR field on long posts, also shown in emails and RSS
 - **URL Parser** &mdash; site-wide shortcode tags that expand to anchors (`[docs|getting-started]`)
-- **Ordered Mission Posts** &mdash; order posts by Day/Time, Date/Time, or Stardate; optional post numbering; HTML5 time inputs; inline word counts on the missions pages
+- **Ordered Mission Posts** &mdash; order posts by Day/Time, Date/Time, or Stardate; optional post numbering; configurable date + time display formats; HTML5 native date/time inputs; inline word counts on the missions pages
 
 ## Requirements
 
 - Nova **2.7.19+**
+- PHP **8.2+**
+- PHP **cURL** extension (used by the daily update check and the one-click updater)
+- PHP **ZipArchive** extension (used by the one-click updater; ships with almost every PHP build)
 
 ## Installation
 
@@ -29,6 +32,42 @@ This release rolls up:
    $config['extensions']['enabled'][] = 'nova_ext_sim_central';
    ```
 3. Visit your admin control panel and choose **Sim Central Suite** under Manage Extensions. Every feature is OFF by default.
+
+## Updating
+
+### One-click in-app update (recommended, v1.1.0+)
+
+When a newer published release exists on GitHub, the dashboard banner shows an **Update Now** button next to the *Update available: vX.Y.Z* notice. Clicking it (with a confirm prompt) will:
+
+1. Download the release zipball from GitHub.
+2. Validate the archive (expects `init.php` + `config.json`, and the version field in the new `config.json` must match the release tag).
+3. Rename the current extension folder to `nova_ext_sim_central.backup-YYYYMMDD-HHMMSS` next to the live folder.
+4. Move the freshly-extracted code into place.
+5. Recursively invalidate the PHP opcache so the next request reads the new bytecode.
+6. Render a "reload to finish" page; click the button and you're on the new version.
+
+Your settings row in the `nova_settings` table is **untouched** through the whole flow, so feature toggles, edited labels, and per-feature settings carry across unchanged.
+
+**If anything goes wrong:** the backup folder is kept indefinitely (we never auto-prune). Roll back from the shell:
+
+```sh
+cd application/extensions
+rm -rf nova_ext_sim_central
+mv nova_ext_sim_central.backup-YYYYMMDD-HHMMSS nova_ext_sim_central
+```
+
+**Requirements for the in-app updater:**
+
+- The web user (e.g. `www-data`, `nginx`, your PHP-FPM user) needs write access to `application/extensions/` *and* the existing `application/extensions/nova_ext_sim_central/`.
+- PHP `cURL` and `ZipArchive` extensions must be loaded.
+
+Hosts that deploy via SSH/git under a separate user from the web user will see a clear "directory not writable" error on the dashboard. Manual upgrade still works in that case &mdash; see below.
+
+### Manual update (any release)
+
+1. Back up the existing folder: `cp -r application/extensions/nova_ext_sim_central application/extensions/nova_ext_sim_central.backup`
+2. Replace the folder contents with the new release.
+3. Reload the dashboard. The state row in the database survives the swap; the new version reads it on first load.
 
 ## Migrating from the standalone extensions
 
@@ -62,7 +101,7 @@ Once everything is working, the standalone extension folders can be deleted.
 
 All persisted user state &mdash; feature toggles, edited labels, edited settings &mdash; lives in a single row of the Nova `settings` table (`setting_key = 'sim_central_state'`). `config.json` in the repo only ever holds bundled defaults; it is never written to.
 
-When you upgrade the suite, the new `config.json` ships fresh defaults but your settings row is left alone. On load the two are deep-merged with your state winning, so customisations persist and any newly-added defaults flow through.
+When you upgrade the suite (either via the in-app updater or manually), the new `config.json` ships fresh defaults but your settings row is left alone. On load the two are deep-merged with your state winning, so customisations persist and any newly-added defaults flow through.
 
 ## Update checking
 
@@ -90,7 +129,16 @@ Replaces `nova_ext_ordered_mission_posts`. Lets each mission pick a timeline con
 - **Date Time** &mdash; sort by calendar date (YYYY-MM-DD) + Time
 - **Stardate** &mdash; sort by decimal stardate + Time
 
-Time inputs are HTML5 `<input type="time">` &mdash; no jQuery timepicker dependency. With **Post Numbering** enabled, each post's title is prefixed with its 1-based chronological position (`Post 1`, `Post 2`, ...) on the website, in post emails, and in the RSS feed.
+Date and time inputs on the admin forms are **native HTML5** (`<input type="date">` / `<input type="time">`) &mdash; no jQuery datepicker / timepicker dependency, native calendar UI with year/month navigation, and they work on mobile.
+
+**Display format** is configurable on the *Ordered Mission Posts &rarr; Configure* page (v1.1.1+):
+
+- Date: `YYYY-MM-DD`, `YYYY/MM/DD`, `MM/DD/YYYY`, or `DD/MM/YYYY`
+- Time: 24-hour (`23:00`) or 12-hour with AM/PM (`11:00 PM`)
+
+Storage is unchanged regardless of the format setting &mdash; values are always stored as ISO `YYYY-MM-DD` for dates and `HHmm` for times. Only the rendered output on the public mission view, post view, RSS feed, post emails, and posts list goes through the formatter.
+
+With **Post Numbering** enabled, each post's title is prefixed with its 1-based chronological position (`Post 1`, `Post 2`, ...) on the website, in post emails, and in the RSS feed.
 
 **Legacy mode**: if `chronological_mission_posts` columns are still present on the posts table, the per-feature config page exposes a toggle that lets existing missions reuse those Day/Time values when set to Day Time.
 
@@ -102,6 +150,7 @@ The suite also shows inline word counts per mission on both the admin **Manage M
 - **Force an update re-check**: `DELETE FROM nova_settings WHERE setting_key = 'sim_central_update_check';`
 - **Remove a shim**: disable the corresponding feature from the dashboard. The shim block is stripped from the target controller, unless another still-enabled feature shares the same file (e.g. summary and ordered both inject into `Feed.php`'s `posts()`).
 - **Full uninstall**: disable every feature (so all shims are removed), then comment out / remove the `$config['extensions']['enabled'][] = 'nova_ext_sim_central';` line and delete the extension folder. Database columns are intentionally left in place.
+- **Clean up update backups**: the in-app updater leaves the previous version in `application/extensions/nova_ext_sim_central.backup-YYYYMMDD-HHMMSS/`. Delete these by hand once you're satisfied with the upgrade. The suite never auto-prunes them.
 
 ## Issues
 
