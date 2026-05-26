@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.6.0"><img src="https://img.shields.io/badge/Version-v1.6.0-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.6.2"><img src="https://img.shields.io/badge/Version-v1.6.2-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -114,7 +114,7 @@ The dashboard checks GitHub once every 24 hours for a newer published release an
 
 Since v1.2.1 the dashboard also shows a *"Last checked X ago"* indicator next to the version line, with a **Check now** button that bypasses the 24h cache and refreshes the check on demand &mdash; useful when you know a new release just dropped and don't want to wait or run SQL.
 
-Since v1.6.0 the same cached result also surfaces as a **Sim Central** panel on Nova's admin home page (`/admin/index`), alongside Nova's own *Update* panel. Gamemasters see it whenever a newer Sim Central release is available; the panel shows the new version, links to the dashboard's one-click updater, and opens the GitHub release notes. Non-GMs never see it. Nothing renders if the cache is empty or already current.
+Since v1.6.0 the same cached result also surfaces on Nova's admin home page (`/admin/index`) for gamemasters &mdash; as of v1.6.1, as a row at the top of the **Notifications** panel (the Notifications nav badge increments to match). The row links to the suite dashboard (where the one-click *Update Now* button lives) and to the GitHub release notes. Non-GMs never see it. Nothing renders if the cache is empty or the installed version is already current.
 
 ## Feature details
 
