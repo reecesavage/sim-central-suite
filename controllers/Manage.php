@@ -1129,17 +1129,32 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			}
 		}
 
-		// Three sim-wide ratings. Clamp to 0..3.
 		if ( ! isset($json['setting']) || ! is_array($json['setting'])) {
 			$json['setting'] = array();
 		}
-		foreach (array('language', 'sex', 'violence') as $dim) {
-			$key = 'content_filter_'.$dim;
+
+		// v1.5.0+: three booleans (language / violence / sex). Hidden+checkbox
+		// pair guarantees a 0/1 lands in POST regardless of UI state.
+		foreach (\nova_ext_sim_central\ContentFilter::DIMENSIONS as $dim) {
+			$key = 'content_filter_allows_'.$dim;
 			if (isset($_POST[$key])) {
-				$n = (int) $_POST[$key];
-				if ($n < 0) $n = 0;
-				if ($n > 3) $n = 3;
-				$json['setting'][$key] = $n;
+				$json['setting'][$key] = ((int) $_POST[$key] === 1) ? 1 : 0;
+			}
+		}
+
+		// Per-post age-gate default (boolean).
+		if (isset($_POST['content_filter_age_gate_default'])) {
+			$json['setting']['content_filter_age_gate_default'] =
+				((int) $_POST['content_filter_age_gate_default'] === 1) ? 1 : 0;
+		}
+
+		// Migrate away from the v1.2-v1.4 numeric rating keys. Their
+		// values have already been read by ContentFilter::allows() as
+		// the initial state of the checkboxes, so dropping them now
+		// keeps the settings row tidy without changing behaviour.
+		foreach (array('content_filter_language', 'content_filter_sex', 'content_filter_violence') as $oldKey) {
+			if (array_key_exists($oldKey, $json['setting'])) {
+				unset($json['setting'][$oldKey]);
 			}
 		}
 

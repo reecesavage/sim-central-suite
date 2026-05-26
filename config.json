@@ -1,5 +1,5 @@
 {
-	"version": "1.4.1",
+	"version": "1.5.0",
 	"features": {
 		"display_name": false,
 		"anti_spam": false,
@@ -72,13 +72,17 @@
 		}
 	},
 	"nova_ext_content_filter": {
-		"definition_sex": {
-			"name": "Sexual content definition (shown to writers when sim allows Sex 3)",
-			"value": "Sexual content expressed in detail"
+		"definition_language": {
+			"name": "Adult language definition (shown to writers when sim permits adult language)",
+			"value": "Frequent strong profanity or hate speech"
 		},
 		"definition_violence": {
-			"name": "Violence definition (shown to writers when sim allows Violence 3)",
+			"name": "Violence definition (shown to writers when sim permits violence)",
 			"value": "Explicit violence not depicted"
+		},
+		"definition_sex": {
+			"name": "Sexual content definition (shown to writers when sim permits sex)",
+			"value": "Sexual content expressed in detail"
 		},
 		"notice": {
 			"name": "Notice shown to guests in place of a gated post body",
@@ -92,9 +96,10 @@
 		"post_order_column_fallback": "post_date",
 		"date_format": "YYYY-MM-DD",
 		"time_format": "24h",
-		"content_filter_language": 0,
-		"content_filter_sex": 0,
-		"content_filter_violence": 0,
+		"content_filter_allows_language": 0,
+		"content_filter_allows_violence": 0,
+		"content_filter_allows_sex": 0,
+		"content_filter_age_gate_default": 1,
 		"discord_auth_broker_url": "https://auth.simcentral.host",
 		"discord_auth_public_key": "",
 		"discord_auth_required_on_join": 0,

@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.4.1"><img src="https://img.shields.io/badge/Version-v1.4.1-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.5.0"><img src="https://img.shields.io/badge/Version-v1.5.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -16,7 +16,7 @@ This release rolls up:
 - **Mission Post Summary** &mdash; short TL;DR field on long posts, also shown in emails and RSS
 - **URL Parser** &mdash; site-wide shortcode tags that expand to anchors (`[docs|getting-started]`)
 - **Ordered Mission Posts** &mdash; order posts by Day/Time, Date/Time, or Stardate; optional post numbering; configurable date + time display formats; HTML5 native date/time inputs; inline word counts on the missions pages
-- **Content Filter** &mdash; age-gates mission post bodies on the public site and in the RSS feed for sims that allow explicit Sex / Violence (rpgrating.com 3), with a per-post writer-attested opt-out toggle
+- **Content Filter** &mdash; age-gates mission post bodies on the public site and in the RSS feed for sims that permit adult language, violence, or sexual content; configurable default for the per-post toggle; writer attests at submit time
 - **Discord Sign-In** &mdash; "Sign in with Discord" / "Sign up with Discord" via the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker); one Discord app serves any number of sims (no per-sim redirect URI registration); link/unlink controls on User Account; optional site-wide enforcement that requires every user to keep Discord linked; Discord-branded buttons everywhere
 
 ## Requirements
@@ -151,12 +151,15 @@ With **Post Numbering** enabled, each post's title is prefixed with its 1-based 
 
 The suite also shows inline word counts per mission on both the admin **Manage Missions** page (current / upcoming / completed) and the public `/sim/missions` page. Counts are computed in a single batched query per page load.
 
-### Content Filter (v1.2.0+)
-Age-gates mission post bodies on the public site and in the RSS feed for sims that allow explicit content. Useful for protecting minors who hit the public site and for keeping mature content out of automated RSS-driven Discord broadcasts.
+### Content Filter (v1.2.0+, simplified in v1.5.0)
+Age-gates mission post bodies on the public site and in the RSS feed for sims that permit explicit content. Useful for protecting minors who hit the public site and for keeping mature content out of automated RSS-driven Discord broadcasts.
 
-Adds a `nova_ext_content_filter_age_gated` column to `posts` (TINYINT, default `1`). The sim's Language / Sex / Violence ratings are configured on the *Content Filter &rarr; Configure* page following the [rpgrating.com](https://rpgrating.com/create) 0&ndash;3 scale. Only **Sex** and **Violence** at rating **3** trigger gating &mdash; Language is recorded for display completeness but never hides anything.
+Adds a `nova_ext_content_filter_age_gated` column to `posts` (TINYINT, default `1`). Configure on the *Content Filter &rarr; Configure* page:
 
-When the sim allows Sex 3 or Violence 3, the write/edit-post form gains an **Age-gate this post** checkbox (checked by default). The toggle's helper text shows only the definitions for whichever dimensions are actually permitted at 3 on this sim &mdash; a 322 sim doesn't ask writers about sexual content. If a writer unchecks the toggle, the submit button triggers a JS confirm that names exactly what they're attesting to.
+- **Permitted explicit content** &mdash; three independent yes/no toggles, one each for **Adult language**, **Violence**, and **Sex**. The filter activates as soon as any are ticked. Definitions follow [rpgrating.com](https://rpgrating.com/create); all three are admin-editable.
+- **New posts are age-gated by default** &mdash; controls the initial state of the per-post toggle. **On** (default) means writers have to deliberately untick the box to publish ungated; **off** means writers opt IN per post (useful for sims with rare explicit content).
+
+When the filter is active, the write/edit-post form gains an **Age-gate this post** checkbox. The helper text shows only the definitions for whichever dimensions are actually permitted on this sim. If a writer unchecks the box, the submit button triggers a JS confirm that names exactly what they're attesting to.
 
 For gated posts viewed by guests (logged-out users):
 
@@ -164,7 +167,7 @@ For gated posts viewed by guests (logged-out users):
 - **`/feed/posts`** RSS feed &mdash; entry header (title, authors, mission, timeline, location) preserved so feed consumers know a post exists, but the body is replaced with the same notice.
 - **`/sim/listposts`** and `/sim/missions/id/N` &mdash; unchanged (they never showed the body anyway).
 
-Logged-in users always see everything regardless of gating. If your sim doesn't go above rating 2 in either Sex or Violence, the feature has nothing to gate and can be left disabled.
+Logged-in users always see everything regardless of gating. If your sim permits none of the three dimensions, the feature has nothing to gate and can be left disabled.
 
 ### Discord Sign-In (v1.3.0+)
 Lets users sign in to the sim with their Discord account, link Discord to an existing sim account, or attach a Discord identity to a new account during the normal join flow. The actual Discord OAuth dance happens in the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker) (a small Cloudflare Worker hosted at `auth.simcentral.host`), so this sim never has to be registered as a redirect URI in any Discord app. The broker mints a short-lived RSA-signed JWT and bounces the user back to the sim, which verifies the signature locally with the broker's public key.

@@ -18,7 +18,12 @@ $this->event->listen(['location', 'view', 'output', 'admin', 'write_missionpost'
 	// Existing post? Use its stored gate value. New post? Default to gated (1).
 	$id    = (is_numeric($this->uri->segment(3))) ? $this->uri->segment(3) : false;
 	$post  = $id ? $this->posts->get_post($id) : null;
-	$gated = $post ? ((int) $post->nova_ext_content_filter_age_gated === 1) : true;
+	// Existing post -> use its stored value. New post -> use the admin's
+	// configured default (true = gated by default; false = writers opt in
+	// per post, useful for sims with rare explicit content).
+	$gated = $post
+		? ((int) $post->nova_ext_content_filter_age_gated === 1)
+		: \nova_ext_sim_central\ContentFilter::defaultAgeGate();
 
 	// Confirm-on-submit message names exactly what the writer is attesting to.
 	$attest = implode("\n - ", array_values($definitions));
