@@ -1,9 +1,9 @@
 <?php
-	$settings    = isset($jsons['setting']) && is_array($jsons['setting']) ? $jsons['setting'] : array();
-	$brokerUrl   = isset($settings['discord_auth_broker_url']) ? $settings['discord_auth_broker_url'] : 'https://auth.simcentral.host';
-	$publicKey   = isset($settings['discord_auth_public_key']) ? $settings['discord_auth_public_key'] : '';
-	$mode        = isset($settings['discord_auth_mode'])       ? $settings['discord_auth_mode']       : 'link-only';
-	$keyConfigured = trim($publicKey) !== '';
+	$settings       = isset($jsons['setting']) && is_array($jsons['setting']) ? $jsons['setting'] : array();
+	$brokerUrl      = isset($settings['discord_auth_broker_url']) ? $settings['discord_auth_broker_url'] : 'https://auth.simcentral.host';
+	$publicKey      = isset($settings['discord_auth_public_key']) ? $settings['discord_auth_public_key'] : '';
+	$requiredOnJoin = ! empty($settings['discord_auth_required_on_join']);
+	$keyConfigured  = trim($publicKey) !== '';
 ?>
 
 <?php echo text_output($title, 'h1', 'page-head');?>
@@ -61,29 +61,30 @@
 	</p>
 
 	<br>
-	<?php echo text_output('Account creation mode', 'h3', 'page-subhead');?>
+	<?php echo text_output('Sign-up behaviour', 'h3', 'page-subhead');?>
+
+	<p class="fontSmall gray">
+		New users always go through Nova's normal join form (so the character
+		is queued for GM approval like any other join). On the join form, the
+		suite injects a <strong>Link Discord</strong> button. If the user clicks
+		it, the Discord identity gets attached to the new account when the
+		form is submitted; the character still has to be approved.
+	</p>
 
 	<p>
+		<input type="hidden" name="discord_auth_required_on_join" value="0">
 		<label>
-			<input type="radio" name="discord_auth_mode" value="link-only"
-				<?php echo ($mode === 'link-only') ? 'checked' : '';?>>
-			<strong>Link-only</strong> &mdash; users must already have a sim account;
-			Discord sign-in matches by Discord ID, never creates new accounts.
-			New users sign up the normal way, then link Discord from their User Settings.
-		</label>
-	</p>
-	<p>
-		<label>
-			<input type="radio" name="discord_auth_mode" value="auto-create"
-				<?php echo ($mode === 'auto-create') ? 'checked' : '';?>>
-			<strong>Auto-create</strong> &mdash; if Discord sign-in matches no existing
-			user, a new account is created on the spot using the Discord identity
-			(email + username). Equivalent to "Sign up with Discord."
+			<input type="checkbox" name="discord_auth_required_on_join" value="1"
+				<?php echo $requiredOnJoin ? 'checked' : '';?>>
+			<strong>Require linking Discord to join</strong>
 		</label>
 	</p>
 	<p class="fontSmall gray italic">
-		Both modes still require the user to have a verified email on Discord &mdash;
-		the broker refuses to issue a token otherwise.
+		When on, the join form refuses to submit unless the user has linked Discord first.
+		Enforced client-side; admins should still verify at character-approval time if strictness matters.
+	</p>
+	<p class="fontSmall gray italic">
+		The user must have a verified email on Discord either way &mdash; the broker refuses to issue a token otherwise.
 	</p>
 
 	<br>

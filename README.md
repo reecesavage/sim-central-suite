@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.3.0"><img src="https://img.shields.io/badge/Version-v1.3.0-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.3.1"><img src="https://img.shields.io/badge/Version-v1.3.1-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -167,22 +167,22 @@ For gated posts viewed by guests (logged-out users):
 Logged-in users always see everything regardless of gating. If your sim doesn't go above rating 2 in either Sex or Violence, the feature has nothing to gate and can be left disabled.
 
 ### Discord Sign-In (v1.3.0+)
-Lets users sign in or sign up with their Discord account. The actual Discord OAuth dance happens in the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker) (a small Cloudflare Worker hosted at `auth.simcentral.host`), so this sim never has to be registered as a redirect URI in any Discord app. The broker mints a short-lived RSA-signed JWT and bounces the user back to the sim, which verifies the signature locally with the broker's public key.
+Lets users sign in to the sim with their Discord account, link Discord to an existing sim account, or attach a Discord identity to a new account during the normal join flow. The actual Discord OAuth dance happens in the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker) (a small Cloudflare Worker hosted at `auth.simcentral.host`), so this sim never has to be registered as a redirect URI in any Discord app. The broker mints a short-lived RSA-signed JWT and bounces the user back to the sim, which verifies the signature locally with the broker's public key.
 
 Adds five columns to `users`: `nova_ext_discord_auth_id` (UNIQUE-indexed Discord snowflake), `_username`, `_avatar`, `_email_verified`, `_linked_at`. Configure on the *Discord Sign-In &rarr; Configure* page:
 
 - **Broker URL** &mdash; defaults to `https://auth.simcentral.host`; override only if you've self-hosted your own broker.
 - **Broker public key (PEM)** &mdash; paste the broker's RSA public key, or click **Fetch from broker JWKS** to retrieve it automatically from `<broker>/.well-known/jwks.json`.
-- **Account creation mode**:
-  - **Link-only** *(default)* &mdash; Discord matches existing users by Discord ID; new users must sign up the normal way first, then link Discord from User Settings.
-  - **Auto-create** &mdash; a Discord sign-in with no matching user creates a new sim account on the spot using the Discord email + username.
+- **Require linking Discord to join** *(v1.3.1+)* &mdash; when on, the join form refuses to submit unless the user has clicked "Link Discord" first. Client-side enforcement; admins should still verify at character-approval time if strictness matters.
 
 The suite always rejects Discord accounts whose email isn't verified (enforced at both the broker and the suite as defense-in-depth).
 
 UI additions when enabled:
-- **Sign in with Discord** button on the login form.
-- **Sign up with Discord** button on the join form *(auto-create mode only)*.
-- **Link Discord / Unlink Discord** section on the admin **User Settings** page. Unlink is gated behind a "you need a password set" check so users can't lock themselves out.
+- **Sign in with Discord** button on the login form &mdash; logs the user in if their Discord ID is already linked to a sim account.
+- **Link Discord** card at the top of the join form &mdash; pre-fills email from Discord and stamps the Discord identity onto the new user row when the join form is submitted. The character still queues for GM approval like any other join.
+- **Link Discord / Unlink Discord** section on the **User &rarr; My Account** page. Unlink is gated behind a "you need a password set" check so users can't lock themselves out.
+
+The suite does not auto-create user accounts from Discord sign-ins &mdash; every new user goes through Nova's normal join flow (including character approval). Discord auth is identity attachment, not a join bypass.
 
 For complete self-hosting instructions, broker architecture, and the security model, see <https://github.com/reecesavage/sim-central-broker>.
 

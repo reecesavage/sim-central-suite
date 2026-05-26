@@ -1,9 +1,12 @@
 <?php
 
-// Add a "Linked Discord account" section to the User Settings page so
-// the user can link or unlink without leaving their settings.
+// Add a "Linked Discord account" section to the user's "My Account"
+// page (/user/account) so they can link or unlink Discord. Note: this
+// is the per-user account page, NOT the admin's "Manage user-created
+// settings" page (site_usersettings) - distinct things despite Nova's
+// naming ambiguity.
 
-$this->event->listen(['location', 'view', 'output', 'admin', 'site_usersettings'], function($event){
+$this->event->listen(['location', 'view', 'output', 'admin', 'user_account'], function($event){
 	if ( ! \Auth::is_logged_in()) {
 		return;
 	}

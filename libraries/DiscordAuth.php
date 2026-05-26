@@ -54,12 +54,16 @@ class DiscordAuth
 		return isset($c['setting']['discord_auth_public_key']) ? (string) $c['setting']['discord_auth_public_key'] : '';
 	}
 
-	/** 'link-only' or 'auto-create'. Defaults to the safer 'link-only'. */
-	public static function mode()
+	/**
+	 * True if the admin has marked Discord linking as required during
+	 * the join flow. Enforced client-side on the join form; the suite
+	 * also stamps the session-stashed claims onto the new user row
+	 * regardless of this setting (so opting in to linking always works).
+	 */
+	public static function requiredOnJoin()
 	{
 		$c = Config::load();
-		$m = isset($c['setting']['discord_auth_mode']) ? (string) $c['setting']['discord_auth_mode'] : 'link-only';
-		return ($m === 'auto-create') ? 'auto-create' : 'link-only';
+		return ! empty($c['setting']['discord_auth_required_on_join']);
 	}
 
 	public static function callbackUrl()
@@ -195,62 +199,13 @@ class DiscordAuth
 	}
 
 	/**
-	 * Create a brand new Nova user from the Discord claims. The user
-	 * lands in 'active' status with no characters - same shape as a
-	 * normal join, minus the moderation step. Caller is responsible
-	 * for logging them in afterwards.
-	 *
-	 * Returns the new userid (int) on success, or array('error', $code)
-	 * on failure (e.g. email already in use by another user).
+	 * Returns the column overrides to stamp onto a `users` row at
+	 * create or update time. Exposed so the db.insert.prepare event
+	 * for the join flow can merge them in.
 	 */
-	public static function createUserFromClaims(array $claims)
+	public static function columnsForClaims(array $claims)
 	{
-		$ci =& get_instance();
-		$ci->load->model('users_model', 'user');
-		$ci->load->model('settings_model', 'settings');
-
-		$email = isset($claims['email']) ? (string) $claims['email'] : '';
-		if ($email === '') {
-			return array('error', 'no_email');
-		}
-
-		// If the email collides with an existing account, that user
-		// should link Discord from their profile, not create a duplicate.
-		if ($ci->user->check_email($email) > 0) {
-			return array('error', 'email_already_in_use');
-		}
-
-		// Random unguessable placeholder password - the user can later
-		// set a real one via the standard reset flow if they want
-		// non-Discord login. Hashed exactly like a normal join.
-		$placeholder = bin2hex(random_bytes(16));
-		$row = array(
-			'email'        => $email,
-			'password'     => \Auth::hash($placeholder),
-			'access_role'  => (int) $ci->settings->get_setting('default_user_role'),
-			'status'       => 'active',
-			'language'     => $ci->settings->get_setting('default_user_language'),
-			'timezone'     => $ci->settings->get_setting('default_user_timezone'),
-			'daylight_savings' => $ci->settings->get_setting('default_user_dst'),
-			'skin_main'    => $ci->settings->get_setting('default_skin_main'),
-			'skin_admin'   => $ci->settings->get_setting('default_skin_admin'),
-			'skin_wiki'    => $ci->settings->get_setting('default_skin_wiki'),
-			'display_rank' => $ci->settings->get_setting('default_display_rank'),
-			'leave_date'   => 0,
-			'last_post'    => 0,
-			'is_sysadmin'  => 'n',
-			'date_register'=> now(),
-		);
-		// Merge in the Discord-specific columns.
-		$row = array_merge($row, self::discordCols($claims));
-
-		$ci->user->create_user($row);
-
-		$newId = (int) $ci->db->insert_id();
-		if ($newId > 0) {
-			$ci->user->create_user_prefs($newId);
-		}
-		return $newId;
+		return self::discordCols($claims);
 	}
 
 	/**

@@ -89,9 +89,10 @@ if ( ! empty($simCentralFeatures['content_filter'])) {
 require_once dirname(__FILE__).'/libraries/Jwt.php';
 require_once dirname(__FILE__).'/libraries/DiscordAuth.php';
 if ( ! empty($simCentralFeatures['discord_auth'])) {
+	require_once dirname(__FILE__).'/events/discord_auth_db.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_login_index.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_main_join_1.php';
-	require_once dirname(__FILE__).'/events/discord_auth_location_admin_site_usersettings.php';
+	require_once dirname(__FILE__).'/events/discord_auth_location_admin_user_account.php';
 }
 if ( ! empty($simCentralFeatures['summary'])) {
 	require_once dirname(__FILE__).'/events/summary_db.php';

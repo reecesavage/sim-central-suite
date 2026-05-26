@@ -978,9 +978,19 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		if (isset($_POST['discord_auth_public_key'])) {
 			$json['setting']['discord_auth_public_key'] = (string) $_POST['discord_auth_public_key'];
 		}
-		if (isset($_POST['discord_auth_mode'])) {
-			$mode = (string) $_POST['discord_auth_mode'];
-			$json['setting']['discord_auth_mode'] = ($mode === 'auto-create') ? 'auto-create' : 'link-only';
+		// Required-on-join is a plain checkbox (hidden+checkbox pair so
+		// PHP always gets a 0/1 value). Auto-create mode was removed
+		// in v1.3.1: Nova's join flow includes character approval the
+		// suite has no business bypassing.
+		if (isset($_POST['discord_auth_required_on_join'])) {
+			$json['setting']['discord_auth_required_on_join'] =
+				((int) $_POST['discord_auth_required_on_join'] === 1) ? 1 : 0;
+		}
+
+		// Migrate any leftover discord_auth_mode key from v1.3.0 - no
+		// behavioural meaning in v1.3.1+.
+		if (isset($json['setting']['discord_auth_mode'])) {
+			unset($json['setting']['discord_auth_mode']);
 		}
 
 		$this->_saveConfig($configPath, $json);

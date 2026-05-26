@@ -87,29 +87,33 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 				);
 			}
 			$this->session->set_flashdata('discord_auth_message', 'Discord account linked.');
-			redirect(site_url('admin/usersettings'));
+			redirect(site_url('user/account'));
 			return;
 		}
 
-		// 3. No matching user. Behaviour depends on suite config.
-		$mode = \nova_ext_sim_central\DiscordAuth::mode();
-
-		if ($mode === 'auto-create') {
-			$result = \nova_ext_sim_central\DiscordAuth::createUserFromClaims($claims);
-			if (is_array($result) && isset($result[0]) && $result[0] === 'error') {
-				return $this->_renderError($this->_friendlyError($result[1]));
-			}
-			\nova_ext_sim_central\DiscordAuth::loginUserById((int) $result);
-			redirect(site_url(''));
+		// 3. No matching user, intent=join: stash claims in session so
+		// the join form picks them up. The actual account creation
+		// happens through Nova's normal join flow (which queues the
+		// character for GM approval). The db.insert.prepare.users
+		// event for that flow stamps the Discord columns onto the new
+		// user row using these claims.
+		if ($intent === 'join') {
+			$this->session->set_userdata('discord_auth_pending_join', json_encode($claims));
+			$this->session->set_flashdata('discord_auth_message', 'Discord linked. Fill in the join form to finish signing up.');
+			redirect(site_url('main/join'));
 			return;
 		}
 
-		// Link-only mode + no existing match. Bail with a clear message
-		// pointing the user at the standard join/login flow.
+		// 4. Default (intent=login, no match): clear message pointing
+		// at the standard sign-up path. We never auto-create accounts
+		// because Nova's join flow includes character approval and
+		// other steps the suite has no business skipping.
 		return $this->_renderError(
 			'This Discord account is not linked to any user on this sim. '
-			.'Sign in with your existing email and password, then click '
-			.'"Link Discord" on your User Settings page.'
+			.'If you already have an account, sign in with your email and '
+			.'password and then click "Link Discord" on your account page. '
+			.'If you are new, use "Sign up with Discord" on the join page '
+			.'to start the join process with your Discord identity attached.'
 		);
 	}
 
@@ -129,7 +133,7 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 		} else {
 			$this->session->set_flashdata('discord_auth_message', 'Discord account unlinked.');
 		}
-		redirect(site_url('admin/usersettings'));
+		redirect(site_url('user/account'));
 	}
 
 	// ---------- helpers ----------
@@ -166,10 +170,6 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 			case 'wrong_issuer':
 			case 'wrong_audience':
 				return 'The sign-in token failed verification. Please try again.';
-			case 'email_already_in_use':
-				return 'A user with that email already exists. Sign in with your existing password and then link Discord from User Settings.';
-			case 'no_email':
-				return 'Discord did not return an email address. Please try again or sign up the normal way.';
 			default:
 				if (strpos((string) $code, 'missing_claim:') === 0) {
 					return 'Sign-in token was missing required information. Please try again.';
