@@ -42,6 +42,12 @@ require_once dirname(__FILE__).'/libraries/TimelineFormat.php';
 // feature has been enabled). Cheap to load unconditionally.
 require_once dirname(__FILE__).'/libraries/ContentFilter.php';
 
+// Admin-index update notice. Surfaces "new Sim Central release
+// available" to gamemasters on the admin home, alongside Nova's own
+// update notice. Loaded unconditionally - it self-skips when the
+// viewer isn't a GM or there's nothing newer cached.
+require_once dirname(__FILE__).'/events/system_admin_index_update_notice.php';
+
 $simCentralFeatures = \nova_ext_sim_central\Config::features();
 
 // ---------- Display Name ----------
