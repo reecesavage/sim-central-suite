@@ -994,6 +994,30 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				((int) $_POST['discord_auth_required'] === 1) ? 1 : 0;
 		}
 
+		// Required Discord guild membership (v1.7.0+). Textarea input
+		// gets split on newlines, trimmed, filtered to digit-only IDs
+		// (Discord snowflakes), de-duplicated.
+		if (isset($_POST['discord_auth_required_guild_ids'])) {
+			$raw   = (string) $_POST['discord_auth_required_guild_ids'];
+			$lines = preg_split('/\r\n|\r|\n|,/', $raw);
+			$ids   = array();
+			foreach ($lines as $line) {
+				$clean = preg_replace('/[^0-9]/', '', (string) $line);
+				if ($clean !== '' && ! in_array($clean, $ids, true)) {
+					$ids[] = $clean;
+				}
+			}
+			$json['setting']['discord_auth_required_guild_ids'] = $ids;
+		}
+		if (isset($_POST['discord_auth_required_guild_mode'])) {
+			$mode = (string) $_POST['discord_auth_required_guild_mode'];
+			$json['setting']['discord_auth_required_guild_mode'] = ($mode === 'all') ? 'all' : 'any';
+		}
+		if (isset($_POST['discord_auth_required_guild_help'])) {
+			// Admin-trusted; HTML allowed (invite-link anchors etc).
+			$json['setting']['discord_auth_required_guild_help'] = (string) $_POST['discord_auth_required_guild_help'];
+		}
+
 		// Migrate any leftover discord_auth_mode key from v1.3.0 - no
 		// behavioural meaning in v1.3.1+.
 		if (isset($json['setting']['discord_auth_mode'])) {

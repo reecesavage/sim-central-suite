@@ -67,6 +67,14 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 		}
 		$claims = $payload;
 
+		// Guild membership gate (v1.7.0+). Runs before any login /
+		// link / join branch so the gate applies uniformly. The check
+		// is a no-op when no required guilds are configured.
+		list($guildStatus, $guildCode) = \nova_ext_sim_central\DiscordAuth::guildCheckPasses($claims);
+		if ($guildStatus !== 'ok') {
+			return $this->_renderError($this->_friendlyError($guildCode));
+		}
+
 		// 1. Existing user with this Discord ID? Refresh + log them in.
 		// loginUserById enforces the same status / maintenance checks
 		// Nova's email+password login does (pending users can't sign
@@ -239,6 +247,32 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 				return lang('error_login_5');
 			case 'login_not_found':
 				return 'The user account linked to this Discord could not be found.';
+
+			// Guild membership refusals (v1.7.0+).
+			// `guild_not_member`         - user passed JWT verify and email
+			//                              gate but isn't in the required
+			//                              Discord server(s). We show the
+			//                              admin's free-form help text
+			//                              (which can include invite-link
+			//                              HTML) under a standard intro.
+			// `broker_lacks_guilds_claim` - guild check was configured
+			//                              but the broker didn't include
+			//                              a `guilds` claim. Almost always
+			//                              an old broker (<v1.1.0).
+			case 'guild_not_member':
+				$help = \nova_ext_sim_central\DiscordAuth::requiredGuildHelp();
+				$mode = \nova_ext_sim_central\DiscordAuth::requiredGuildMode();
+				$intro = ($mode === 'all')
+					? 'You must be a member of <em>every</em> required Discord server to use this sim.'
+					: 'You must be a member of at least one required Discord server to use this sim.';
+				// Help text is admin-trusted - allow HTML so they can
+				// include invite-link anchors.
+				$body = $help !== '' ? '<br /><br />'.$help : '';
+				return $intro.$body;
+			case 'broker_lacks_guilds_claim':
+				return 'This sim requires Discord guild membership checks, but the OAuth broker did not return your guild list. '
+					.'The site administrator needs to update the broker to v1.1.0+ or remove the required guilds setting. '
+					.'Please contact them.';
 
 			default:
 				if (strpos((string) $code, 'missing_claim:') === 0) {

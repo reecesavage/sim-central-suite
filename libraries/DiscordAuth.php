@@ -98,6 +98,105 @@ class DiscordAuth
 	}
 
 	/**
+	 * Required Discord guild membership: returns an array of Discord
+	 * snowflake-ID strings the user must be in (per `requiredGuildMode()`)
+	 * to sign in / sign up / link. Empty array = no check.
+	 *
+	 * Stored under the `discord_auth_required_guild_ids` setting as a
+	 * JSON array. Defaults to empty.
+	 */
+	public static function requiredGuildIds()
+	{
+		$c = Config::load();
+		$v = isset($c['setting']['discord_auth_required_guild_ids']) ? $c['setting']['discord_auth_required_guild_ids'] : array();
+		if ( ! is_array($v)) {
+			return array();
+		}
+		// Defensive: cast every entry to a digit-only string. Discord IDs
+		// are snowflakes; anything else came in via a bad config edit.
+		$out = array();
+		foreach ($v as $id) {
+			$id = preg_replace('/[^0-9]/', '', (string) $id);
+			if ($id !== '') {
+				$out[] = $id;
+			}
+		}
+		return $out;
+	}
+
+	public static function requiresGuildCheck()
+	{
+		return count(self::requiredGuildIds()) > 0;
+	}
+
+	/** 'any' (default) or 'all'. */
+	public static function requiredGuildMode()
+	{
+		$c = Config::load();
+		$m = isset($c['setting']['discord_auth_required_guild_mode']) ? (string) $c['setting']['discord_auth_required_guild_mode'] : 'any';
+		return ($m === 'all') ? 'all' : 'any';
+	}
+
+	/**
+	 * Admin-editable help text shown on the "not allowed - join the
+	 * server" error page. HTML allowed (admin-trusted input). Empty
+	 * falls back to a generic message in the controller.
+	 */
+	public static function requiredGuildHelp()
+	{
+		$c = Config::load();
+		return isset($c['setting']['discord_auth_required_guild_help'])
+			? (string) $c['setting']['discord_auth_required_guild_help']
+			: '';
+	}
+
+	/**
+	 * Run the guild-membership check against a verified JWT claim set.
+	 * Returns array($status, $code):
+	 *   ('ok',    null)                       - no check configured, or user passes
+	 *   ('error', 'broker_lacks_guilds_claim')- check configured, broker didn't
+	 *                                            include the claim (old broker?)
+	 *   ('error', 'guild_not_member')         - user is missing required guild(s)
+	 *
+	 * Calling site treats both error codes as a hard "sign-in refused"
+	 * and surfaces an appropriate friendly message.
+	 */
+	public static function guildCheckPasses(array $claims)
+	{
+		$required = self::requiredGuildIds();
+		if (empty($required)) {
+			return array('ok', null);
+		}
+
+		if ( ! isset($claims['guilds']) || ! is_array($claims['guilds'])) {
+			// Broker didn't include the guilds claim. Could be: old
+			// broker that doesn't know about ?guilds=1, or a manually-
+			// configured non-canonical broker.
+			return array('error', 'broker_lacks_guilds_claim');
+		}
+
+		$userGuilds = array_map('strval', $claims['guilds']);
+		$mode       = self::requiredGuildMode();
+
+		if ($mode === 'all') {
+			foreach ($required as $id) {
+				if ( ! in_array($id, $userGuilds, true)) {
+					return array('error', 'guild_not_member');
+				}
+			}
+			return array('ok', null);
+		}
+
+		// 'any' mode
+		foreach ($required as $id) {
+			if (in_array($id, $userGuilds, true)) {
+				return array('ok', null);
+			}
+		}
+		return array('error', 'guild_not_member');
+	}
+
+	/**
 	 * Decide whether the request currently in flight should be
 	 * intercepted and redirected to the forced-link page. Returns
 	 * true only when:
@@ -175,7 +274,15 @@ class DiscordAuth
 
 	public static function brokerStartUrl()
 	{
-		return self::brokerUrl().'/start?return_to='.rawurlencode(self::callbackUrl());
+		$url = self::brokerUrl().'/start?return_to='.rawurlencode(self::callbackUrl());
+		// Opt into the broker's optional `guilds` scope only when this
+		// sim actually has a guild check configured. Sims without one
+		// keep the smaller `identify email` scope and don't trigger the
+		// extra "see your servers" line on Discord's consent screen.
+		if (self::requiresGuildCheck()) {
+			$url .= '&guilds=1';
+		}
+		return $url;
 	}
 
 	// ---------- JWT verification ----------

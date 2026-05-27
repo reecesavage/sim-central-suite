@@ -5,6 +5,12 @@
 	$requiredOnJoin = ! empty($settings['discord_auth_required_on_join']);
 	$requiredGlobal = ! empty($settings['discord_auth_required']);
 	$keyConfigured  = trim($publicKey) !== '';
+
+	$guildIds   = isset($settings['discord_auth_required_guild_ids']) && is_array($settings['discord_auth_required_guild_ids'])
+		? $settings['discord_auth_required_guild_ids']
+		: array();
+	$guildMode  = isset($settings['discord_auth_required_guild_mode']) ? (string) $settings['discord_auth_required_guild_mode'] : 'any';
+	$guildHelp  = isset($settings['discord_auth_required_guild_help']) ? (string) $settings['discord_auth_required_guild_help'] : '';
 ?>
 
 <?php echo text_output($title, 'h1', 'page-head');?>
@@ -115,6 +121,75 @@
 		The user must have a verified email on Discord either way &mdash; the broker refuses to issue
 		a token otherwise.
 	</p>
+
+	<br>
+	<?php echo text_output('Required Discord guild membership', 'h3', 'page-subhead');?>
+
+	<p class="fontSmall gray">
+		Optional. Limit Discord sign-in / sign-up / linking to users who are a member of one or more
+		specific Discord servers. The broker fetches the user's guild list via Discord's OAuth
+		<code>guilds</code> scope (no bot required) and the suite checks it locally.
+	</p>
+
+	<p>
+		<kbd>Required guild IDs</kbd>
+		<br>
+		<textarea name="discord_auth_required_guild_ids" rows="4" cols="40"
+			style="font-family: monospace;"
+			placeholder="One ID per line, e.g.&#10;123456789012345678&#10;987654321098765432"><?php
+			echo htmlspecialchars(implode("\n", $guildIds), ENT_QUOTES);
+		?></textarea>
+		<br>
+		<span class="fontSmall gray">
+			Discord snowflake IDs, one per line (or comma-separated). Leave blank to disable the check entirely.
+			To find a server's ID: open Discord, enable Developer Mode, right-click the server icon &rarr; <em>Copy Server ID</em>.
+		</span>
+	</p>
+
+	<p>
+		<kbd>Match mode</kbd>
+		&nbsp;
+		<label>
+			<input type="radio" name="discord_auth_required_guild_mode" value="any"
+				<?php echo ($guildMode !== 'all') ? 'checked' : '';?>>
+			<strong>Any of</strong>
+		</label>
+		&nbsp;&nbsp;
+		<label>
+			<input type="radio" name="discord_auth_required_guild_mode" value="all"
+				<?php echo ($guildMode === 'all') ? 'checked' : '';?>>
+			<strong>All of</strong>
+		</label>
+		<br>
+		<span class="fontSmall gray">
+			<strong>Any of</strong> &mdash; user must be a member of at least one listed server. The common case.
+			<br>
+			<strong>All of</strong> &mdash; user must be in every listed server. Use for layered access (e.g. game server <em>and</em> player community).
+		</span>
+	</p>
+
+	<p>
+		<kbd>Help text shown on refusal</kbd>
+		<br>
+		<textarea name="discord_auth_required_guild_help" rows="4" cols="60"
+			placeholder='e.g. Join us at <a href="https://discord.gg/yoursim">discord.gg/yoursim</a> and try signing in again.'><?php
+			echo htmlspecialchars($guildHelp, ENT_QUOTES);
+		?></textarea>
+		<br>
+		<span class="fontSmall gray">
+			Shown on the "you're not a member of any required server" error page underneath
+			the standard intro. <strong>HTML allowed</strong> &mdash; this is the right place to
+			paste your Discord invite links as clickable anchors.
+		</span>
+	</p>
+
+	<?php if ( ! empty($guildIds)): ?>
+		<p class="fontSmall orange">
+			Note: when this check is on, the suite passes <code>?guilds=1</code> to the broker.
+			The broker must be v1.1.0 or newer to support this; older brokers will return a token
+			without the guild list and the suite will refuse the sign-in with a clear error.
+		</p>
+	<?php endif; ?>
 
 	<br>
 	<button name="action" type="submit" class="button-main" value="save_discord_auth_config">
