@@ -101,18 +101,38 @@ if ( ! empty($simCentralFeatures['discord_auth'])) {
 	require_once dirname(__FILE__).'/events/discord_auth_location_main_join_1.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_admin_user_account.php';
 
-	// Required-link enforcement hook. Runs here (post_controller_constructor
-	// time, before the action method) so a redirect actually short-circuits
-	// the rest of the request. We deliberately don't run for non-feature-
-	// enabled installs because shouldEnforceLink() would just return false
-	// anyway and we'd be paying for a Config::load + session check on
-	// every request.
+	// Enforcement hooks run here (post_controller_constructor time,
+	// before the action method) so redirects actually short-circuit
+	// the rest of the request. Two related gates:
+	//
+	//   requiresLink (v1.4.0+)        - logged-in user has no Discord
+	//                                    ID; bounce to forced-link page.
+	//   shouldEnforceDiscordOnly      - logged-in user signed in via
+	//   (v1.8.0+)                       email+password (no Discord
+	//                                    marker in session) and isn't
+	//                                    a sysadmin. Bounce too -
+	//                                    same forced page, but its
+	//                                    CTA adapts to whether they
+	//                                    have Discord linked yet.
+	//
+	// loginDiscordOnly() implies requiresLink(), so the second hook
+	// only adds the post-Nova-auth bounce; the no-Discord case is
+	// already handled by the first hook.
 	$ci =& get_instance();
-	if ($ci->session && \nova_ext_sim_central\DiscordAuth::shouldEnforceLink($ci->uri->uri_string())) {
-		$ci->session->set_flashdata('discord_auth_message',
-			'This sim requires a linked Discord account before you can continue.');
-		header('Location: '.\nova_ext_sim_central\DiscordAuth::requiredPageUrl(), true, 302);
-		exit;
+	if ($ci->session) {
+		$uri = $ci->uri->uri_string();
+		if (\nova_ext_sim_central\DiscordAuth::shouldEnforceLink($uri)) {
+			$ci->session->set_flashdata('discord_auth_message',
+				'This sim requires a linked Discord account before you can continue.');
+			header('Location: '.\nova_ext_sim_central\DiscordAuth::requiredPageUrl(), true, 302);
+			exit;
+		}
+		if (\nova_ext_sim_central\DiscordAuth::shouldEnforceDiscordOnly($uri)) {
+			$ci->session->set_flashdata('discord_auth_message',
+				'This sim requires Discord sign-in. Please use the Sign in with Discord button.');
+			header('Location: '.\nova_ext_sim_central\DiscordAuth::requiredPageUrl(), true, 302);
+			exit;
+		}
 	}
 }
 if ( ! empty($simCentralFeatures['summary'])) {

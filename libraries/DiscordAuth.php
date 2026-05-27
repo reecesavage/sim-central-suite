@@ -82,11 +82,95 @@ class DiscordAuth
 	 * in with email + password (useful if Discord OAuth is down).
 	 * They just can't navigate anywhere except the forced-link page
 	 * until they finish linking.
+	 *
+	 * Implicitly true when loginDiscordOnly() is on - if users have
+	 * to sign in via Discord, they have to have Discord linked.
 	 */
 	public static function requiresLink()
 	{
+		if (self::loginDiscordOnly()) {
+			return true;
+		}
 		$c = Config::load();
 		return ! empty($c['setting']['discord_auth_required']);
+	}
+
+	/**
+	 * True if the admin has restricted sign-in to "Discord only" -
+	 * the email + password login form is hidden by default (revealable
+	 * behind a "sysadmin sign-in" toggle), and non-sysadmin users who
+	 * successfully log in via email + password are immediately bounced
+	 * to a Discord sign-in page. Sysadmins can still use email +
+	 * password (escape hatch for when Discord OAuth is down).
+	 *
+	 * Enforced via:
+	 *   - login form UI hides the email + password form (event)
+	 *   - per-request hook in init.php redirects non-sysadmin users
+	 *     who lack the discord_auth_signed_in session marker
+	 *   - loginUserById sets the marker when a user signs in via the
+	 *     Discord flow; linkUserToDiscord (from the controller's link
+	 *     branch) also sets it, since linking proves Discord ownership
+	 */
+	public static function loginDiscordOnly()
+	{
+		$c = Config::load();
+		return ! empty($c['setting']['discord_auth_login_discord_only']);
+	}
+
+	/**
+	 * Per-request enforcement for the Discord-only login mode. Returns
+	 * true if the current request should be redirected to the forced
+	 * Discord sign-in page (controller's required() route).
+	 *
+	 * Skipped when:
+	 *   - login_discord_only is off
+	 *   - user isn't logged in
+	 *   - user is a sysadmin (escape hatch)
+	 *   - user signed in via the Discord flow this session
+	 *   - request is for a URL that must stay reachable (Discord auth
+	 *     flow itself, logout, assets)
+	 */
+	public static function shouldEnforceDiscordOnly($currentUri)
+	{
+		if ( ! self::loginDiscordOnly()) {
+			return false;
+		}
+		if ( ! \Auth::is_logged_in()) {
+			return false;
+		}
+
+		$ci =& get_instance();
+		$userid = (int) $ci->session->userdata('userid');
+		if ($userid <= 0) {
+			return false;
+		}
+
+		// Sysadmin escape hatch - they can use email + password.
+		if (\Auth::is_sysadmin($userid)) {
+			return false;
+		}
+
+		// Session marker set on Discord-flow login OR Discord link
+		// (linking proves ownership, equivalent to a fresh sign-in).
+		if ($ci->session->userdata('discord_auth_signed_in')) {
+			return false;
+		}
+
+		// Same skip list as requiresLink - keep the Discord auth flow
+		// reachable, keep logout reachable, ignore static assets.
+		$skip = array(
+			'extensions/nova_ext_sim_central/discordauth',
+			'login',
+			'assets/',
+		);
+		$uri = strtolower(ltrim((string) $currentUri, '/'));
+		foreach ($skip as $prefix) {
+			if (strpos($uri, $prefix) === 0) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**
@@ -492,6 +576,12 @@ class DiscordAuth
 
 		$ci->user->update_login_record($person->userid, now());
 		$ci->session->set_userdata($array);
+
+		// Marker used by shouldEnforceDiscordOnly() to recognise that
+		// this session was established via the Discord OAuth flow (not
+		// email + password). The discord-only enforcement hook leaves
+		// sessions with this marker alone.
+		$ci->session->set_userdata('discord_auth_signed_in', true);
 		return array('ok', null);
 	}
 

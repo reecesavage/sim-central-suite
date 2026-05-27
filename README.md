@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.7.0"><img src="https://img.shields.io/badge/Version-v1.7.0-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.8.0"><img src="https://img.shields.io/badge/Version-v1.8.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -17,7 +17,7 @@ This release rolls up:
 - **URL Parser** &mdash; site-wide shortcode tags that expand to anchors (`[docs|getting-started]`)
 - **Ordered Mission Posts** &mdash; order posts by Day/Time, Date/Time, or Stardate; optional post numbering; configurable date + time display formats; HTML5 native date/time inputs; inline word counts on the missions pages
 - **Content Filter** &mdash; age-gates mission post bodies on the public site and in the RSS feed for sims that permit adult language, violence, or sexual content; configurable default for the per-post toggle; writer attests at submit time
-- **Discord Sign-In** &mdash; "Sign in with Discord" / "Sign up with Discord" via the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker); one Discord app serves any number of sims (no per-sim redirect URI registration); link/unlink controls on User Account; optional site-wide enforcement that requires every user to keep Discord linked; optional gate by Discord server membership (any-of / all-of); Discord-branded buttons everywhere
+- **Discord Sign-In** &mdash; "Sign in with Discord" / "Sign up with Discord" via the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker); one Discord app serves any number of sims (no per-sim redirect URI registration); link/unlink controls on User Account; optional site-wide enforcement that requires every user to keep Discord linked; optional Discord-only sign-in mode with a sysadmin email + password escape hatch; optional gate by Discord server membership (any-of / all-of); Discord-branded buttons everywhere
 
 ## Requirements
 
@@ -181,6 +181,7 @@ Adds five columns to `users`: `nova_ext_discord_auth_id` (UNIQUE-indexed Discord
 - **Require linking Discord to join** *(v1.3.1+)* &mdash; when on, the join form refuses to submit unless the user has clicked "Link Discord" first. Client-side enforcement; admins should still verify at character-approval time if strictness matters.
 - **Require all users to keep Discord linked** *(v1.4.0+)* &mdash; site-wide enforcement. Logged-in users without a Discord ID are redirected to a dedicated forced-link page on every request until they link. Unlinking is disabled while this is on; users can still <em>change</em> to a different Discord account. The email + password login form itself is NOT blocked &mdash; users can still sign in with their sim password (so they aren't locked out if Discord OAuth is down), they just can't navigate anywhere except the forced-link page until linking is finished.
 - **Required Discord guild membership** *(v1.7.0+)* &mdash; optional gate by Discord server membership. Paste one or more Discord guild snowflake IDs, pick **Any of** (default) or **All of**, write a help-text snippet (HTML allowed for invite-link anchors). Users not satisfying the gate are shown a refusal page with the help text. Requires broker v1.1.0+; the suite passes `?guilds=1` to opt into the broker's `guilds` scope only when this is configured (so sims without a guild check see no change to their Discord consent prompt). No bot required &mdash; uses Discord's OAuth `guilds` scope on the user's own access token.
+- **Lock sign-in to Discord** *(v1.8.0+)* &mdash; hide the email + password form on the login page (revealable behind a "Sysadmin sign-in" toggle) and bounce every non-sysadmin who signs in via email + password to a forced Discord sign-in page on every request. Sysadmins can still use email + password (escape hatch for when Discord OAuth is down). Implicitly enables *Require all users to keep Discord linked*. The forced page adapts: "Link Discord" if they're not linked yet, "Sign in with Discord" if they are linked but haven't authenticated via the Discord flow this session.
 
 The suite always rejects Discord accounts whose email isn't verified (enforced at both the broker and the suite as defense-in-depth).
 

@@ -994,6 +994,15 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				((int) $_POST['discord_auth_required'] === 1) ? 1 : 0;
 		}
 
+		// Discord-only login mode (v1.8.0+). When on, the email +
+		// password form is hidden on the login page (revealable for
+		// sysadmins), and non-sysadmins who somehow sign in via
+		// email + password get bounced to a Discord sign-in page.
+		if (isset($_POST['discord_auth_login_discord_only'])) {
+			$json['setting']['discord_auth_login_discord_only'] =
+				((int) $_POST['discord_auth_login_discord_only'] === 1) ? 1 : 0;
+		}
+
 		// Required Discord guild membership (v1.7.0+). Textarea input
 		// gets split on newlines, trimmed, filtered to digit-only IDs
 		// (Discord snowflakes), de-duplicated.

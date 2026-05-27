@@ -2,9 +2,10 @@
 	$settings       = isset($jsons['setting']) && is_array($jsons['setting']) ? $jsons['setting'] : array();
 	$brokerUrl      = isset($settings['discord_auth_broker_url']) ? $settings['discord_auth_broker_url'] : 'https://auth.simcentral.host';
 	$publicKey      = isset($settings['discord_auth_public_key']) ? $settings['discord_auth_public_key'] : '';
-	$requiredOnJoin = ! empty($settings['discord_auth_required_on_join']);
-	$requiredGlobal = ! empty($settings['discord_auth_required']);
-	$keyConfigured  = trim($publicKey) !== '';
+	$requiredOnJoin   = ! empty($settings['discord_auth_required_on_join']);
+	$requiredGlobal   = ! empty($settings['discord_auth_required']);
+	$discordOnlyLogin = ! empty($settings['discord_auth_login_discord_only']);
+	$keyConfigured    = trim($publicKey) !== '';
 
 	$guildIds   = isset($settings['discord_auth_required_guild_ids']) && is_array($settings['discord_auth_required_guild_ids'])
 		? $settings['discord_auth_required_guild_ids']
@@ -120,6 +121,27 @@
 	<p class="fontSmall gray italic">
 		The user must have a verified email on Discord either way &mdash; the broker refuses to issue
 		a token otherwise.
+	</p>
+
+	<p>
+		<input type="hidden" name="discord_auth_login_discord_only" value="0">
+		<label>
+			<input type="checkbox" name="discord_auth_login_discord_only" value="1"
+				<?php echo $discordOnlyLogin ? 'checked' : '';?>>
+			<strong>Lock sign-in to Discord (sysadmin email + password escape hatch)</strong>
+		</label>
+	</p>
+	<p class="fontSmall gray italic">
+		When on, the login page hides the email + password form behind a "Sysadmin sign-in"
+		toggle &mdash; visitors see the <strong>Sign in with Discord</strong> button by default.
+		Sysadmins can still use email + password (escape hatch for when Discord OAuth is down).
+		Non-sysadmins who somehow sign in via email + password are bounced to the forced sign-in
+		page on every request, with a button to sign in via Discord (if they're linked) or
+		link Discord (if they aren't).
+	</p>
+	<p class="fontSmall gray italic">
+		Turning this on also turns on <em>Require all users to keep Discord linked</em> (implicit
+		dependency) &mdash; users must have Discord linked to sign in via Discord.
 	</p>
 
 	<br>

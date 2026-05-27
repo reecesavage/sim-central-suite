@@ -102,6 +102,13 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 				);
 			}
 			$this->session->set_flashdata('discord_auth_message', 'Discord account linked.');
+
+			// Stamp the discord-only enforcement marker too: linking
+			// proves the user owns this Discord account, equivalent to
+			// signing in via Discord for the purposes of the
+			// "discord-only login" gate.
+			$this->session->set_userdata('discord_auth_signed_in', true);
+
 			redirect(site_url('user/account'));
 			return;
 		}
@@ -135,10 +142,18 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 	// ---------- /required ----------
 
 	/**
-	 * Forced-link landing page. The init.php enforcement hook redirects
-	 * here whenever a logged-in user has no Discord ID and the suite is
-	 * in "require linked Discord" mode. The page only shows a single
-	 * call to action - link Discord (or sign out).
+	 * Forced landing page. Two enforcement hooks redirect here:
+	 *
+	 *   - requiresLink() (v1.4.0)        - logged-in user has no Discord
+	 *                                       ID and the admin has marked
+	 *                                       linking as required.
+	 *   - loginDiscordOnly() (v1.8.0)    - logged-in user has Discord
+	 *                                       linked but didn't sign in
+	 *                                       via the Discord flow (and
+	 *                                       isn't a sysadmin).
+	 *
+	 * The single same view adapts its CTA to which case applies, based
+	 * on whether the user's row has a stored Discord ID.
 	 */
 	public function required()
 	{
@@ -151,20 +166,36 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 		$ci->load->model('users_model', 'user');
 		$row = $ci->user->get_user((int) $ci->session->userdata('userid'));
 
-		// If they're already linked, bounce them away - no reason to
-		// land them here. Defensive: shouldn't be reachable since the
-		// enforcement hook wouldn't have sent them here, but a stale
-		// open tab could.
-		if ($row && ! empty($row->nova_ext_discord_auth_id)) {
+		$hasLinked = $row && ! empty($row->nova_ext_discord_auth_id);
+		$signedIn  = (bool) $ci->session->userdata('discord_auth_signed_in');
+
+		// Already linked AND signed in via Discord this session?
+		// There's nothing for them to do here - bounce away. Stale
+		// open tabs and direct-URL visits land here too.
+		if ($hasLinked && $signedIn) {
 			redirect(site_url(''));
 			return;
 		}
 
+		// Pick CTA copy + intent based on whether they need to LINK
+		// Discord (no stored ID yet) or just SIGN IN via Discord
+		// (stored ID exists but the session marker is missing).
+		if ($hasLinked) {
+			$title     = 'Please sign in with Discord to continue';
+			$ctaLabel  = 'Sign in with Discord';
+			$ctaIntent = 'login';
+		} else {
+			$title     = 'Link your Discord to continue';
+			$ctaLabel  = 'Link Discord';
+			$ctaIntent = 'link';
+		}
+
 		$data = array(
-			'title'       => 'Link your Discord to continue',
+			'title'       => $title,
+			'has_linked'  => $hasLinked,
 			'button_html' => \nova_ext_sim_central\DiscordAuth::brandedButtonHtml(
-				'Link Discord',
-				site_url('extensions/nova_ext_sim_central/DiscordAuth/start?intent=link')
+				$ctaLabel,
+				site_url('extensions/nova_ext_sim_central/DiscordAuth/start?intent='.$ctaIntent)
 			),
 			'logout_url'  => site_url('login/logout'),
 		);
