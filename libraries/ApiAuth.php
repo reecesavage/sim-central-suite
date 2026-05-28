@@ -64,8 +64,23 @@ class ApiAuth
 		}
 
 		$ci   =& get_instance();
+
+		// Defensive: if the feature toggle is on but the admin hasn't run
+		// "Setup database" yet, the tokens table doesn't exist and every
+		// query below would 500. Surface that as a 503 so consumers know
+		// this is a server config problem, not an auth problem.
+		$prefix = $ci->db->dbprefix;
+		if ( ! $ci->db->table_exists($prefix.'sim_central_api_tokens')
+			&& ! $ci->db->table_exists('sim_central_api_tokens')) {
+			return array(
+				'status'  => 'unconfigured',
+				'code'    => 503,
+				'message' => 'REST API is enabled but the tokens table is missing. Ask the sim admin to run "Setup database" on the REST API feature.',
+			);
+		}
+
 		$hash = hash(self::HASH_ALGO, $raw);
-		$row  = $ci->db->get_where('nova_ext_sim_central_api_tokens', array('token_hash' => $hash))->row();
+		$row  = $ci->db->get_where('sim_central_api_tokens', array('token_hash' => $hash))->row();
 
 		if ( ! $row) {
 			return self::deny(401, 'Unknown token.');
@@ -90,7 +105,7 @@ class ApiAuth
 			return $rateResult;
 		}
 
-		$ci->db->where('id', $row->id)->update('nova_ext_sim_central_api_tokens', array(
+		$ci->db->where('id', $row->id)->update('sim_central_api_tokens', array(
 			'last_used_at' => date('Y-m-d H:i:s'),
 		));
 
@@ -142,7 +157,7 @@ class ApiAuth
 		$inWindow  = ($windowAt > 0) && (($now - $windowAt) < 60);
 
 		if ( ! $inWindow) {
-			$ci->db->where('id', $row->id)->update('nova_ext_sim_central_api_tokens', array(
+			$ci->db->where('id', $row->id)->update('sim_central_api_tokens', array(
 				'rate_window_at' => date('Y-m-d H:i:s', $now),
 				'rate_count'     => 1,
 			));
@@ -158,7 +173,7 @@ class ApiAuth
 		}
 
 		$ci->db->where('id', $row->id)->set('rate_count', 'rate_count + 1', false)
-			->update('nova_ext_sim_central_api_tokens');
+			->update('sim_central_api_tokens');
 		return null;
 	}
 

@@ -101,13 +101,21 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$action      = isset($_POST['action']) ? $_POST['action'] : '';
 		$newTokenRaw = null;
 
-		if ($action === 'create_token') {
-			list($result, $newTokenRaw) = $this->_createApiToken();
-			$this->_flash($result);
-		} elseif ($action === 'revoke_token') {
-			$this->_flash($this->_revokeApiToken());
-		} elseif ($action === 'delete_token') {
-			$this->_flash($this->_deleteApiToken());
+		// Defensive: the tokens table is created by the feature's *Setup
+		// database* step. If the admin enabled the feature toggle but hasn't
+		// run setup_database yet, every query below would 500. Detect that
+		// state explicitly and render a friendly prompt instead.
+		$dbReady = empty($this->_missingTables('rest_api'));
+
+		if ($dbReady) {
+			if ($action === 'create_token') {
+				list($result, $newTokenRaw) = $this->_createApiToken();
+				$this->_flash($result);
+			} elseif ($action === 'revoke_token') {
+				$this->_flash($this->_revokeApiToken());
+			} elseif ($action === 'delete_token') {
+				$this->_flash($this->_deleteApiToken());
+			}
 		}
 
 		$f               = $this->features['rest_api'];
@@ -115,10 +123,13 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['title']   = 'Sim Central Suite - '.$f['name'];
 		$data['feature'] = $f;
 		$data['jsons']   = $this->_loadConfig($configPath = dirname(__FILE__).'/../config.json');
-		$data['tokens']  = $this->db->order_by('revoked_at IS NULL', 'DESC', false)
-			->order_by('created_at', 'DESC')
-			->get('nova_ext_sim_central_api_tokens')
-			->result();
+		$data['db_ready']= $dbReady;
+		$data['tokens']  = $dbReady
+			? $this->db->order_by('revoked_at IS NULL', 'DESC', false)
+				->order_by('created_at', 'DESC')
+				->get('sim_central_api_tokens')
+				->result()
+			: array();
 		$data['available_scopes'] = $this->_apiAvailableScopes();
 		$data['new_token_raw']    = $newTokenRaw;
 		$data['images']           = $this->_iconImages();
@@ -559,7 +570,7 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				'summary'     => 'Exposes a read-only HTTP API for external integrations (n8n, scripts, dashboards). Tokens are managed under Configure and authenticate via Authorization: Bearer.',
 				'standalone'  => null,
 				'requires_tables' => array(
-					'nova_ext_sim_central_api_tokens' => "CREATE TABLE IF NOT EXISTS `{prefix}nova_ext_sim_central_api_tokens` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `token_hash` char(64) NOT NULL, `token_prefix` varchar(16) NOT NULL, `scopes` text NOT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_used_at` datetime DEFAULT NULL, `expires_at` datetime DEFAULT NULL, `revoked_at` datetime DEFAULT NULL, `rate_count` int(11) NOT NULL DEFAULT 0, `rate_window_at` datetime DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `token_hash` (`token_hash`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+					'sim_central_api_tokens' => "CREATE TABLE IF NOT EXISTS `{prefix}sim_central_api_tokens` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `token_hash` char(64) NOT NULL, `token_prefix` varchar(16) NOT NULL, `scopes` text NOT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_used_at` datetime DEFAULT NULL, `expires_at` datetime DEFAULT NULL, `revoked_at` datetime DEFAULT NULL, `rate_count` int(11) NOT NULL DEFAULT 0, `rate_window_at` datetime DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `token_hash` (`token_hash`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
 				),
 				'requires_db' => array(),
 				'shims'       => array(),
@@ -1358,7 +1369,7 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$token = \nova_ext_sim_central\ApiAuth::generateToken();
 		$userId = $this->session ? (int) $this->session->userdata('userid') : null;
 
-		$this->db->insert('nova_ext_sim_central_api_tokens', array(
+		$this->db->insert('sim_central_api_tokens', array(
 			'label'        => $label,
 			'token_hash'   => $token['hash'],
 			'token_prefix' => $token['prefix'],
@@ -1377,14 +1388,14 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		if ($id <= 0) {
 			return array('error', 'Invalid token id.');
 		}
-		$row = $this->db->get_where('nova_ext_sim_central_api_tokens', array('id' => $id))->row();
+		$row = $this->db->get_where('sim_central_api_tokens', array('id' => $id))->row();
 		if ( ! $row) {
 			return array('error', 'Token not found.');
 		}
 		if ( ! empty($row->revoked_at)) {
 			return array('success', 'Token was already revoked.');
 		}
-		$this->db->where('id', $id)->update('nova_ext_sim_central_api_tokens', array(
+		$this->db->where('id', $id)->update('sim_central_api_tokens', array(
 			'revoked_at' => date('Y-m-d H:i:s'),
 		));
 		return array('success', 'Token revoked.');
@@ -1396,7 +1407,7 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		if ($id <= 0) {
 			return array('error', 'Invalid token id.');
 		}
-		$this->db->where('id', $id)->delete('nova_ext_sim_central_api_tokens');
+		$this->db->where('id', $id)->delete('sim_central_api_tokens');
 		return array('success', 'Token deleted.');
 	}
 

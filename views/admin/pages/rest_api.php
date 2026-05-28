@@ -3,6 +3,7 @@
 	$availableScopes = isset($available_scopes) && is_array($available_scopes) ? $available_scopes : array();
 	$newTokenRaw     = isset($new_token_raw) ? $new_token_raw : null;
 	$apiBaseUrl      = isset($api_base_url) ? $api_base_url : '';
+	$dbReady         = isset($db_ready) ? (bool) $db_ready : true;
 ?>
 
 <?php echo text_output($title, 'h1', 'page-head');?>
@@ -12,6 +13,20 @@
 </p>
 
 <p><?php echo $feature['summary'];?></p>
+
+<?php if ( ! $dbReady): ?>
+	<div style="border: 2px solid #c33; background: #fff0f0; padding: 12px;">
+		<?php echo text_output('Database setup required', 'h3', 'red');?>
+		<p>
+			The <code>sim_central_api_tokens</code> table doesn't exist yet, so this page can't list or create tokens.
+		</p>
+		<p>
+			Go back to the <?php echo anchor('extensions/nova_ext_sim_central/Manage/index', 'Sim Central Suite dashboard');?>
+			and click <strong>Setup database</strong> on the REST API row. Then come back here.
+		</p>
+	</div>
+	<?php return; ?>
+<?php endif;?>
 
 <p class="fontSmall gray">
 	Base URL for API requests: <code><?php echo htmlspecialchars($apiBaseUrl, ENT_QUOTES);?></code><br>

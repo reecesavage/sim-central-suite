@@ -1,4 +1,4 @@
-# Sim Central Suite v1.9.0 &mdash; REST API
+# Sim Central Suite v1.9.1 &mdash; REST API
 
 Read-only HTTP API for external integrations. Designed primarily for [n8n](https://n8n.io/) workflows but works with any HTTP client. Admin-issued bearer tokens, per-scope grants, per-token rate limiting. The API is **off by default** and stays invisible until enabled.
 
@@ -88,7 +88,7 @@ Write endpoints (`POST /posts`, `PATCH /characters`, etc.) need a designated "AP
 
 - New library `libraries/ApiAuth.php` &mdash; `generateToken()` (raw + sha256 + display prefix), `validateBearer($header, $scope)` (returns `{status, code, message, token?}` covering 401/403/429/ok), and the rolling rate-limit counter. Loaded conditionally from `init.php` when the feature is on, matching the pattern used by every other feature.
 - New controller `controllers/Api.php` &mdash; no `Auth::is_logged_in()` in the constructor. Hard 404 if the feature toggle is off (no surface leak on sims that haven't opted in). Single `_emit()` exit point ensures uniform JSON content-type + cache-control headers + exit behaviour.
-- New table `nova_ext_sim_central_api_tokens` &mdash; `id`, `label`, `token_hash` (UNIQUE), `token_prefix`, `scopes` (JSON), `created_by`, `created_at`, `last_used_at`, `expires_at`, `revoked_at`, `rate_count`, `rate_window_at`. Installed via the standard *Setup database* flow.
+- New table `sim_central_api_tokens` (becomes `<dbprefix>sim_central_api_tokens` on disk, typically `nova_sim_central_api_tokens` &mdash; the name deliberately avoids a leading `nova_` so CI3's auto-prefix on Query Builder doesn't skip it) &mdash; `id`, `label`, `token_hash` (UNIQUE), `token_prefix`, `scopes` (JSON), `created_by`, `created_at`, `last_used_at`, `expires_at`, `revoked_at`, `rate_count`, `rate_window_at`. Installed via the standard *Setup database* flow.
 - New view `views/admin/pages/rest_api.php` &mdash; list, create form, one-time reveal, per-row revoke/delete buttons with confirm dialogs.
 - `controllers/Manage.php` &mdash; new `rest_api()` route + private helpers (`_createApiToken`, `_revokeApiToken`, `_deleteApiToken`, `_apiAvailableScopes`). New entry in `_featureRegistry()` using the `requires_tables` pattern (same as URL Parser).
 - `config.json` &mdash; new `rest_api` feature toggle (default off) and `rest_api_rate_limit_per_minute` setting (default 60).
@@ -107,7 +107,7 @@ If you don't want this feature, leave it off &mdash; every endpoint will return 
 If anything breaks, the recovery path is:
 
 - Disable the feature from the dashboard. All endpoints return to `404`.
-- Or wipe all tokens at once: `UPDATE nova_nova_ext_sim_central_api_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL;`
+- Or wipe all tokens at once: `UPDATE nova_sim_central_api_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL;`
 
 ## Credits
 

@@ -9,7 +9,7 @@ The suite's REST API exposes read-only HTTP endpoints for external integrations:
 ## Setup
 
 1. *Sim Central Suite &rarr; REST API &rarr;* **Enable**.
-2. Click **Setup database**. This creates `<prefix>nova_ext_sim_central_api_tokens`.
+2. Click **Setup database**. This creates `<prefix>sim_central_api_tokens` (typically `nova_sim_central_api_tokens`).
 3. Click **Configure** &rarr; fill in a label, tick the scopes you want, optionally set an expiry &rarr; **Create Token**.
 4. **Copy the token immediately.** It is shown exactly once. Only its hash is stored.
 
