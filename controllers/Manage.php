@@ -684,23 +684,28 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				),
 				'requires_db' => array(),
 				'shims' => array(
+					// NOTE: no standalone_marker_* fields on these two. The
+					// standalone-marker mechanism is for identifying a
+					// PREDECESSOR extension's block to take over (the way
+					// display_name takes over nova_ext_display_name's
+					// character marker). For a brand-new feature with no
+					// predecessor, omit the fields entirely - otherwise the
+					// two shims register themselves as standalone markers
+					// and each strips the other on install, causing the
+					// dashboard to ping-pong forever between the two states.
 					'webhooks_create' => array(
-						'file'                  => APPPATH.'models/Posts_model.php',
-						'txt'                   => dirname(__FILE__).'/../posts_model_create.txt',
-						'tag'                   => 'webhooks_create',
-						'method'                => 'create_mission_entry',
-						'label'                 => 'Post create webhook hook',
-						'standalone_marker_ns'  => 'nova_ext_sim_central',
-						'standalone_marker_tag' => 'webhooks_create',
+						'file'   => APPPATH.'models/Posts_model.php',
+						'txt'    => dirname(__FILE__).'/../posts_model_create.txt',
+						'tag'    => 'webhooks_create',
+						'method' => 'create_mission_entry',
+						'label'  => 'Post create webhook hook',
 					),
 					'webhooks_update' => array(
-						'file'                  => APPPATH.'models/Posts_model.php',
-						'txt'                   => dirname(__FILE__).'/../posts_model_update.txt',
-						'tag'                   => 'webhooks_update',
-						'method'                => 'update_post',
-						'label'                 => 'Post update webhook hook',
-						'standalone_marker_ns'  => 'nova_ext_sim_central',
-						'standalone_marker_tag' => 'webhooks_update',
+						'file'   => APPPATH.'models/Posts_model.php',
+						'txt'    => dirname(__FILE__).'/../posts_model_update.txt',
+						'tag'    => 'webhooks_update',
+						'method' => 'update_post',
+						'label'  => 'Post update webhook hook',
 					),
 				),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/webhooks',
