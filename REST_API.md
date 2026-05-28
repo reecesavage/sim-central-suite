@@ -15,6 +15,15 @@ The suite's REST API exposes read-only HTTP endpoints for external integrations:
 
 Tokens are managed entirely in the ACP. There is no self-service issuance &mdash; only sysadmins with access to `site/settings` can create or revoke them.
 
+## Interactive explorer + OpenAPI spec
+
+Once the feature is enabled, two helper surfaces appear:
+
+- **API Explorer** *(admin only)* &mdash; *REST API &rarr; API Explorer*. Lists every endpoint with parameters, response shapes, and a **Try it** button per endpoint that fires a live request and renders the JSON response inline. Also has **Copy curl** buttons. Use this for hands-on debugging before / instead of writing an external script.
+- **OpenAPI 3.0 spec** *(public when feature on, 404 when off)* &mdash; `GET /extensions/nova_ext_sim_central/Api/openapi`. Machine-readable description of every endpoint, every parameter, every response schema. Importable into Postman, Insomnia, Stoplight, n8n's OpenAPI nodes, etc. No authentication required &mdash; the spec is a public document by convention.
+
+The explorer page and the OpenAPI spec read from the same in-code endpoint catalog, so they always stay in sync with what the API actually does.
+
 ---
 
 ## Authentication

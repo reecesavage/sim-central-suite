@@ -143,6 +143,47 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		Template::render();
 	}
 
+	public function api_explorer()
+	{
+		Auth::check_access('site/settings');
+
+		if ( ! isset($this->features['rest_api'])) {
+			show_404();
+			return;
+		}
+
+		require_once dirname(__FILE__).'/../libraries/ApiEndpoints.php';
+
+		$f               = $this->features['rest_api'];
+		$data            = array();
+		$data['title']   = 'Sim Central Suite - API Explorer';
+		$data['feature'] = $f;
+		$data['jsons']   = $this->_loadConfig(dirname(__FILE__).'/../config.json');
+		$data['endpoints'] = \nova_ext_sim_central\ApiEndpoints::endpoints();
+		$data['schemas']   = \nova_ext_sim_central\ApiEndpoints::schemas();
+		$data['api_base_url'] = site_url('extensions/nova_ext_sim_central/Api');
+		$data['openapi_url']  = site_url('extensions/nova_ext_sim_central/Api/openapi');
+
+		// Active tokens for the Try It selector. We never expose token_hash
+		// or anything that could reveal the raw value - admins paste their
+		// own token into the input. Listing labels + prefixes is for the
+		// UX hint ("you have these tokens; paste the corresponding scapi_..").
+		$data['token_hints'] = $this->db
+			->select('label, token_prefix, scopes')
+			->where('revoked_at IS NULL', null, false)
+			->where('(expires_at IS NULL OR expires_at > NOW())', null, false)
+			->order_by('label', 'asc')
+			->get('sim_central_api_tokens')
+			->result();
+
+		$this->_regions['title']  .= 'API Explorer';
+		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
+			->view('api_explorer', $this->skin, 'admin', $data);
+
+		Template::assign($this->_regions);
+		Template::render();
+	}
+
 	public function discord_auth()
 	{
 		Auth::check_access('site/settings');

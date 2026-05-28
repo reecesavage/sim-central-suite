@@ -142,6 +142,9 @@ if ( ! empty($simCentralFeatures['discord_auth'])) {
 // controllers themselves.
 if ( ! empty($simCentralFeatures['rest_api'])) {
 	require_once dirname(__FILE__).'/libraries/ApiAuth.php';
+	// ApiEndpoints is consumed by Api::openapi() and Manage::api_explorer().
+	// Loading it alongside ApiAuth keeps the on-demand work in the same place.
+	require_once dirname(__FILE__).'/libraries/ApiEndpoints.php';
 }
 
 if ( ! empty($simCentralFeatures['summary'])) {

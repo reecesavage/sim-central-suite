@@ -35,6 +35,11 @@
 	See <code>REST_API.md</code> for the full reference and troubleshooting.
 </p>
 
+<p>
+	<?php echo anchor('extensions/nova_ext_sim_central/Manage/api_explorer', '&rarr; Open the API Explorer', array('class' => 'image'));?>
+	&nbsp;<span class="fontSmall gray">&mdash; interactive try-it page for every endpoint, plus a link to the OpenAPI 3.0 spec.</span>
+</p>
+
 <?php if ($newTokenRaw !== null): ?>
 	<br>
 	<div style="border: 2px solid #c80; background: #fff8e1; padding: 12px;">

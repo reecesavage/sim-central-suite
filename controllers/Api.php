@@ -48,6 +48,23 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 * Returns {ok: true, token_label: "..."} on success. Used by n8n to
 	 * validate that a token is good before wiring up the rest of a flow.
 	 */
+	/**
+	 * GET /extensions/nova_ext_sim_central/Api/openapi
+	 *
+	 * Returns the OpenAPI 3.0 spec for this API. No authentication required -
+	 * the spec is a public document by convention (Postman, n8n, etc. fetch
+	 * specs unauthenticated to bootstrap integrations). Still gated by the
+	 * feature toggle: 404 when REST API is off, so no surface leaks on sims
+	 * that haven't opted in.
+	 */
+	public function openapi()
+	{
+		$this->_gate();
+		$baseUrl = site_url('extensions/nova_ext_sim_central/Api');
+		$baseUrl = rtrim($baseUrl, '/');
+		$this->_emit(200, \nova_ext_sim_central\ApiEndpoints::toOpenApi($baseUrl));
+	}
+
 	public function ping()
 	{
 		$this->_gate();

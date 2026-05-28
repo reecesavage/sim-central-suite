@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.9.3"><img src="https://img.shields.io/badge/Version-v1.9.3-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.10.0"><img src="https://img.shields.io/badge/Version-v1.10.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -224,6 +224,8 @@ Endpoints (all under `/extensions/nova_ext_sim_central/Api/`):
 Response JSON uses whitelisted, documented fields &mdash; not raw column dumps &mdash; so internal schema churn doesn't leak through. Suite-feature fields are **layered on conditionally**: when *Mission Post Summary* is on, posts gain a `summary` key; when *Ordered Mission Posts* is on, posts gain an `ordered` object and missions gain ordering config; when *Display Name* is on, characters gain `display_name` and a precomputed `preferred_name`; when *Content Filter* is on, posts gain an `age_gated` boolean (full content is still returned &mdash; the flag lets consumers decide whether to redact). Field *presence* is the signal that a feature is enabled &mdash; consumers can detect what's available without an extra config endpoint.
 
 Designed primarily for [n8n](https://n8n.io/) consumers but works with any HTTP client. See [`REST_API.md`](REST_API.md) for the full endpoint reference: every parameter, every response field, curl + n8n examples, and the error-code matrix.
+
+**API Explorer + OpenAPI spec** *(v1.10.0+)*: The suite ships an interactive explorer at *REST API &rarr; API Explorer* &mdash; lists every endpoint, lets you fire requests against the live API from the admin page, and shows the JSON response inline. Every endpoint also has a "Copy curl" button. The same catalog is exposed as a machine-readable **OpenAPI 3.0** document at `/extensions/nova_ext_sim_central/Api/openapi` (public when the feature is on, 404 when off &mdash; same as every other endpoint), importable into Postman, Insomnia, Stoplight, n8n's OpenAPI nodes, or any other OpenAPI-aware tooling.
 
 ## Reset / uninstall
 
