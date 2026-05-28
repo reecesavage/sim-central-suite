@@ -97,9 +97,16 @@
 			(it always tags the authors and notes that a draft was updated).
 		</p>
 		<p class="fontSmall">
-			Variables: <code>{sim_name}</code>, <code>{post_title}</code>, <code>{post_type}</code>, <code>{authors}</code>
-			(with @mentions), <code>{authors_plain}</code>, <code>{mission}</code>, <code>{location}</code>,
-			<code>{timeline}</code>, <code>{body}</code>, <code>{url}</code>, <code>{url_admin}</code>, <code>{actor}</code>.
+			Variables: <code>{sim_name}</code>, <code>{post_title}</code>, <code>{post_type}</code>,
+			<code>{authors}</code> (plain "Rank Name" &mdash; no pings), <code>{authors_plain}</code> (alias),
+			<code>{authors_mentions}</code> (clickable Discord mentions, but silent &mdash; post.posted never pings),
+			<code>{mission}</code>, <code>{location}</code>, <code>{timeline}</code>, <code>{body}</code>,
+			<code>{url}</code>, <code>{url_admin}</code>, <code>{actor}</code>.
+		</p>
+		<p class="fontSmall gray">
+			Note: the default description already ends with a <code>[Read the full post]({url})</code> line, so
+			<code>{body}</code> is the excerpt only (no trailing link). Authors are <strong>not</strong> pinged on
+			<code>post.posted</code> &mdash; only <code>post.saved</code> tags them.
 		</p>
 
 		<p>
@@ -157,9 +164,9 @@
 				}
 			?>
 			<tr class="alt">
-				<td>
+				<td style="max-width: 360px;">
 					<strong><?php echo htmlspecialchars($w->label, ENT_QUOTES);?></strong><br>
-					<span class="fontSmall gray"><?php echo htmlspecialchars($w->url, ENT_QUOTES);?></span>
+					<span class="fontSmall gray" style="word-break: break-all; overflow-wrap: anywhere; display: block;"><?php echo htmlspecialchars($w->url, ENT_QUOTES);?></span>
 				</td>
 				<td><code><?php echo htmlspecialchars($w->format, ENT_QUOTES);?></code></td>
 				<td class="fontSmall">

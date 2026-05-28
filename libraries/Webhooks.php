@@ -157,9 +157,6 @@ class Webhooks
 	 */
 	private static function buildDiscord($webhook, $eventName, $post)
 	{
-		$mentions = self::authorMentions($post);
-		$contentLine = empty($mentions) ? '' : implode(' ', $mentions);
-
 		if ($eventName === self::EVENT_POSTED) {
 			$titleTpl = trim((string) $webhook->template_title) !== ''
 				? $webhook->template_title
@@ -177,19 +174,29 @@ class Webhooks
 				'timestamp'   => date('c', (int) $post['post_date']),
 			);
 
+			// post.posted does NOT ping. It's a public announcement - the
+			// byline shows plain "Rank Name" via {authors}; no @mentions in
+			// content means no notification spam to the authors every time a
+			// post they're on goes live. (Pinging is reserved for post.saved,
+			// where the point IS to alert co-authors a draft changed.)
 			return array(
-				'content' => $contentLine,
+				'content' => '',
 				'embeds'  => array($embed),
 			);
 		}
 
-		// post.saved
+		// post.saved - this one DOES ping. The mentions go in `content` so
+		// every linked author actually gets a notification that the draft
+		// they're on has a new revision to look at.
+		$mentions    = self::authorMentions($post);
+		$contentLine = empty($mentions) ? '' : implode(' ', $mentions);
+
 		$vars  = self::templateVars($post, false);
 		$title = 'A saved mission post has been updated';
 		$desc  = "**Title** - {$vars['{post_title}']}\n"
 			.   "**Mission** - {$vars['{mission}']}\n"
 			.   "**Saved by** - {$vars['{actor}']}\n\n"
-			.   "[Open in writer]({$vars['{url_admin}']})";
+			.   "[View the post]({$vars['{url_admin}']})";
 
 		return array(
 			'content' => $contentLine,
@@ -367,26 +374,36 @@ class Webhooks
 
 	private static function templateVars($post, $includeBody)
 	{
-		$authorsRich = self::renderAuthorsWithMentions($post['authors']);
-		$authorsPlain = self::renderAuthorsPlain($post['authors']);
+		// {authors} renders PLAIN "Rank Name" by default - that's what the
+		// post.posted byline wants (a public announcement, no pings). Anyone
+		// who specifically wants clickable mentions in a custom template can
+		// use {authors_mentions}; note that mentions only *ping* if they're
+		// also in the payload's `content` field, which post.posted leaves
+		// empty - so {authors_mentions} renders clickable-but-silent.
+		$authorsPlain    = self::renderAuthorsPlain($post['authors']);
+		$authorsMentions = self::renderAuthorsWithMentions($post['authors']);
 
 		$vars = array(
-			'{sim_name}'      => $post['sim_name'],
-			'{post_title}'    => $post['post_title'],
-			'{post_type}'     => 'Mission Post',
-			'{authors}'       => $authorsRich,
-			'{authors_plain}' => $authorsPlain,
-			'{mission}'       => $post['mission_title'] !== '' ? $post['mission_title'] : '(no mission)',
-			'{location}'      => $post['post_location'] !== '' ? $post['post_location'] : '(unspecified)',
-			'{timeline}'      => $post['timeline_formatted'] !== '' ? $post['timeline_formatted'] : '(no timeline)',
-			'{url}'           => $post['url_public'],
-			'{url_admin}'     => $post['url_admin'],
-			'{actor}'         => $post['actor']['name'],
+			'{sim_name}'         => $post['sim_name'],
+			'{post_title}'       => $post['post_title'],
+			'{post_type}'        => 'Mission Post',
+			'{authors}'          => $authorsPlain,
+			'{authors_plain}'    => $authorsPlain,
+			'{authors_mentions}' => $authorsMentions,
+			'{mission}'          => $post['mission_title'] !== '' ? $post['mission_title'] : '(no mission)',
+			'{location}'         => $post['post_location'] !== '' ? $post['post_location'] : '(unspecified)',
+			'{timeline}'         => $post['timeline_formatted'] !== '' ? $post['timeline_formatted'] : '(no timeline)',
+			'{url}'              => $post['url_public'],
+			'{url_admin}'        => $post['url_admin'],
+			'{actor}'            => $post['actor']['name'],
 		);
 
 		if ($includeBody) {
 			$markdown = self::htmlToMarkdown($post['post_content']);
-			$vars['{body}'] = self::smartTruncate($markdown, self::BODY_MAX_CHARS, $post['url_public']);
+			// Truncate only - the read-more link is owned by the template
+			// (the default description ends with "[Read the full post]({url})").
+			// Appending it here too produced a duplicate link.
+			$vars['{body}'] = self::smartTruncate($markdown, self::BODY_MAX_CHARS);
 		}
 
 		return $vars;
@@ -540,31 +557,32 @@ class Webhooks
 	}
 
 	/**
-	 * Truncate at a sensible boundary (paragraph -> sentence -> word) and
-	 * append a "Read the full post" link. Mirrors the user's JS smartTruncate.
+	 * Truncate at a sensible boundary (paragraph -> sentence -> word),
+	 * appending an ellipsis marker when the text was actually cut. Does NOT
+	 * append a "Read the full post" link - that's owned by the template's
+	 * {url} line, so adding it here too would duplicate it.
 	 */
-	public static function smartTruncate($text, $max, $url)
+	public static function smartTruncate($text, $max)
 	{
-		$readMore = "\n\n[Read the full post](".$url.")";
 		if (mb_strlen($text) <= $max) {
-			return $text.$readMore;
+			return $text;
 		}
 		$chunk = mb_substr($text, 0, $max);
 
 		$paraBreak = mb_strrpos($chunk, "\n\n");
 		if ($paraBreak !== false && $paraBreak > $max * 0.5) {
-			return mb_substr($chunk, 0, $paraBreak)."\n\n...".$readMore;
+			return mb_substr($chunk, 0, $paraBreak)."\n\n...";
 		}
 
 		if (preg_match('/^([\s\S]*[.!?])\s/u', $chunk, $m) && mb_strlen($m[1]) > $max * 0.5) {
-			return $m[1]."\n\n...".$readMore;
+			return $m[1]."\n\n...";
 		}
 
 		$wordBreak = mb_strrpos($chunk, ' ');
 		if ($wordBreak === false) {
-			return $chunk."...".$readMore;
+			return $chunk."...";
 		}
-		return mb_substr($chunk, 0, $wordBreak)."\n\n...".$readMore;
+		return mb_substr($chunk, 0, $wordBreak)."\n\n...";
 	}
 
 	// ---------- delivery ----------

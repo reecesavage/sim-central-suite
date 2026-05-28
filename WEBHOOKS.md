@@ -48,10 +48,15 @@ description: **Title** - {post_title}
              **Mission** - {mission}
              **Saved by** - {actor}
 
-             [Open in writer]({url_admin})
+             [View the post]({url_admin})
 ```
 
 Always tags every linked author in the `content` line so the whole co-author group gets a notification ping that the draft moved.
+
+### Pinging vs. not pinging
+
+- **`post.posted` does not ping.** It's a public announcement — the byline (`{authors}`) renders plain "Rank Name" text and the payload `content` is empty, so authors don't get a notification every time one of their posts goes live.
+- **`post.saved` pings.** The whole point of the saved event is to alert co-authors that a draft they're on has a new revision. Linked authors go in the `content` field as `<@id>` mentions (which is what actually triggers a Discord notification).
 
 **Template variables**
 
@@ -60,12 +65,13 @@ Always tags every linked author in the `content` line so the whole co-author gro
 | `{sim_name}` | The sim's name from Nova settings |
 | `{post_title}` | The post's title field |
 | `{post_type}` | Always `Mission Post` for v1 |
-| `{authors}` | Author list rendered with Discord `<@id>` mentions where the author's linked user has a stored Discord ID, otherwise `Rank First Last` plain text |
-| `{authors_plain}` | Same list but always plain text (no mentions) |
+| `{authors}` | Author list as plain `Rank Name` text (no mentions, no pings) — the default for the public `post.posted` byline |
+| `{authors_plain}` | Alias for `{authors}` |
+| `{authors_mentions}` | Author list with Discord `<@id>` mentions where linked, else plain text. Renders clickable but stays **silent** on `post.posted` (a mention only pings when it's in the payload `content` field, which `post.posted` leaves empty) |
 | `{mission}` | Mission title (or `(no mission)` if unset) |
 | `{location}` | Raw `post_location` field |
 | `{timeline}` | Pulled from the ordered_mission_posts columns if that feature is on, else falls back to `post_timeline` |
-| `{body}` | HTML-stripped, Markdown-flavoured body excerpt, smart-truncated to ~800 chars with a *Read the full post* link |
+| `{body}` | HTML-stripped, Markdown-flavoured body excerpt, smart-truncated to ~800 chars (excerpt only — the *Read the full post* link is the template's `{url}` line, not baked into the body) |
 | `{url}` | Public post URL: `/sim/viewpost/{id}` |
 | `{url_admin}` | Backend write URL: `/write/missionpost/{id}/view` |
 | `{actor}` | Display name of the character whose user did the save |
@@ -137,14 +143,14 @@ Two webhooks are subscribed to `post.posted`:
 1. **Discord** to `#mission-posts` channel, format = `discord`, default templates.
 2. **n8n** to `https://n8n.example/webhook/abc`, format = `generic`.
 
-The Discord webhook receives:
+The Discord webhook receives (note: empty `content` — `post.posted` doesn't ping):
 
 ```json
 {
-  "content": "<@111122223333444455> <@555566667777888899>",
+  "content": "",
   "embeds": [{
     "title":       "USS Excalibur Post | The stars look very different",
-    "description": "*A mission post by <@111122223333444455>, Zayin Theta-108, & The Commander*\n\n**Mission** - UnderMind\n**Location** - USS Excalibur - Intergalactic Void - Universe K-11\n**Timeline** - Day 4 at 1900\n\nLieutenant Jason Koloamatangi's excitement about being assigned the alpha shift helmsman...\n\n...\n\n[Read the full post](https://...)",
+    "description": "*A mission post by Commander Alex Flynn, Zayin Theta-108, & The Commander*\n\n**Mission** - UnderMind\n**Location** - USS Excalibur - Intergalactic Void - Universe K-11\n**Timeline** - Day 4 at 1900\n\nLieutenant Jason Koloamatangi's excitement about being assigned the alpha shift helmsman...\n\n...\n\n[Read the full post](https://yoursim.example/sim/viewpost/42)",
     "url":         "https://yoursim.example/sim/viewpost/42",
     "color":       0x3498DB,
     "timestamp":   "2026-05-28T01:13:00+00:00"
@@ -152,7 +158,7 @@ The Discord webhook receives:
 }
 ```
 
-Authors with linked Discord IDs are `<@...>` mentions; authors without get rendered as `Rank First Last`. All linked author mentions also go in `content` so they each get a notification ping.
+The `post.posted` byline (`{authors}`) is plain "Rank Name" text — a public announcement shouldn't ping every author each time a post goes live. For the ping behaviour, that's `post.saved`: it puts every linked author's `<@id>` in the `content` field so they each get notified that a draft they're on changed.
 
 The n8n webhook receives the structured JSON shown in the **Generic JSON** section. From there your flow can do whatever — repost to a different channel, archive to a spreadsheet, fan out to per-author DMs, whatever you want.
 
@@ -178,7 +184,9 @@ By design — `post.posted` is the *transition* event, not "post was saved while
 
 ### Authors aren't getting pinged
 
-Pinging requires the author's linked Nova user to have `nova_ext_discord_auth_id` set. That happens automatically when a user signs in via *Discord Sign-In* or links their Discord from the User Account page. Authors whose linked user hasn't connected Discord, or whose Nova user isn't linked to a character, render as plain text — they appear in the message but don't get pinged.
+First check the event: only **`post.saved`** pings. `post.posted` is a public announcement and deliberately never pings (it shows plain "Rank Name" bylines). If you want a ping when a draft changes, subscribe a webhook to `post.saved`.
+
+For `post.saved`, pinging requires the author's linked Nova user to have `nova_ext_discord_auth_id` set. That happens automatically when a user signs in via *Discord Sign-In* or links their Discord from the User Account page. Authors whose linked user hasn't connected Discord, or whose Nova user isn't linked to a character, render as plain text — they appear in the message but don't get pinged.
 
 ### My Discord template variables aren't substituting
 
