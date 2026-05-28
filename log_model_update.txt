@@ -1,0 +1,20 @@
+	/* nova_ext_sim_central:log_update v1 START - managed block, do not edit by hand */
+	public function update_log($id = '', $data = '', $identifier = 'log_id')
+	{
+		// Snapshot the prior status so log.posted only fires on the
+		// transition to activated, not on every edit of a live log.
+		$previousStatus = null;
+		if (class_exists('nova_ext_sim_central\\Webhooks')) {
+			$prev = $this->db->select('log_status')->get_where('personallogs', array('log_id' => $id))->row();
+			$previousStatus = $prev ? $prev->log_status : null;
+		}
+
+		$result = parent::update_log($id, $data, $identifier);
+
+		if ($result > 0 && class_exists('nova_ext_sim_central\\Webhooks')) {
+			\nova_ext_sim_central\Webhooks::onLogChanged($id, $data, $previousStatus);
+		}
+
+		return $result;
+	}
+	/* nova_ext_sim_central:log_update END */

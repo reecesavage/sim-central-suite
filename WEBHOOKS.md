@@ -8,10 +8,30 @@ Fires HTTP POST notifications when posts change state. Two events, two delivery 
 
 | Event | Fires when |
 |---|---|
-| `post.saved` | A draft post is created or saved (`post_status = 'saved'`). Both inserts and updates. |
-| `post.posted` | A post **transitions** from a non-activated status to `activated`. Edits of already-activated posts do **not** re-fire this event. |
+| `post.saved` | A draft mission post is created or saved (`post_status = 'saved'`). Both inserts and updates. |
+| `post.posted` | A mission post **transitions** to `activated`. Edits of already-activated posts do **not** re-fire. |
+| `log.posted` | A personal log **transitions** to `activated`. Activation only — no saved event. |
+| `news.posted` | A news item **transitions** to `activated`. Activation only. Honours the per-webhook public/private type filter. |
 
-Detection is hooked into `Posts_model::create_mission_entry` and `update_post` via managed-block shims. We snapshot the previous status before the update so we can tell a draft-edit (`saved → saved`) apart from a publication (`saved → activated`).
+Detection is hooked into the model layer via managed-block shims:
+
+| Event(s) | Shimmed model + methods |
+|---|---|
+| `post.*` | `Posts_model::create_mission_entry`, `update_post` |
+| `log.posted` | `Personallogs_model::create_personal_log`, `update_log` |
+| `news.posted` | `News_model::create_news_item`, `update_news_item` |
+
+We snapshot the previous status before each update so a transition to `activated` is told apart from an edit of an already-live item.
+
+### News public/private filter
+
+`news.posted` only fires for the news types a webhook opts into. On the Configure page each webhook subscribed to `news.posted` picks one of:
+
+- **Public** (default) — only public news items (`news_private = 'n'`)
+- **Private** — only private news items (`news_private = 'y'`)
+- **Both** — every news item
+
+This lets you route public announcements to a member-facing channel and keep private/staff news in a separate webhook (or skip it entirely).
 
 ---
 
@@ -53,10 +73,34 @@ description: **Title** - {post_title}
 
 Always tags every linked author in the `content` line so the whole co-author group gets a notification ping that the draft moved.
 
+**`log.posted` embed** (fixed format, no ping)
+
+```
+title:       {sim_name} Log | {log title}
+description: *A personal log by {author}*
+
+             {body}
+
+             [Read the full log]({url})
+```
+
+**`news.posted` embed** (fixed format, no ping)
+
+```
+title:       {sim_name} News | {news title}
+description: *{category} · {Public|Private} · by {author}*
+
+             {body}
+
+             [Read the full item]({url})
+```
+
+Only `post.posted` is templateable (via `template_title` / `template_description`). `post.saved`, `log.posted`, and `news.posted` use the fixed formats above.
+
 ### Pinging vs. not pinging
 
-- **`post.posted` does not ping.** It's a public announcement — the byline (`{authors}`) renders plain "Rank Name" text and the payload `content` is empty, so authors don't get a notification every time one of their posts goes live.
 - **`post.saved` pings.** The whole point of the saved event is to alert co-authors that a draft they're on has a new revision. Linked authors go in the `content` field as `<@id>` mentions (which is what actually triggers a Discord notification).
+- **Everything else does not ping.** `post.posted`, `log.posted`, and `news.posted` are public announcements — bylines render plain "Rank Name" text and `content` is empty, so authors don't get pinged every time their content goes live.
 
 **Template variables**
 
@@ -118,6 +162,45 @@ Pick this for n8n, custom scripts, anything that wants the raw data. Same shape 
 ```
 
 Author `discord_id` will be `null` for characters whose linked user hasn't connected Discord (or for sims without the Discord Sign-In feature enabled at all).
+
+**`log.posted`** uses a `log` object instead of `post`:
+
+```json
+{
+  "event": "log.posted",
+  "fired_at": "...",
+  "log": {
+    "id": 12, "title": "Personal Log, Stardate...", "content": "<p>...</p>",
+    "status": "activated", "date": "...",
+    "url_public": "https://yoursim.example/sim/viewlog/12",
+    "url_admin":  "https://yoursim.example/write/personallog/12/view"
+  },
+  "authors": [ { "id": 123, "name": "Alex Flynn", "rank": "Commander", "discord_id": "...", "user_id": 8 } ],
+  "actor":   { "id": 123, "name": "Alex Flynn", ... },
+  "sim": { "name": "USS Excalibur" }
+}
+```
+
+**`news.posted`** uses a `news` object with `category` and `type`:
+
+```json
+{
+  "event": "news.posted",
+  "fired_at": "...",
+  "news": {
+    "id": 7, "title": "Shore Leave Approved", "content": "<p>...</p>",
+    "category": "Announcements", "type": "public",
+    "status": "activated", "date": "...",
+    "url_public": "https://yoursim.example/main/viewnews/7",
+    "url_admin":  "https://yoursim.example/write/news/7/view"
+  },
+  "authors": [ ... ],
+  "actor":   { ... },
+  "sim": { "name": "USS Excalibur" }
+}
+```
+
+`news.type` is `"public"` or `"private"`. The generic payload is sent regardless of the webhook's public/private filter setting only when the item matches that filter — i.e. the filter is applied before delivery, so you won't receive private items on a public-only webhook.
 
 ---
 

@@ -5,36 +5,40 @@ namespace nova_ext_sim_central;
 defined('BASEPATH') OR exit('No direct script access allowed');
 
 /**
- * Event webhooks - fire HTTP POST notifications when posts change state.
+ * Event webhooks - fire HTTP POST notifications when content changes state.
  *
- * Entry point is onPostChanged($postId, $newData, $previousStatus). The
- * Posts_model shim calls it after a successful create_mission_entry or
- * update_post. From there we:
+ * Three content types, each with model-shim entry points:
  *
- *   1. Decide which event(s) to fire (post.saved / post.posted) based on
- *      the new + previous post_status.
- *   2. Look up every enabled webhook subscribed to that event.
- *   3. Build the per-format payload (Discord embed or generic JSON).
- *   4. Fire-and-forget POST with a short cURL timeout (2s). Log the result
- *      back to the webhook row (last_fired_at, last_status, last_error).
+ *   Mission posts -> onPostChanged()  -> post.saved / post.posted
+ *   Personal logs -> onLogChanged()   -> log.posted
+ *   News items    -> onNewsChanged()  -> news.posted
  *
- * Delivery is at-most-once. We don't retry, we don't queue, we don't block
- * the save - Discord webhooks are a best-effort notification channel, not a
- * transaction log. If a webhook is consistently broken the admin can see
- * "last_status: 0 (network error)" on the manage page and fix the URL.
+ * Each entry point normalises its row into a flat "item" array (see
+ * loadPost / loadLog / loadNews) tagged with a 'type', then hands it to
+ * dispatch(). From there the path is uniform: find enabled webhooks
+ * subscribed to the event, build the per-format payload (Discord embed or
+ * generic JSON), fire-and-forget POST with a short cURL timeout, log the
+ * result on the row.
+ *
+ * Only post.* has a saved event; logs and news fire on activation only
+ * (a transition to status 'activated', not every edit of an already-live
+ * item). news.posted additionally honours each webhook's public/private
+ * type filter.
+ *
+ * Delivery is at-most-once: no retries, no queue, never blocks the save.
  */
 class Webhooks
 {
-	const EVENT_SAVED  = 'post.saved';
-	const EVENT_POSTED = 'post.posted';
+	const EVENT_POST_SAVED  = 'post.saved';
+	const EVENT_POST_POSTED = 'post.posted';
+	const EVENT_LOG_POSTED  = 'log.posted';
+	const EVENT_NEWS_POSTED = 'news.posted';
 
 	const CURL_TIMEOUT_SEC = 2;
 	const CURL_CONNECT_TIMEOUT_SEC = 2;
 
-	const BODY_MAX_CHARS = 800; // Discord description sweet spot for readability.
+	const BODY_MAX_CHARS = 800;
 
-	/** Discord-friendly embed colour palette. Mirrors the n8n recipe users were doing
-	 *  externally so the in-suite output looks the same. */
 	const COLORS = array(
 		0x3498DB, 0x2ECC71, 0xE67E22, 0x9B59B6,
 		0x1ABC9C, 0xE74C3C, 0xF39C12, 0x16A085,
@@ -44,14 +48,8 @@ class Webhooks
 	const DEFAULT_TITLE_TEMPLATE = '{sim_name} Post | {post_title}';
 	const DEFAULT_DESCRIPTION_TEMPLATE = "*A mission post by {authors}*\n\n**Mission** - {mission}\n**Location** - {location}\n**Timeline** - {timeline}\n\n{body}\n\n[Read the full post]({url})";
 
-	/**
-	 * Called by the Posts_model shim after every successful save / update.
-	 *
-	 * @param int|string $postId
-	 * @param array      $newData         The fields just written to the row.
-	 * @param string|null $previousStatus The post_status that was there before
-	 *                                    the write (null on insert).
-	 */
+	// ---------- entry points (called by the model shims) ----------
+
 	public static function onPostChanged($postId, $newData, $previousStatus)
 	{
 		$newStatus = isset($newData['post_status']) ? (string) $newData['post_status'] : '';
@@ -59,54 +57,62 @@ class Webhooks
 			return;
 		}
 
-		$events = self::eventsFor($newStatus, $previousStatus);
+		$events = array();
+		if ($newStatus === 'saved') {
+			$events[] = self::EVENT_POST_SAVED;
+		} elseif ($newStatus === 'activated' && $previousStatus !== 'activated') {
+			$events[] = self::EVENT_POST_POSTED;
+		}
 		if (empty($events)) {
 			return;
 		}
 
-		$post = self::loadPost($postId);
-		if ( ! $post) {
+		$item = self::loadPost($postId);
+		if ( ! $item) {
 			return;
 		}
-
 		foreach ($events as $eventName) {
-			self::fireEvent($eventName, $post);
+			self::dispatch($eventName, $item);
 		}
 	}
 
-	/**
-	 * Map a (new, previous) status pair to the event names that should fire.
-	 *
-	 *   New 'saved'                            -> post.saved      (new draft OR edit of draft)
-	 *   New 'activated' AND prev != activated  -> post.posted     (transition to public)
-	 *   New 'activated' AND prev == activated  -> nothing         (edit of already-posted post)
-	 *   Anything else                          -> nothing
-	 */
-	private static function eventsFor($newStatus, $previousStatus)
+	public static function onLogChanged($logId, $newData, $previousStatus)
 	{
-		$out = array();
-
-		if ($newStatus === 'saved') {
-			$out[] = self::EVENT_SAVED;
-		} elseif ($newStatus === 'activated' && $previousStatus !== 'activated') {
-			$out[] = self::EVENT_POSTED;
+		$newStatus = isset($newData['log_status']) ? (string) $newData['log_status'] : '';
+		// Logs fire on activation only (no saved event).
+		if ($newStatus !== 'activated' || $previousStatus === 'activated') {
+			return;
 		}
-
-		return $out;
+		$item = self::loadLog($logId);
+		if ( ! $item) {
+			return;
+		}
+		self::dispatch(self::EVENT_LOG_POSTED, $item);
 	}
 
-	/**
-	 * Fetch every enabled webhook subscribed to this event, build the payload
-	 * per format, dispatch. Failure on one webhook doesn't affect the others.
-	 */
-	private static function fireEvent($eventName, $post)
+	public static function onNewsChanged($newsId, $newData, $previousStatus)
+	{
+		$newStatus = isset($newData['news_status']) ? (string) $newData['news_status'] : '';
+		if ($newStatus !== 'activated' || $previousStatus === 'activated') {
+			return;
+		}
+		$item = self::loadNews($newsId);
+		if ( ! $item) {
+			return;
+		}
+		self::dispatch(self::EVENT_NEWS_POSTED, $item);
+	}
+
+	// ---------- dispatch ----------
+
+	private static function dispatch($eventName, $item)
 	{
 		$ci =& get_instance();
 
 		$prefix = $ci->db->dbprefix;
 		if ( ! $ci->db->table_exists($prefix.'sim_central_webhooks')
 			&& ! $ci->db->table_exists('sim_central_webhooks')) {
-			return; // feature on but Setup database not yet run
+			return;
 		}
 
 		$rows = $ci->db->where('enabled', 1)->get('sim_central_webhooks')->result();
@@ -117,141 +123,213 @@ class Webhooks
 				continue;
 			}
 
-			$payload = self::buildPayload($row, $eventName, $post);
+			// News public/private filter. The webhook stores 'public',
+			// 'private', or 'both' (default 'public'). Skip items that don't
+			// match.
+			if ($eventName === self::EVENT_NEWS_POSTED) {
+				$want = isset($row->news_types) && $row->news_types !== '' ? $row->news_types : 'public';
+				$isPrivate = ! empty($item['is_private']);
+				if ($want === 'public' && $isPrivate)   { continue; }
+				if ($want === 'private' && ! $isPrivate) { continue; }
+				// 'both' falls through.
+			}
+
+			$payload = self::buildPayload($row, $eventName, $item);
 			if ($payload === null) {
 				continue;
 			}
-
 			self::deliver($row, $payload);
 		}
 	}
 
 	// ---------- payload builders ----------
 
-	private static function buildPayload($webhook, $eventName, $post)
+	private static function buildPayload($webhook, $eventName, $item)
 	{
-		$format = strtolower((string) $webhook->format);
-		switch ($format) {
+		switch (strtolower((string) $webhook->format)) {
 			case 'discord':
-				return self::buildDiscord($webhook, $eventName, $post);
+				return self::buildDiscord($webhook, $eventName, $item);
 			case 'generic':
-				return self::buildGeneric($eventName, $post);
+				return self::buildGeneric($eventName, $item);
+		}
+		return null;
+	}
+
+	private static function buildDiscord($webhook, $eventName, $item)
+	{
+		switch ($eventName) {
+			case self::EVENT_POST_POSTED:
+				return self::discordPostPosted($webhook, $item);
+			case self::EVENT_POST_SAVED:
+				return self::discordPostSaved($item);
+			case self::EVENT_LOG_POSTED:
+				return self::discordLogPosted($item);
+			case self::EVENT_NEWS_POSTED:
+				return self::discordNewsPosted($item);
 		}
 		return null;
 	}
 
 	/**
-	 * Discord webhook payload - one embed plus a content line for @mentions.
-	 *
-	 * Two shapes depending on event:
-	 *
-	 *   post.posted - the rich announcement (matches the layout users had been
-	 *                 generating in n8n: title, byline, mission/location/timeline,
-	 *                 body excerpt, link, random color). Templates are admin-
-	 *                 customisable via webhook.template_title / template_description.
-	 *
-	 *   post.saved  - lightweight "your draft was updated" ping. Always tags
-	 *                 the linked authors so every co-author sees there's a new
-	 *                 revision to look at. Not templateable - the format is
-	 *                 fixed because the content is fixed.
+	 * post.posted - templated, public announcement, no ping.
 	 */
-	private static function buildDiscord($webhook, $eventName, $post)
+	private static function discordPostPosted($webhook, $item)
 	{
-		if ($eventName === self::EVENT_POSTED) {
-			$titleTpl = trim((string) $webhook->template_title) !== ''
-				? $webhook->template_title
-				: self::DEFAULT_TITLE_TEMPLATE;
-			$descTpl = trim((string) $webhook->template_description) !== ''
-				? $webhook->template_description
-				: self::DEFAULT_DESCRIPTION_TEMPLATE;
+		$titleTpl = trim((string) $webhook->template_title) !== ''
+			? $webhook->template_title : self::DEFAULT_TITLE_TEMPLATE;
+		$descTpl = trim((string) $webhook->template_description) !== ''
+			? $webhook->template_description : self::DEFAULT_DESCRIPTION_TEMPLATE;
 
-			$vars = self::templateVars($post, true /* include body */);
-			$embed = array(
+		$vars = self::templateVars($item, true);
+		return array(
+			'content' => '',
+			'embeds'  => array(array(
 				'title'       => self::renderTemplate($titleTpl, $vars),
 				'description' => self::renderTemplate($descTpl, $vars),
-				'url'         => $post['url_public'],
+				'url'         => $item['url_public'],
 				'color'       => self::COLORS[array_rand(self::COLORS)],
-				'timestamp'   => date('c', (int) $post['post_date']),
-			);
+				'timestamp'   => date('c', (int) $item['date_ts']),
+			)),
+		);
+	}
 
-			// post.posted does NOT ping. It's a public announcement - the
-			// byline shows plain "Rank Name" via {authors}; no @mentions in
-			// content means no notification spam to the authors every time a
-			// post they're on goes live. (Pinging is reserved for post.saved,
-			// where the point IS to alert co-authors a draft changed.)
-			return array(
-				'content' => '',
-				'embeds'  => array($embed),
-			);
-		}
-
-		// post.saved - this one DOES ping. The mentions go in `content` so
-		// every linked author actually gets a notification that the draft
-		// they're on has a new revision to look at.
-		$mentions    = self::authorMentions($post);
+	/**
+	 * post.saved - lightweight, DOES ping co-authors.
+	 */
+	private static function discordPostSaved($item)
+	{
+		$mentions    = self::authorMentions($item);
 		$contentLine = empty($mentions) ? '' : implode(' ', $mentions);
 
-		$vars  = self::templateVars($post, false);
-		$title = 'A saved mission post has been updated';
-		$desc  = "**Title** - {$vars['{post_title}']}\n"
-			.   "**Mission** - {$vars['{mission}']}\n"
-			.   "**Saved by** - {$vars['{actor}']}\n\n"
-			.   "[View the post]({$vars['{url_admin}']})";
+		$desc = "**Title** - ".self::nz($item['title'])."\n"
+			. "**Mission** - ".self::nz($item['mission_title'], '(no mission)')."\n"
+			. "**Saved by** - ".self::nz($item['actor']['name'])."\n\n"
+			. "[View the post](".$item['url_admin'].")";
 
 		return array(
 			'content' => $contentLine,
 			'embeds'  => array(array(
-				'title'       => $title,
+				'title'       => 'A saved mission post has been updated',
 				'description' => $desc,
-				'url'         => $post['url_admin'],
-				'color'       => 0x95A5A6, // muted grey - this isn't a public announcement
+				'url'         => $item['url_admin'],
+				'color'       => 0x95A5A6,
 				'timestamp'   => date('c'),
 			)),
 		);
 	}
 
 	/**
-	 * Generic JSON payload - structured for n8n / scripts. Same shape for
-	 * both events; the `event` key tells the consumer which one fired.
+	 * log.posted - personal log announcement. Simpler than a post: just
+	 * author, title, body. No ping (public announcement).
 	 */
-	private static function buildGeneric($eventName, $post)
+	private static function discordLogPosted($item)
 	{
+		$author = self::renderAuthorsPlain($item['authors']);
+		$body   = self::smartTruncate(self::htmlToMarkdown($item['content']), self::BODY_MAX_CHARS);
+
+		$desc = "*A personal log by ".$author."*\n\n"
+			. $body."\n\n"
+			. "[Read the full log](".$item['url_public'].")";
+
 		return array(
-			'event'  => $eventName,
-			'fired_at' => date('c'),
-			'post'   => array(
-				'id'         => (int) $post['post_id'],
-				'title'      => $post['post_title'],
-				'content'    => $post['post_content'],
-				'status'     => $post['post_status'],
-				'mission_id' => (int) $post['post_mission'],
-				'mission'    => $post['mission_title'],
-				'location'   => $post['post_location'],
-				'timeline'   => $post['timeline_formatted'],
-				'date'       => date('c', (int) $post['post_date']),
-				'url_public' => $post['url_public'],
-				'url_admin'  => $post['url_admin'],
-			),
-			'authors' => $post['authors'],     // [{id, name, rank, discord_id, user_id}, ...]
-			'actor'   => $post['actor'],        // {id, name, ...} of whoever triggered the save
-			'sim'     => array(
-				'name' => $post['sim_name'],
-			),
+			'content' => '',
+			'embeds'  => array(array(
+				'title'       => self::nz($item['sim_name'])." Log | ".self::nz($item['title']),
+				'description' => $desc,
+				'url'         => $item['url_public'],
+				'color'       => self::COLORS[array_rand(self::COLORS)],
+				'timestamp'   => date('c', (int) $item['date_ts']),
+			)),
 		);
 	}
 
-	// ---------- post / author / actor loading ----------
-
 	/**
-	 * Load a post row plus all the satellite data the payload builders need.
-	 * Returns a flat array. We do the joins ourselves rather than going
-	 * through nova_posts_model because we want fields from missions and
-	 * characters too, and we want to gracefully handle missing rows.
+	 * news.posted - news item announcement. Author, title, category, type,
+	 * body. No ping.
 	 */
+	private static function discordNewsPosted($item)
+	{
+		$author = self::renderAuthorsPlain($item['authors']);
+		$body   = self::smartTruncate(self::htmlToMarkdown($item['content']), self::BODY_MAX_CHARS);
+		$type   = ! empty($item['is_private']) ? 'Private' : 'Public';
+
+		$meta = array();
+		if (self::nz($item['category'], '') !== '') { $meta[] = $item['category']; }
+		$meta[] = $type;
+		$meta[] = 'by '.$author;
+
+		$desc = "*".implode(' · ', $meta)."*\n\n"
+			. $body."\n\n"
+			. "[Read the full item](".$item['url_public'].")";
+
+		return array(
+			'content' => '',
+			'embeds'  => array(array(
+				'title'       => self::nz($item['sim_name'])." News | ".self::nz($item['title']),
+				'description' => $desc,
+				'url'         => $item['url_public'],
+				'color'       => self::COLORS[array_rand(self::COLORS)],
+				'timestamp'   => date('c', (int) $item['date_ts']),
+			)),
+		);
+	}
+
+	private static function buildGeneric($eventName, $item)
+	{
+		$base = array(
+			'event'    => $eventName,
+			'fired_at' => date('c'),
+			'authors'  => $item['authors'],
+			'actor'    => $item['actor'],
+			'sim'      => array('name' => $item['sim_name']),
+		);
+
+		if ($item['type'] === 'post') {
+			$base['post'] = array(
+				'id'         => (int) $item['id'],
+				'title'      => $item['title'],
+				'content'    => $item['content'],
+				'status'     => $item['status'],
+				'mission_id' => (int) $item['mission_id'],
+				'mission'    => $item['mission_title'],
+				'location'   => $item['post_location'],
+				'timeline'   => $item['timeline'],
+				'date'       => date('c', (int) $item['date_ts']),
+				'url_public' => $item['url_public'],
+				'url_admin'  => $item['url_admin'],
+			);
+		} elseif ($item['type'] === 'log') {
+			$base['log'] = array(
+				'id'         => (int) $item['id'],
+				'title'      => $item['title'],
+				'content'    => $item['content'],
+				'status'     => $item['status'],
+				'date'       => date('c', (int) $item['date_ts']),
+				'url_public' => $item['url_public'],
+				'url_admin'  => $item['url_admin'],
+			);
+		} elseif ($item['type'] === 'news') {
+			$base['news'] = array(
+				'id'         => (int) $item['id'],
+				'title'      => $item['title'],
+				'content'    => $item['content'],
+				'category'   => $item['category'],
+				'type'       => ! empty($item['is_private']) ? 'private' : 'public',
+				'status'     => $item['status'],
+				'date'       => date('c', (int) $item['date_ts']),
+				'url_public' => $item['url_public'],
+				'url_admin'  => $item['url_admin'],
+			);
+		}
+
+		return $base;
+	}
+
+	// ---------- item loaders ----------
+
 	private static function loadPost($postId)
 	{
 		$ci =& get_instance();
-
 		$row = $ci->db->get_where('posts', array('post_id' => $postId))->row();
 		if ( ! $row) {
 			return null;
@@ -261,44 +339,103 @@ class Webhooks
 		if ( ! empty($row->post_mission)) {
 			$mission = $ci->db->get_where('missions', array('mission_id' => $row->post_mission))->row();
 		}
-
 		$siteUrl = rtrim(site_url('/'), '/');
 
-		$post = array(
-			'post_id'        => $row->post_id,
-			'post_title'     => $row->post_title,
-			'post_content'   => $row->post_content,
-			'post_status'    => $row->post_status,
-			'post_mission'   => $row->post_mission,
-			'post_location'  => isset($row->post_location) ? $row->post_location : '',
-			'post_date'      => $row->post_date,
-			'mission_title'  => $mission ? $mission->mission_title : '',
-			'authors'        => self::loadAuthors($row),
-			'actor'          => self::loadActor($row),
-			'timeline_formatted' => self::formatTimeline($row, $mission),
-			'sim_name'       => self::simName(),
-			'url_public'     => $siteUrl.'/sim/viewpost/'.$row->post_id,
-			'url_admin'      => $siteUrl.'/write/missionpost/'.$row->post_id.'/view',
+		return array(
+			'type'          => 'post',
+			'id'            => $row->post_id,
+			'title'         => $row->post_title,
+			'content'       => $row->post_content,
+			'status'        => $row->post_status,
+			'date_ts'       => $row->post_date,
+			'mission_id'    => $row->post_mission,
+			'mission_title' => $mission ? $mission->mission_title : '',
+			'post_location' => isset($row->post_location) ? $row->post_location : '',
+			'timeline'      => self::formatTimeline($row, $mission),
+			'authors'       => self::charactersFromCsv($row->post_authors),
+			'actor'         => self::loadActor( ! empty($row->post_saved) ? $row->post_saved : self::firstCsv($row->post_authors)),
+			'sim_name'      => self::simName(),
+			'url_public'    => $siteUrl.'/sim/viewpost/'.$row->post_id,
+			'url_admin'     => $siteUrl.'/write/missionpost/'.$row->post_id.'/view',
 		);
+	}
 
-		return $post;
+	private static function loadLog($logId)
+	{
+		$ci =& get_instance();
+		$row = $ci->db->get_where('personallogs', array('log_id' => $logId))->row();
+		if ( ! $row) {
+			return null;
+		}
+		$siteUrl = rtrim(site_url('/'), '/');
+
+		return array(
+			'type'       => 'log',
+			'id'         => $row->log_id,
+			'title'      => $row->log_title,
+			'content'    => $row->log_content,
+			'status'     => $row->log_status,
+			'date_ts'    => $row->log_date,
+			'authors'    => self::charactersFromCsv($row->log_author_character),
+			'actor'      => self::loadActor($row->log_author_character),
+			'sim_name'   => self::simName(),
+			'url_public' => $siteUrl.'/sim/viewlog/'.$row->log_id,
+			'url_admin'  => $siteUrl.'/write/personallog/'.$row->log_id.'/view',
+		);
+	}
+
+	private static function loadNews($newsId)
+	{
+		$ci =& get_instance();
+		$row = $ci->db->get_where('news', array('news_id' => $newsId))->row();
+		if ( ! $row) {
+			return null;
+		}
+
+		$category = '';
+		if ( ! empty($row->news_cat)) {
+			$cat = $ci->db->get_where('news_categories', array('newscat_id' => $row->news_cat))->row();
+			$category = $cat ? $cat->newscat_name : '';
+		}
+		$siteUrl = rtrim(site_url('/'), '/');
+
+		return array(
+			'type'       => 'news',
+			'id'         => $row->news_id,
+			'title'      => $row->news_title,
+			'content'    => $row->news_content,
+			'status'     => $row->news_status,
+			'date_ts'    => $row->news_date,
+			'category'   => $category,
+			'is_private' => (isset($row->news_private) && $row->news_private === 'y'),
+			'authors'    => self::charactersFromCsv($row->news_author_character),
+			'actor'      => self::loadActor($row->news_author_character),
+			'sim_name'   => self::simName(),
+			'url_public' => $siteUrl.'/main/viewnews/'.$row->news_id,
+			'url_admin'  => $siteUrl.'/write/news/'.$row->news_id.'/view',
+		);
+	}
+
+	// ---------- character / author loading ----------
+
+	private static function firstCsv($csv)
+	{
+		$parts = explode(',', (string) $csv);
+		return isset($parts[0]) ? trim($parts[0]) : '';
 	}
 
 	/**
-	 * Walk post.post_authors (CSV of charids), join to characters and users,
-	 * return an enriched author list: [{id, first_name, last_name, suffix,
-	 * rank_name, display_name, discord_id, user_id}, ...]
+	 * Enrich a CSV (or single) charid list into an author array, preserving
+	 * the original order: [{id, name, rank, rank_name, discord_id, user_id}, ...]
 	 */
-	private static function loadAuthors($row)
+	private static function charactersFromCsv($csv)
 	{
 		$ci =& get_instance();
 		$result = array();
-
-		if (empty($row->post_authors)) {
+		if (empty($csv)) {
 			return $result;
 		}
-
-		$ids = array_filter(array_map('intval', explode(',', (string) $row->post_authors)));
+		$ids = array_filter(array_map('intval', explode(',', (string) $csv)));
 		if (empty($ids)) {
 			return $result;
 		}
@@ -310,8 +447,6 @@ class Webhooks
 		$ci->db->where_in('characters.charid', $ids);
 		$rows = $ci->db->get()->result();
 
-		// Re-sort to match the original CSV order so authors render in the
-		// order the writer chose.
 		$byId = array();
 		foreach ($rows as $r) {
 			$byId[(int) $r->id] = $r;
@@ -340,72 +475,42 @@ class Webhooks
 		);
 	}
 
-	/**
-	 * "Who saved this." Best-effort - falls back to the post's first author
-	 * if post_saved isn't set, since older saves didn't always populate it.
-	 */
-	private static function loadActor($row)
+	private static function loadActor($charId)
 	{
-		$ci =& get_instance();
-
-		$actorCharId = ! empty($row->post_saved)
-			? (int) $row->post_saved
-			: (int) (explode(',', (string) $row->post_authors)[0] ?? 0);
-
-		if ($actorCharId <= 0) {
-			return array('id' => null, 'name' => '(unknown)', 'rank' => null, 'discord_id' => null, 'user_id' => null);
+		$charId = (int) $charId;
+		if ($charId <= 0) {
+			return array('id' => null, 'name' => '(unknown)', 'rank' => null, 'rank_name' => null, 'discord_id' => null, 'user_id' => null);
 		}
-
-		$ci->db->select('characters.charid AS id, characters.first_name, characters.last_name, characters.suffix, characters.user, characters.display_name, ranks.rank_name, users.nova_ext_discord_auth_id AS discord_id');
-		$ci->db->from('characters');
-		$ci->db->join('ranks', 'ranks.rank_id = characters.rank', 'left');
-		$ci->db->join('users', 'users.userid = characters.user', 'left');
-		$ci->db->where('characters.charid', $actorCharId);
-		$r = $ci->db->get()->row();
-
-		if ( ! $r) {
-			return array('id' => $actorCharId, 'name' => '(unknown)', 'rank' => null, 'discord_id' => null, 'user_id' => null);
-		}
-
-		return self::authorArrayShape($r);
+		$list = self::charactersFromCsv((string) $charId);
+		return ! empty($list) ? $list[0]
+			: array('id' => $charId, 'name' => '(unknown)', 'rank' => null, 'rank_name' => null, 'discord_id' => null, 'user_id' => null);
 	}
 
 	// ---------- template + formatting helpers ----------
 
-	private static function templateVars($post, $includeBody)
+	private static function templateVars($item, $includeBody)
 	{
-		// {authors} renders PLAIN "Rank Name" by default - that's what the
-		// post.posted byline wants (a public announcement, no pings). Anyone
-		// who specifically wants clickable mentions in a custom template can
-		// use {authors_mentions}; note that mentions only *ping* if they're
-		// also in the payload's `content` field, which post.posted leaves
-		// empty - so {authors_mentions} renders clickable-but-silent.
-		$authorsPlain    = self::renderAuthorsPlain($post['authors']);
-		$authorsMentions = self::renderAuthorsWithMentions($post['authors']);
+		$authorsPlain    = self::renderAuthorsPlain($item['authors']);
+		$authorsMentions = self::renderAuthorsWithMentions($item['authors']);
 
 		$vars = array(
-			'{sim_name}'         => $post['sim_name'],
-			'{post_title}'       => $post['post_title'],
+			'{sim_name}'         => $item['sim_name'],
+			'{post_title}'       => $item['title'],
 			'{post_type}'        => 'Mission Post',
 			'{authors}'          => $authorsPlain,
 			'{authors_plain}'    => $authorsPlain,
 			'{authors_mentions}' => $authorsMentions,
-			'{mission}'          => $post['mission_title'] !== '' ? $post['mission_title'] : '(no mission)',
-			'{location}'         => $post['post_location'] !== '' ? $post['post_location'] : '(unspecified)',
-			'{timeline}'         => $post['timeline_formatted'] !== '' ? $post['timeline_formatted'] : '(no timeline)',
-			'{url}'              => $post['url_public'],
-			'{url_admin}'        => $post['url_admin'],
-			'{actor}'            => $post['actor']['name'],
+			'{mission}'          => self::nz(isset($item['mission_title']) ? $item['mission_title'] : '', '(no mission)'),
+			'{location}'         => self::nz(isset($item['post_location']) ? $item['post_location'] : '', '(unspecified)'),
+			'{timeline}'         => self::nz(isset($item['timeline']) ? $item['timeline'] : '', '(no timeline)'),
+			'{url}'              => $item['url_public'],
+			'{url_admin}'        => $item['url_admin'],
+			'{actor}'            => $item['actor']['name'],
 		);
 
 		if ($includeBody) {
-			$markdown = self::htmlToMarkdown($post['post_content']);
-			// Truncate only - the read-more link is owned by the template
-			// (the default description ends with "[Read the full post]({url})").
-			// Appending it here too produced a duplicate link.
-			$vars['{body}'] = self::smartTruncate($markdown, self::BODY_MAX_CHARS);
+			$vars['{body}'] = self::smartTruncate(self::htmlToMarkdown($item['content']), self::BODY_MAX_CHARS);
 		}
-
 		return $vars;
 	}
 
@@ -414,13 +519,6 @@ class Webhooks
 		return strtr($tpl, $vars);
 	}
 
-	/**
-	 * Author byline with Discord @mentions where the linked user has a
-	 * stored discord_id, else plain "Rank First Last" text. Used in the
-	 * embed *description* (where Discord renders <@id> as a clickable
-	 * mention but doesn't ping unless the id is also in the `content`
-	 * field of the webhook payload).
-	 */
 	private static function renderAuthorsWithMentions($authors)
 	{
 		if (empty($authors)) {
@@ -428,11 +526,7 @@ class Webhooks
 		}
 		$parts = array();
 		foreach ($authors as $a) {
-			if ( ! empty($a['discord_id'])) {
-				$parts[] = '<@'.$a['discord_id'].'>';
-				continue;
-			}
-			$parts[] = self::renderAuthorPlain($a);
+			$parts[] = ! empty($a['discord_id']) ? '<@'.$a['discord_id'].'>' : self::renderAuthorPlain($a);
 		}
 		return self::joinHumanList($parts);
 	}
@@ -467,16 +561,10 @@ class Webhooks
 		return implode(', ', $parts).', & '.$last;
 	}
 
-	/**
-	 * Discord mentions to include in `content` so the listed authors
-	 * actually get a notification ping (mentions in description-only
-	 * are clickable but don't ping). Returns an array of <@id> strings,
-	 * deduped.
-	 */
-	private static function authorMentions($post)
+	private static function authorMentions($item)
 	{
 		$out = array();
-		foreach ($post['authors'] as $a) {
+		foreach ($item['authors'] as $a) {
 			if ( ! empty($a['discord_id'])) {
 				$out[(int) $a['discord_id']] = '<@'.$a['discord_id'].'>';
 			}
@@ -484,37 +572,22 @@ class Webhooks
 		return array_values($out);
 	}
 
-	/**
-	 * Build the "Timeline" line. Pulls from the ordered_mission_posts feature
-	 * columns when present (so admins see "Day 4 at 1900" etc. exactly as
-	 * Nova renders it elsewhere). Falls back to the raw post_timeline if the
-	 * ordered feature isn't installed.
-	 */
 	private static function formatTimeline($postRow, $missionRow)
 	{
 		$features = Config::features();
 		if (empty($features['ordered_mission_posts']) || ! class_exists('nova_ext_sim_central\\TimelineFormat')) {
 			return isset($postRow->post_timeline) ? (string) $postRow->post_timeline : '';
 		}
-
-		// We need the per-mission config setting to know which column to use
-		// (day / date / stardate). Default to day-based.
 		$config = ($missionRow && isset($missionRow->mission_ext_ordered_config_setting))
 			? (string) $missionRow->mission_ext_ordered_config_setting
 			: 'nova_ext_ordered_post_day';
-
 		$dayColumn = $config ?: 'nova_ext_ordered_post_day';
-		$dayValue = property_exists($postRow, $dayColumn) ? (string) $postRow->$dayColumn : '';
+		$dayValue  = property_exists($postRow, $dayColumn) ? (string) $postRow->$dayColumn : '';
 		$timeValue = property_exists($postRow, 'nova_ext_ordered_post_time') ? (string) $postRow->nova_ext_ordered_post_time : '';
-
 		if ($dayValue === '' && $timeValue === '') {
 			return isset($postRow->post_timeline) ? (string) $postRow->post_timeline : '';
 		}
-
-		// We don't load the per-mission label customisations here - that would
-		// require loading the ordered_mission_posts config. Default "Day X at
-		// HHMM" works for the vast majority of sims.
-		$dayLabel = ($dayColumn === 'nova_ext_ordered_post_day') ? 'Day' : ucfirst(str_replace('nova_ext_ordered_post_', '', $dayColumn));
+		$dayLabel  = ($dayColumn === 'nova_ext_ordered_post_day') ? 'Day' : ucfirst(str_replace('nova_ext_ordered_post_', '', $dayColumn));
 		$timeLabel = $timeValue !== '' ? ' at '.$timeValue : '';
 		return trim($dayLabel.' '.$dayValue.$timeLabel);
 	}
@@ -526,58 +599,44 @@ class Webhooks
 		return $row ? (string) $row->setting_value : '';
 	}
 
-	/**
-	 * HTML -> Discord-flavoured Markdown. Port of the user's n8n recipe with
-	 * a couple of additions (italic, lists collapsed to bullets). Discord
-	 * doesn't support most HTML, so we strip everything we don't translate.
-	 */
+	/** Null/empty coalesce to a fallback string. */
+	private static function nz($value, $fallback = '')
+	{
+		$value = (string) $value;
+		return $value !== '' ? $value : $fallback;
+	}
+
 	public static function htmlToMarkdown($html)
 	{
 		$s = (string) $html;
-		// Bold + italic
 		$s = preg_replace('/<(b|strong)\b[^>]*>(.*?)<\/\1>/is', '**$2**', $s);
 		$s = preg_replace('/<(i|em)\b[^>]*>(.*?)<\/\1>/is', '*$2*', $s);
-		// Anchors -> "[text](href)"
 		$s = preg_replace_callback('/<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)<\/a>/is', function($m) {
-			$text = trim(strip_tags($m[2]));
-			return '['.$text.']('.$m[1].')';
+			return '['.trim(strip_tags($m[2])).']('.$m[1].')';
 		}, $s);
-		// Block separators - paragraphs and double-br get blank lines
 		$s = preg_replace('/<\/p>\s*<p\b[^>]*>/i', "\n\n", $s);
 		$s = preg_replace('/<br\s*\/?>(\s*<br\s*\/?>)+/i', "\n\n", $s);
 		$s = preg_replace('/<br\s*\/?>/i', "\n", $s);
-		// Strip the rest
 		$s = strip_tags($s);
-		// Decode entities (&nbsp;, &amp; etc.)
 		$s = html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-		// Normalize whitespace
 		$s = preg_replace('/\r\n/', "\n", $s);
 		$s = preg_replace('/\n{3,}/', "\n\n", $s);
 		return trim($s);
 	}
 
-	/**
-	 * Truncate at a sensible boundary (paragraph -> sentence -> word),
-	 * appending an ellipsis marker when the text was actually cut. Does NOT
-	 * append a "Read the full post" link - that's owned by the template's
-	 * {url} line, so adding it here too would duplicate it.
-	 */
 	public static function smartTruncate($text, $max)
 	{
 		if (mb_strlen($text) <= $max) {
 			return $text;
 		}
 		$chunk = mb_substr($text, 0, $max);
-
 		$paraBreak = mb_strrpos($chunk, "\n\n");
 		if ($paraBreak !== false && $paraBreak > $max * 0.5) {
 			return mb_substr($chunk, 0, $paraBreak)."\n\n...";
 		}
-
 		if (preg_match('/^([\s\S]*[.!?])\s/u', $chunk, $m) && mb_strlen($m[1]) > $max * 0.5) {
 			return $m[1]."\n\n...";
 		}
-
 		$wordBreak = mb_strrpos($chunk, ' ');
 		if ($wordBreak === false) {
 			return $chunk."...";
@@ -587,10 +646,6 @@ class Webhooks
 
 	// ---------- delivery ----------
 
-	/**
-	 * Fire-and-forget POST. Records the result (HTTP status or 0 for network
-	 * error) on the webhook row. Never throws - delivery is best-effort.
-	 */
 	private static function deliver($webhook, $payload)
 	{
 		$body = json_encode($payload);
@@ -604,17 +659,13 @@ class Webhooks
 			CURLOPT_URL            => $webhook->url,
 			CURLOPT_POST           => true,
 			CURLOPT_POSTFIELDS     => $body,
-			CURLOPT_HTTPHEADER     => array(
-				'Content-Type: application/json',
-				'User-Agent: SimCentralSuite-Webhook/1.0',
-			),
+			CURLOPT_HTTPHEADER     => array('Content-Type: application/json', 'User-Agent: SimCentralSuite-Webhook/1.0'),
 			CURLOPT_RETURNTRANSFER => true,
 			CURLOPT_TIMEOUT        => self::CURL_TIMEOUT_SEC,
 			CURLOPT_CONNECTTIMEOUT => self::CURL_CONNECT_TIMEOUT_SEC,
 			CURLOPT_SSL_VERIFYPEER => true,
 			CURLOPT_SSL_VERIFYHOST => 2,
 		));
-
 		$responseBody = curl_exec($ch);
 		$status       = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
 		$err          = curl_error($ch);
@@ -624,13 +675,10 @@ class Webhooks
 			self::recordResult($webhook->id, 0, substr($err, 0, 500));
 			return;
 		}
-		// Anything outside 200-299 we count as a failure for visibility, but
-		// don't retry - the admin can re-fire from the manage page.
 		if ($status < 200 || $status >= 300) {
 			self::recordResult($webhook->id, $status, substr((string) $responseBody, 0, 500));
 			return;
 		}
-
 		self::recordResult($webhook->id, $status, null);
 	}
 
@@ -645,11 +693,10 @@ class Webhooks
 	}
 
 	/**
-	 * Admin "Test" button entry point. Fires a synthetic event with realistic
-	 * dummy data against a single webhook id, returns the result tuple
-	 * (status, error) for the ACP flash.
+	 * Admin "Test" button. Fires a synthetic event of the chosen type against
+	 * one webhook, returns a (status, message) tuple for the ACP flash.
 	 */
-	public static function testWebhook($webhookId, $eventName = self::EVENT_POSTED)
+	public static function testWebhook($webhookId, $eventName = self::EVENT_POST_POSTED)
 	{
 		$ci =& get_instance();
 		$webhook = $ci->db->get_where('sim_central_webhooks', array('id' => $webhookId))->row();
@@ -657,42 +704,59 @@ class Webhooks
 			return array('error', 'Webhook not found.');
 		}
 
-		$post = self::stubPost();
-		$payload = self::buildPayload($webhook, $eventName, $post);
+		$item = self::stubItem($eventName);
+		$payload = self::buildPayload($webhook, $eventName, $item);
 		if ($payload === null) {
 			return array('error', 'Unknown webhook format: '.$webhook->format);
 		}
-
 		self::deliver($webhook, $payload);
 
-		// Re-read the row for the freshly-updated status fields.
 		$webhook = $ci->db->get_where('sim_central_webhooks', array('id' => $webhookId))->row();
 		if ($webhook->last_status >= 200 && $webhook->last_status < 300) {
 			return array('success', 'Test delivered. HTTP '.$webhook->last_status.'.');
 		}
-		if ($webhook->last_status === 0) {
+		if ((int) $webhook->last_status === 0) {
 			return array('error', 'Network error: '.$webhook->last_error);
 		}
 		return array('error', 'HTTP '.$webhook->last_status.': '.$webhook->last_error);
 	}
 
-	private static function stubPost()
+	private static function stubItem($eventName)
 	{
-		return array(
-			'post_id'        => 0,
-			'post_title'     => 'Test Post',
-			'post_content'   => '<p>This is a <b>test</b> webhook delivery from the Sim Central Suite.</p><p>If you can see this in your channel, the webhook is wired up correctly.</p>',
-			'post_status'    => 'activated',
-			'post_mission'   => 0,
-			'post_location'  => 'Test Location',
-			'post_date'      => time(),
-			'mission_title'  => 'Test Mission',
-			'authors'        => array(),
-			'actor'          => array('id' => null, 'name' => 'Webhook Test', 'rank' => null, 'discord_id' => null, 'user_id' => null),
-			'timeline_formatted' => 'Day 1 at 1200',
-			'sim_name'       => self::simName(),
-			'url_public'     => rtrim(site_url('/'), '/'),
-			'url_admin'      => rtrim(site_url('/'), '/'),
+		$site = rtrim(site_url('/'), '/');
+		$common = array(
+			'authors'  => array(),
+			'actor'    => array('id' => null, 'name' => 'Webhook Test', 'rank' => null, 'rank_name' => null, 'discord_id' => null, 'user_id' => null),
+			'sim_name' => self::simName(),
+			'date_ts'  => time(),
+			'status'   => 'activated',
 		);
+
+		switch ($eventName) {
+			case self::EVENT_LOG_POSTED:
+				return array_merge($common, array(
+					'type' => 'log', 'id' => 0,
+					'title' => 'Test Log',
+					'content' => '<p>This is a <b>test</b> personal-log webhook delivery from the Sim Central Suite.</p>',
+					'url_public' => $site, 'url_admin' => $site,
+				));
+			case self::EVENT_NEWS_POSTED:
+				return array_merge($common, array(
+					'type' => 'news', 'id' => 0,
+					'title' => 'Test News Item',
+					'content' => '<p>This is a <b>test</b> news webhook delivery from the Sim Central Suite.</p>',
+					'category' => 'Announcements', 'is_private' => false,
+					'url_public' => $site, 'url_admin' => $site,
+				));
+			default: // post.saved / post.posted
+				return array_merge($common, array(
+					'type' => 'post', 'id' => 0,
+					'title' => 'Test Post',
+					'content' => '<p>This is a <b>test</b> mission-post webhook delivery from the Sim Central Suite.</p>',
+					'mission_id' => 0, 'mission_title' => 'Test Mission',
+					'post_location' => 'Test Location', 'timeline' => 'Day 1 at 1200',
+					'url_public' => $site, 'url_admin' => $site,
+				));
+		}
 	}
 }

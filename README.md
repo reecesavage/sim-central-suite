@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.11.3"><img src="https://img.shields.io/badge/Version-v1.11.3-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.12.0"><img src="https://img.shields.io/badge/Version-v1.12.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -230,10 +230,14 @@ Designed primarily for [n8n](https://n8n.io/) consumers but works with any HTTP 
 
 ### Event Webhooks *(v1.11.0+)*
 
-Fires HTTP webhook notifications when posts change state. Two events:
+Fires HTTP webhook notifications when content changes state. Events:
 
-- `post.saved` &mdash; a draft was created or saved (status = saved). Useful for nudging co-authors that a draft has been updated and needs their attention.
-- `post.posted` &mdash; a post transitioned from non-activated to activated (i.e. publicly posted). The main announcement event.
+- `post.saved` &mdash; a draft mission post was created or saved (status = saved). Useful for nudging co-authors that a draft has been updated and needs their attention. Discord pings the authors.
+- `post.posted` &mdash; a mission post transitioned from non-activated to activated (i.e. publicly posted). The main announcement event.
+- `log.posted` *(v1.12.0+)* &mdash; a personal log was activated. Simpler payload: author, title, content.
+- `news.posted` *(v1.12.0+)* &mdash; a news item was activated. Payload adds category and type (public/private). Each webhook chooses which news types it wants (**Public** / **Private** / **Both**, default Public).
+
+Logs and news fire on activation only (no saved event).
 
 Each webhook is one row in `sim_central_webhooks` (label, URL, format, events subscription, enabled flag, optional Discord templates, last-fired metadata). Multiple webhooks per event are supported. Two formats:
 

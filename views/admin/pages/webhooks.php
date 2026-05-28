@@ -2,19 +2,21 @@
 	$webhooks         = isset($webhooks) && is_array($webhooks) ? $webhooks : array();
 	$availableEvents  = isset($available_events) && is_array($available_events) ? $available_events : array();
 	$availableFormats = isset($available_formats) && is_array($available_formats) ? $available_formats : array();
+	$availableNewsTypes = isset($available_news_types) && is_array($available_news_types) ? $available_news_types : array();
 	$dbReady          = isset($db_ready) ? (bool) $db_ready : true;
 	$editRow          = isset($edit_row) ? $edit_row : null;
 	$defaultTitle     = isset($default_title_template) ? $default_title_template : '';
 	$defaultDesc      = isset($default_description_template) ? $default_description_template : '';
 
 	// Pre-fill form values from edit_row if editing, otherwise empty defaults.
-	$valLabel    = $editRow ? $editRow->label : '';
-	$valUrl      = $editRow ? $editRow->url : '';
-	$valFormat   = $editRow ? $editRow->format : 'discord';
-	$valEvents   = $editRow ? (array) json_decode($editRow->events, true) : array();
-	$valEnabled  = $editRow ? (int) $editRow->enabled : 1;
-	$valTplTitle = $editRow ? (string) $editRow->template_title : '';
-	$valTplDesc  = $editRow ? (string) $editRow->template_description : '';
+	$valLabel     = $editRow ? $editRow->label : '';
+	$valUrl       = $editRow ? $editRow->url : '';
+	$valFormat    = $editRow ? $editRow->format : 'discord';
+	$valEvents    = $editRow ? (array) json_decode($editRow->events, true) : array();
+	$valEnabled   = $editRow ? (int) $editRow->enabled : 1;
+	$valNewsTypes = ($editRow && isset($editRow->news_types) && $editRow->news_types !== '') ? $editRow->news_types : 'public';
+	$valTplTitle  = $editRow ? (string) $editRow->template_title : '';
+	$valTplDesc   = $editRow ? (string) $editRow->template_description : '';
 ?>
 
 <?php echo text_output($title, 'h1', 'page-head');?>
@@ -76,12 +78,27 @@
 		<?php foreach ($availableEvents as $ev => $desc): ?>
 			<label style="display: block; margin: 4px 0;">
 				<input type="checkbox" name="events[]" value="<?php echo htmlspecialchars($ev, ENT_QUOTES);?>"
-					<?php if (in_array($ev, $valEvents, true)) echo 'checked';?>>
+					<?php if (in_array($ev, $valEvents, true)) echo 'checked';?>
+					<?php if ($ev === 'news.posted'): ?>onchange="document.getElementById('sc-news-types').style.display = this.checked ? 'block' : 'none';"<?php endif;?>>
 				<code><?php echo htmlspecialchars($ev, ENT_QUOTES);?></code>
 				&nbsp;<span class="fontSmall gray"><?php echo htmlspecialchars($desc, ENT_QUOTES);?></span>
 			</label>
 		<?php endforeach;?>
 	</p>
+
+	<div id="sc-news-types" style="<?php echo in_array('news.posted', $valEvents, true) ? 'display:block;' : 'display:none;';?> background: #f8fafc; border: 1px solid #cdd; padding: 12px; margin-top: 8px;">
+		<p>
+			<kbd>News types</kbd>
+			<?php foreach ($availableNewsTypes as $nt => $ntLabel): ?>
+				<label style="display: block; margin: 4px 0;">
+					<input type="radio" name="news_types" value="<?php echo htmlspecialchars($nt, ENT_QUOTES);?>"
+						<?php if ($valNewsTypes === $nt) echo 'checked';?>>
+					<?php echo htmlspecialchars($ntLabel, ENT_QUOTES);?>
+				</label>
+			<?php endforeach;?>
+			<span class="fontSmall gray">Which news items fire <code>news.posted</code>. Only applies to that event.</span>
+		</p>
+	</div>
 
 	<p>
 		<kbd>Enabled</kbd>
@@ -93,8 +110,9 @@
 		<?php echo text_output('Discord templates (post.posted only)', 'h3', 'page-subhead');?>
 		<p class="fontSmall gray">
 			Customise the embed title and body for the <code>post.posted</code> event.
-			Leave blank to use the defaults. <code>post.saved</code> uses a fixed format
-			(it always tags the authors and notes that a draft was updated).
+			Leave blank to use the defaults. <code>post.saved</code>, <code>log.posted</code>,
+			and <code>news.posted</code> use fixed (non-templateable) formats &mdash; sensible
+			defaults tailored to each content type.
 		</p>
 		<p class="fontSmall">
 			Variables: <code>{sim_name}</code>, <code>{post_title}</code>, <code>{post_type}</code>,

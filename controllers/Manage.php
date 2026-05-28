@@ -189,6 +189,7 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['db_ready']= $dbReady;
 		$data['available_events'] = $this->_webhookAvailableEvents();
 		$data['available_formats'] = $this->_webhookAvailableFormats();
+		$data['available_news_types'] = $this->_webhookNewsTypes();
 		$data['default_title_template']       = \nova_ext_sim_central\Webhooks::DEFAULT_TITLE_TEMPLATE;
 		$data['default_description_template'] = \nova_ext_sim_central\Webhooks::DEFAULT_DESCRIPTION_TEMPLATE;
 		$data['webhooks'] = $dbReady
@@ -683,22 +684,27 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			),
 			'webhooks' => array(
 				'name'        => 'Event Webhooks',
-				'summary'     => 'Fire HTTP webhooks when posts are saved or activated. Discord-formatted (embed with @mentions of linked authors) or generic JSON (for n8n etc.). Multiple webhooks per event; per-token rate isolation; admin-managed under Configure.',
+				'summary'     => 'Fire HTTP webhooks when mission posts, personal logs, or news items are posted (and when posts are saved). Discord-formatted (embed with @mentions of linked authors on saved-post pings) or generic JSON (for n8n etc.). Multiple webhooks per event; news public/private filter; admin-managed under Configure.',
 				'standalone'  => null,
 				'requires_tables' => array(
-					'sim_central_webhooks' => "CREATE TABLE IF NOT EXISTS `{prefix}sim_central_webhooks` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `url` text NOT NULL, `format` varchar(20) NOT NULL, `events` text NOT NULL, `enabled` tinyint(1) NOT NULL DEFAULT 1, `template_title` text DEFAULT NULL, `template_description` text DEFAULT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_fired_at` datetime DEFAULT NULL, `last_status` int(11) DEFAULT NULL, `last_error` text DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+					'sim_central_webhooks' => "CREATE TABLE IF NOT EXISTS `{prefix}sim_central_webhooks` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `url` text NOT NULL, `format` varchar(20) NOT NULL, `events` text NOT NULL, `enabled` tinyint(1) NOT NULL DEFAULT 1, `news_types` varchar(20) NOT NULL DEFAULT 'public', `template_title` text DEFAULT NULL, `template_description` text DEFAULT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_fired_at` datetime DEFAULT NULL, `last_status` int(11) DEFAULT NULL, `last_error` text DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
 				),
-				'requires_db' => array(),
+				// news_types is added to existing installs via this ALTER path
+				// (the CREATE above already has it for fresh installs).
+				'requires_db' => array(
+					'sim_central_webhooks' => array(
+						'news_types' => "VARCHAR(20) NOT NULL DEFAULT 'public'",
+					),
+				),
 				'shims' => array(
-					// NOTE: no standalone_marker_* fields on these two. The
-					// standalone-marker mechanism is for identifying a
-					// PREDECESSOR extension's block to take over (the way
-					// display_name takes over nova_ext_display_name's
-					// character marker). For a brand-new feature with no
-					// predecessor, omit the fields entirely - otherwise the
-					// two shims register themselves as standalone markers
-					// and each strips the other on install, causing the
-					// dashboard to ping-pong forever between the two states.
+					// NOTE: no standalone_marker_* fields on any of these. The
+					// standalone-marker mechanism is for taking over a
+					// PREDECESSOR extension's block (the way display_name takes
+					// over nova_ext_display_name's character marker). For
+					// brand-new shims with no predecessor, omit the fields -
+					// otherwise multiple shims on the same file register as
+					// standalone markers and strip each other on install,
+					// ping-ponging the dashboard forever (see v1.11.1 fix).
 					'webhooks_create' => array(
 						'file'   => APPPATH.'models/Posts_model.php',
 						'txt'    => dirname(__FILE__).'/../posts_model_create.txt',
@@ -712,6 +718,34 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 						'tag'    => 'webhooks_update',
 						'method' => 'update_post',
 						'label'  => 'Post update webhook hook',
+					),
+					'news_create' => array(
+						'file'   => APPPATH.'models/News_model.php',
+						'txt'    => dirname(__FILE__).'/../news_model_create.txt',
+						'tag'    => 'news_create',
+						'method' => 'create_news_item',
+						'label'  => 'News create webhook hook',
+					),
+					'news_update' => array(
+						'file'   => APPPATH.'models/News_model.php',
+						'txt'    => dirname(__FILE__).'/../news_model_update.txt',
+						'tag'    => 'news_update',
+						'method' => 'update_news_item',
+						'label'  => 'News update webhook hook',
+					),
+					'log_create' => array(
+						'file'   => APPPATH.'models/Personallogs_model.php',
+						'txt'    => dirname(__FILE__).'/../log_model_create.txt',
+						'tag'    => 'log_create',
+						'method' => 'create_personal_log',
+						'label'  => 'Log create webhook hook',
+					),
+					'log_update' => array(
+						'file'   => APPPATH.'models/Personallogs_model.php',
+						'txt'    => dirname(__FILE__).'/../log_model_update.txt',
+						'tag'    => 'log_update',
+						'method' => 'update_log',
+						'label'  => 'Log update webhook hook',
 					),
 				),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/webhooks',
@@ -1556,8 +1590,19 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 	private function _webhookAvailableEvents()
 	{
 		return array(
-			'post.saved'  => 'Fires when a draft post is created or saved (status = saved). For nudging co-authors that a draft needs another look.',
-			'post.posted' => 'Fires when a post transitions to activated (i.e. publicly posted). The main announcement event.',
+			'post.saved'  => 'Fires when a draft mission post is created or saved (status = saved). For nudging co-authors that a draft needs another look. Discord pings the authors.',
+			'post.posted' => 'Fires when a mission post transitions to activated (i.e. publicly posted). The main announcement event.',
+			'log.posted'  => 'Fires when a personal log is activated. Author, title, content.',
+			'news.posted' => 'Fires when a news item is activated. Author, title, category, type, content. Honours the public/private filter below.',
+		);
+	}
+
+	private function _webhookNewsTypes()
+	{
+		return array(
+			'public'  => 'Public news items only (default)',
+			'private' => 'Private news items only',
+			'both'    => 'Both public and private',
 		);
 	}
 
@@ -1578,6 +1623,10 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$enabled = ! empty($_POST['enabled']) ? 1 : 0;
 		$tplTitle = isset($_POST['template_title']) ? trim((string) $_POST['template_title']) : '';
 		$tplDesc  = isset($_POST['template_description']) ? trim((string) $_POST['template_description']) : '';
+		$newsTypes = isset($_POST['news_types']) ? (string) $_POST['news_types'] : 'public';
+		if ( ! isset($this->_webhookNewsTypes()[$newsTypes])) {
+			$newsTypes = 'public';
+		}
 
 		if ($label === '') { return array('error', 'Label is required.'); }
 		if (strlen($label) > 120) { return array('error', 'Label is too long (max 120 chars).'); }
@@ -1601,6 +1650,7 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			'format'               => $format,
 			'events'               => json_encode(array_values($cleanEvents)),
 			'enabled'              => $enabled,
+			'news_types'           => $newsTypes,
 			'template_title'       => $tplTitle !== '' ? $tplTitle : null,
 			'template_description' => $tplDesc  !== '' ? $tplDesc  : null,
 		);
