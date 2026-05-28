@@ -82,6 +82,56 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$this->_featureConfigPage('display_name');
 	}
 
+	public function rest_api()
+	{
+		Auth::check_access('site/settings');
+
+		if ( ! isset($this->features['rest_api'])) {
+			show_404();
+			return;
+		}
+
+		// ApiAuth normally loads in init.php only when the feature is on; the
+		// admin reaches this page through the regular nav after enabling it,
+		// so the require has already happened. Belt-and-braces require here
+		// for the edge case where an admin lands directly while the feature
+		// toggle is mid-flight.
+		require_once dirname(__FILE__).'/../libraries/ApiAuth.php';
+
+		$action      = isset($_POST['action']) ? $_POST['action'] : '';
+		$newTokenRaw = null;
+
+		if ($action === 'create_token') {
+			list($result, $newTokenRaw) = $this->_createApiToken();
+			$this->_flash($result);
+		} elseif ($action === 'revoke_token') {
+			$this->_flash($this->_revokeApiToken());
+		} elseif ($action === 'delete_token') {
+			$this->_flash($this->_deleteApiToken());
+		}
+
+		$f               = $this->features['rest_api'];
+		$data            = array();
+		$data['title']   = 'Sim Central Suite - '.$f['name'];
+		$data['feature'] = $f;
+		$data['jsons']   = $this->_loadConfig($configPath = dirname(__FILE__).'/../config.json');
+		$data['tokens']  = $this->db->order_by('revoked_at IS NULL', 'DESC', false)
+			->order_by('created_at', 'DESC')
+			->get('nova_ext_sim_central_api_tokens')
+			->result();
+		$data['available_scopes'] = $this->_apiAvailableScopes();
+		$data['new_token_raw']    = $newTokenRaw;
+		$data['images']           = $this->_iconImages();
+		$data['api_base_url']     = site_url('extensions/nova_ext_sim_central/Api');
+
+		$this->_regions['title']  .= $f['name'];
+		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
+			->view('rest_api', $this->skin, 'admin', $data);
+
+		Template::assign($this->_regions);
+		Template::render();
+	}
+
 	public function discord_auth()
 	{
 		Auth::check_access('site/settings');
@@ -503,6 +553,17 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				),
 				'shims'       => array(),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/content_filter',
+			),
+			'rest_api' => array(
+				'name'        => 'REST API',
+				'summary'     => 'Exposes a read-only HTTP API for external integrations (n8n, scripts, dashboards). Tokens are managed under Configure and authenticate via Authorization: Bearer.',
+				'standalone'  => null,
+				'requires_tables' => array(
+					'nova_ext_sim_central_api_tokens' => "CREATE TABLE IF NOT EXISTS `{prefix}nova_ext_sim_central_api_tokens` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `token_hash` char(64) NOT NULL, `token_prefix` varchar(16) NOT NULL, `scopes` text NOT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_used_at` datetime DEFAULT NULL, `expires_at` datetime DEFAULT NULL, `revoked_at` datetime DEFAULT NULL, `rate_count` int(11) NOT NULL DEFAULT 0, `rate_window_at` datetime DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `token_hash` (`token_hash`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+				),
+				'requires_db' => array(),
+				'shims'       => array(),
+				'config_route' => 'extensions/nova_ext_sim_central/Manage/rest_api',
 			),
 			'ordered_mission_posts' => array(
 				'name'        => 'Ordered Mission Posts',
@@ -1236,6 +1297,108 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 	}
 
 	// ---------- database setup ----------
+
+	/**
+	 * Canonical list of scopes the API understands. Kept as an explicit
+	 * registry rather than a free-form string so the ACP create form can
+	 * render real checkboxes and the validator can reject unknowns.
+	 *
+	 * v1 is read-only. Write scopes (posts:write etc.) will join this list
+	 * once the corresponding endpoints exist and the "act as" author setting
+	 * is added.
+	 */
+	private function _apiAvailableScopes()
+	{
+		return array(
+			'posts:read'      => 'Read mission posts (list + view).',
+			'characters:read' => 'Read characters (list + view).',
+			'missions:read'   => 'Read missions (list + view).',
+		);
+	}
+
+	/**
+	 * Create a new API token from POSTed form data.
+	 *
+	 * Returns array($result_tuple, $raw_token_or_null). The raw token is
+	 * intentionally returned to the caller (never persisted) so the page
+	 * can display it exactly once. A refresh of the page after creation
+	 * will lose it forever - that's the desired behaviour.
+	 */
+	private function _createApiToken()
+	{
+		$label = isset($_POST['label']) ? trim((string) $_POST['label']) : '';
+		if ($label === '') {
+			return array(array('error', 'Label is required.'), null);
+		}
+		if (strlen($label) > 120) {
+			return array(array('error', 'Label is too long (max 120 chars).'), null);
+		}
+
+		$postedScopes = isset($_POST['scopes']) && is_array($_POST['scopes']) ? $_POST['scopes'] : array();
+		$available    = $this->_apiAvailableScopes();
+		$scopes       = array();
+		foreach ($postedScopes as $s) {
+			if (isset($available[$s])) {
+				$scopes[] = $s;
+			}
+		}
+		if (empty($scopes)) {
+			return array(array('error', 'Select at least one scope.'), null);
+		}
+
+		$expiresAt = null;
+		if ( ! empty($_POST['expires_at'])) {
+			$ts = strtotime((string) $_POST['expires_at']);
+			if ($ts === false || $ts < time()) {
+				return array(array('error', 'Expiry must be a valid future date/time.'), null);
+			}
+			$expiresAt = date('Y-m-d H:i:s', $ts);
+		}
+
+		$token = \nova_ext_sim_central\ApiAuth::generateToken();
+		$userId = $this->session ? (int) $this->session->userdata('userid') : null;
+
+		$this->db->insert('nova_ext_sim_central_api_tokens', array(
+			'label'        => $label,
+			'token_hash'   => $token['hash'],
+			'token_prefix' => $token['prefix'],
+			'scopes'       => json_encode(array_values($scopes)),
+			'created_by'   => $userId ?: null,
+			'created_at'   => date('Y-m-d H:i:s'),
+			'expires_at'   => $expiresAt,
+		));
+
+		return array(array('success', 'Token created. Copy it now - it will not be shown again.'), $token['raw']);
+	}
+
+	private function _revokeApiToken()
+	{
+		$id = isset($_POST['token_id']) ? (int) $_POST['token_id'] : 0;
+		if ($id <= 0) {
+			return array('error', 'Invalid token id.');
+		}
+		$row = $this->db->get_where('nova_ext_sim_central_api_tokens', array('id' => $id))->row();
+		if ( ! $row) {
+			return array('error', 'Token not found.');
+		}
+		if ( ! empty($row->revoked_at)) {
+			return array('success', 'Token was already revoked.');
+		}
+		$this->db->where('id', $id)->update('nova_ext_sim_central_api_tokens', array(
+			'revoked_at' => date('Y-m-d H:i:s'),
+		));
+		return array('success', 'Token revoked.');
+	}
+
+	private function _deleteApiToken()
+	{
+		$id = isset($_POST['token_id']) ? (int) $_POST['token_id'] : 0;
+		if ($id <= 0) {
+			return array('error', 'Invalid token id.');
+		}
+		$this->db->where('id', $id)->delete('nova_ext_sim_central_api_tokens');
+		return array('success', 'Token deleted.');
+	}
 
 	private function _missingColumns($key)
 	{

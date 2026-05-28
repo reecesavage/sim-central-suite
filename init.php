@@ -135,6 +135,15 @@ if ( ! empty($simCentralFeatures['discord_auth'])) {
 		}
 	}
 }
+// ---------- REST API ----------
+// ApiAuth is consumed by the Api controller (loaded on-demand by Nova's
+// router) and by the Manage controller's token-management page. Loading
+// it here keeps the require off the per-request hot path for the
+// controllers themselves.
+if ( ! empty($simCentralFeatures['rest_api'])) {
+	require_once dirname(__FILE__).'/libraries/ApiAuth.php';
+}
+
 if ( ! empty($simCentralFeatures['summary'])) {
 	require_once dirname(__FILE__).'/events/summary_db.php';
 	require_once dirname(__FILE__).'/events/summary_location_admin_add_mission.php';

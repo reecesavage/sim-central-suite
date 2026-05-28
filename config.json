@@ -1,5 +1,5 @@
 {
-	"version": "1.8.0",
+	"version": "1.9.0",
 	"features": {
 		"display_name": false,
 		"anti_spam": false,
@@ -7,7 +7,8 @@
 		"url_parser": false,
 		"ordered_mission_posts": false,
 		"content_filter": false,
-		"discord_auth": false
+		"discord_auth": false,
+		"rest_api": false
 	},
 	"nova_ext_display_name": {
 		"display_name": {
@@ -107,6 +108,7 @@
 		"discord_auth_login_discord_only": 0,
 		"discord_auth_required_guild_ids": [],
 		"discord_auth_required_guild_mode": "any",
-		"discord_auth_required_guild_help": ""
+		"discord_auth_required_guild_help": "",
+		"rest_api_rate_limit_per_minute": 60
 	}
 }

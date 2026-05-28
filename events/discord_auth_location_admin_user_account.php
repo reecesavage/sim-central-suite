@@ -1,19 +1,33 @@
 <?php
 
-// Add a "Linked Discord account" section to the user's "My Account"
-// page (/user/account) so they can link, unlink, or change their
-// linked Discord. Behaviour depends on suite settings:
+// Add a "Linked Discord account" section to the user account page
+// (/admin/user/account[/{id}]). Two distinct render modes depending on whose
+// account is being viewed:
 //
-//   - Required-link mode OFF, linked     -> show identity + Unlink
-//   - Required-link mode OFF, not linked -> show "Link Discord" button
-//   - Required-link mode ON,  linked     -> show identity + "Change Discord account"
-//                                           (Unlink hidden - users can't fully detach
-//                                           when linking is required, but they can
-//                                           switch to a different Discord account)
-//   - Required-link mode ON,  not linked -> show "Link Discord" button. (Shouldn't
-//                                           normally be visible since the enforcement
-//                                           hook would have redirected them, but
-//                                           defensive in case of a stale tab.)
+//   Viewing OWN account (the typical case):
+//     - Required-link mode OFF, linked     -> identity + Unlink
+//     - Required-link mode OFF, not linked -> "Link Discord" button
+//     - Required-link mode ON,  linked     -> identity + "Change Discord account"
+//                                             (Unlink hidden - users can't fully detach
+//                                             when linking is required, but they can
+//                                             switch to a different Discord account)
+//     - Required-link mode ON,  not linked -> "Link Discord" button. (Shouldn't
+//                                             normally be visible since the enforcement
+//                                             hook would have redirected them, but
+//                                             defensive in case of a stale tab.)
+//
+//   Viewing SOMEONE ELSE'S account (sysadmin / level 2 only - Nova's own User::account
+//   refuses level 1 anyway):
+//     - Linked     -> identity only (read-only, no action buttons). Sysadmin can
+//                     fix link state via direct SQL or the user editing flow if
+//                     they really need to; the account page doesn't expose a
+//                     per-user kick-link control yet.
+//     - Not linked -> short "No Discord account linked." note. No button (clicking
+//                     it would link the SYSADMIN'S Discord, not the viewed user's).
+//
+// The viewed user id follows the same rule Nova's User::account() uses:
+//   level 2 (sysadmin) -> uri->segment(3) if present, else own id
+//   level 1            -> own id always
 
 $this->event->listen(['location', 'view', 'output', 'admin', 'user_account'], function($event){
 	if ( ! \Auth::is_logged_in()) {
@@ -22,23 +36,55 @@ $this->event->listen(['location', 'view', 'output', 'admin', 'user_account'], fu
 
 	$ci =& get_instance();
 	$ci->load->model('users_model', 'user');
-	$user = $ci->user->get_user($ci->session->userdata('userid'));
-	if ( ! $user) {
+
+	$loggedInId = (int) $ci->session->userdata('userid');
+	$level      = \Auth::get_access_level();
+	$viewedId   = ($level == 2)
+		? (int) $ci->uri->segment(3, $loggedInId, true)
+		: $loggedInId;
+
+	$viewedUser = $ci->user->get_user($viewedId);
+	if ( ! $viewedUser) {
 		return;
 	}
 
-	$flash = $ci->session->flashdata('discord_auth_message');
+	$isOwnAccount = ($viewedId === $loggedInId);
+	$flash    = $isOwnAccount ? $ci->session->flashdata('discord_auth_message') : null;
 	$required = \nova_ext_sim_central\DiscordAuth::requiresLink();
 	$linkUrl   = site_url('extensions/nova_ext_sim_central/DiscordAuth/start?intent=link');
 	$unlinkUrl = site_url('extensions/nova_ext_sim_central/DiscordAuth/unlink');
 
-	if ( ! empty($user->nova_ext_discord_auth_id)) {
-		$username  = htmlspecialchars((string) $user->nova_ext_discord_auth_username, ENT_QUOTES);
-		$discordId = htmlspecialchars((string) $user->nova_ext_discord_auth_id, ENT_QUOTES);
+	$hasLinked = ! empty($viewedUser->nova_ext_discord_auth_id);
+
+	if ($hasLinked) {
+		$username  = htmlspecialchars((string) $viewedUser->nova_ext_discord_auth_username, ENT_QUOTES);
+		$discordId = htmlspecialchars((string) $viewedUser->nova_ext_discord_auth_id, ENT_QUOTES);
 
 		$identity = '<p><strong>Discord:</strong> '.$username.' '
 			.'<span class="fontSmall gray">(ID '.$discordId.')</span></p>';
+	} else {
+		$identity = '';
+	}
 
+	if ( ! $isOwnAccount) {
+		// Sysadmin viewing another user's account. Render read-only:
+		// either the linked identity or a "not linked" note, no buttons.
+		// Buttons would be wrong here because all DiscordAuth controller
+		// endpoints (start, unlink) act on the SESSION'S user, not the
+		// URL's user - clicking them would mutate the sysadmin's own
+		// link state, not the viewed user's.
+		$body = $hasLinked
+			? $identity
+			.'<p class="fontSmall gray italic">Read-only. To change this user\'s Discord link, the user must do it from their own account page.</p>'
+			: '<p class="gray">No Discord account linked.</p>';
+
+		$block = '<br><h3 class="page-subhead">Linked Discord account</h3>'.$body;
+		$event['output'] .= $block;
+		return;
+	}
+
+	// Viewing own account - full interactive UI.
+	if ($hasLinked) {
 		if ($required) {
 			// Required mode: offer "Change Discord account" instead of Unlink.
 			// Re-link goes through the same intent=link flow; the suite library's

@@ -1,13 +1,13 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.8.0"><img src="https://img.shields.io/badge/Version-v1.8.0-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.9.0"><img src="https://img.shields.io/badge/Version-v1.9.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
 </p>
 
-One Nova extension that consolidates seven sim-management features behind a single admin dashboard. Toggle each feature on or off independently, configure them in one place, and let the suite manage the database columns, controller shims, and menu plumbing so you don't have to install or update each one separately.
+One Nova extension that consolidates eight sim-management features behind a single admin dashboard. Toggle each feature on or off independently, configure them in one place, and let the suite manage the database columns, controller shims, and menu plumbing so you don't have to install or update each one separately.
 
 This release rolls up:
 
@@ -18,6 +18,7 @@ This release rolls up:
 - **Ordered Mission Posts** &mdash; order posts by Day/Time, Date/Time, or Stardate; optional post numbering; configurable date + time display formats; HTML5 native date/time inputs; inline word counts on the missions pages
 - **Content Filter** &mdash; age-gates mission post bodies on the public site and in the RSS feed for sims that permit adult language, violence, or sexual content; configurable default for the per-post toggle; writer attests at submit time
 - **Discord Sign-In** &mdash; "Sign in with Discord" / "Sign up with Discord" via the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker); one Discord app serves any number of sims (no per-sim redirect URI registration); link/unlink controls on User Account; optional site-wide enforcement that requires every user to keep Discord linked; optional Discord-only sign-in mode with a sysadmin email + password escape hatch; optional gate by Discord server membership (any-of / all-of); Discord-branded buttons everywhere
+- **REST API** *(v1.9.0+)* &mdash; read-only HTTP API for external integrations (n8n flows, scripts, dashboards); admin-issued bearer tokens with per-scope grants (`posts:read`, `characters:read`, `missions:read`); per-token rate limiting; one-time-display token reveal; surface suite-feature fields (summary, ordered post day/time, display name, etc.) in the JSON when those features are on
 
 ## Requirements
 
@@ -195,6 +196,35 @@ The suite does not auto-create user accounts from Discord sign-ins &mdash; every
 
 For complete self-hosting instructions, broker architecture, and the security model, see <https://github.com/reecesavage/sim-central-broker>.
 
+### REST API *(v1.9.0+)*
+
+Exposes a read-only HTTP API for external integrations &mdash; n8n workflows, automation scripts, dashboards, anything that needs to pull mission posts, characters, or missions out of the sim programmatically. The API is **off by default** and stays invisible (every endpoint 404s) until enabled; once on, authentication is by admin-issued bearer token only. There is no fallback to Nova session cookies, and there is no per-user self-service token issuance &mdash; only sysadmins with `site/settings` access can create or revoke tokens.
+
+Adds one table: `nova_ext_sim_central_api_tokens` (label, hashed token + display prefix, JSON scope list, created/last-used/expires/revoked timestamps, per-token rate counter). Configure on the *REST API &rarr; Configure* page:
+
+- **Create token** &mdash; pick a free-form label, tick the scopes (`posts:read`, `characters:read`, `missions:read`), optionally set an expiry. The raw token is shown **exactly once** on the next page render &mdash; copy it immediately. Only its SHA-256 hash survives in the database; if you lose the token, revoke and re-issue.
+- **Revoke** &mdash; soft-disable a token. Sets `revoked_at`, preserves the row for audit, and starts returning `401 Token has been revoked.` to any client still using it.
+- **Delete** &mdash; hard removal for cleanup. Confirm dialog because it's irreversible.
+- **Rate limit** &mdash; rolling 60-second window per token, default 60 requests/minute. Override via the `rest_api_rate_limit_per_minute` setting (set to `0` to disable). Exceeding it returns `429`.
+
+Tokens look like `scapi_<40 hex chars>` and authenticate via the standard `Authorization: Bearer ...` header.
+
+Endpoints (all under `/extensions/nova_ext_sim_central/Api/`):
+
+| Method | Path | Scope |
+|---|---|---|
+| `GET` | `/ping` | any valid token |
+| `GET` | `/posts` *(filters: `?mission=`, `?status=`, `?page=`, `?per_page=`)* | `posts:read` |
+| `GET` | `/posts/{id}` | `posts:read` |
+| `GET` | `/characters` *(filters: `?status=`, `?page=`, `?per_page=`)* | `characters:read` |
+| `GET` | `/characters/{id}` | `characters:read` |
+| `GET` | `/missions` *(filters: `?status=`, `?page=`, `?per_page=`)* | `missions:read` |
+| `GET` | `/missions/{id}` | `missions:read` |
+
+Response JSON uses whitelisted, documented fields &mdash; not raw column dumps &mdash; so internal schema churn doesn't leak through. Suite-feature fields are **layered on conditionally**: when *Mission Post Summary* is on, posts gain a `summary` key; when *Ordered Mission Posts* is on, posts gain an `ordered` object and missions gain ordering config; when *Display Name* is on, characters gain `display_name` and a precomputed `preferred_name`; when *Content Filter* is on, posts gain an `age_gated` boolean (full content is still returned &mdash; the flag lets consumers decide whether to redact). Field *presence* is the signal that a feature is enabled &mdash; consumers can detect what's available without an extra config endpoint.
+
+Designed primarily for [n8n](https://n8n.io/) consumers but works with any HTTP client. See [`REST_API.md`](REST_API.md) for the full endpoint reference: every parameter, every response field, curl + n8n examples, and the error-code matrix.
+
 ## Reset / uninstall
 
 - **Reset state to defaults**: `DELETE FROM nova_settings WHERE setting_key = 'sim_central_state';` &mdash; on the next page load, state is re-seeded from `config.json` (all features off).
@@ -203,6 +233,7 @@ For complete self-hosting instructions, broker architecture, and the security mo
 - **Full uninstall**: disable every feature (so all shims are removed), then comment out / remove the `$config['extensions']['enabled'][] = 'nova_ext_sim_central';` line and delete the extension folder. Database columns are intentionally left in place.
 - **Clean up update backups**: the in-app updater leaves the previous version in `application/extensions/nova_ext_sim_central.backup-YYYYMMDD-HHMMSS/`. Delete these by hand once you're satisfied with the upgrade. The suite never auto-prunes them.
 - **Unlink everyone's Discord at once**: `UPDATE nova_users SET nova_ext_discord_auth_id = NULL, nova_ext_discord_auth_username = NULL, nova_ext_discord_auth_avatar = NULL, nova_ext_discord_auth_email_verified = NULL, nova_ext_discord_auth_linked_at = NULL;` &mdash; useful if you ever rotate the broker (changing public keys would invalidate every existing token but already-linked rows would still work for matching).
+- **Revoke every REST API token at once**: `UPDATE nova_nova_ext_sim_central_api_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL;` &mdash; useful if you suspect a token leak or are handing the sim to a new admin. Or drop the table outright to wipe the audit history too: `DROP TABLE nova_nova_ext_sim_central_api_tokens;` (recreate via *REST API &rarr;* **Setup database** if you re-enable the feature later).
 
 ## Issues
 
