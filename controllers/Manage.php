@@ -143,6 +143,64 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		Template::render();
 	}
 
+	public function webhooks()
+	{
+		Auth::check_access('site/settings');
+
+		if ( ! isset($this->features['webhooks'])) {
+			show_404();
+			return;
+		}
+
+		require_once dirname(__FILE__).'/../libraries/Webhooks.php';
+
+		$action     = isset($_POST['action']) ? $_POST['action'] : '';
+		$dbReady    = empty($this->_missingTables('webhooks'));
+		$editingId  = (int) $this->uri->segment(5);
+
+		if ($dbReady) {
+			if ($action === 'create_webhook') {
+				$this->_flash($this->_saveWebhook(null));
+			} elseif ($action === 'update_webhook') {
+				$id = (int) ($_POST['id'] ?? 0);
+				if ($id > 0) { $this->_flash($this->_saveWebhook($id)); }
+			} elseif ($action === 'delete_webhook') {
+				$this->_flash($this->_deleteWebhook());
+			} elseif ($action === 'toggle_webhook') {
+				$this->_flash($this->_toggleWebhook());
+			} elseif ($action === 'test_webhook') {
+				$id = (int) ($_POST['id'] ?? 0);
+				$ev = isset($_POST['event']) ? (string) $_POST['event'] : 'post.posted';
+				if ($id > 0) { $this->_flash(\nova_ext_sim_central\Webhooks::testWebhook($id, $ev)); }
+			}
+		}
+
+		$f               = $this->features['webhooks'];
+		$data            = array();
+		$data['title']   = 'Sim Central Suite - '.$f['name'];
+		$data['feature'] = $f;
+		$data['jsons']   = $this->_loadConfig(dirname(__FILE__).'/../config.json');
+		$data['db_ready']= $dbReady;
+		$data['available_events'] = $this->_webhookAvailableEvents();
+		$data['available_formats'] = $this->_webhookAvailableFormats();
+		$data['default_title_template']       = \nova_ext_sim_central\Webhooks::DEFAULT_TITLE_TEMPLATE;
+		$data['default_description_template'] = \nova_ext_sim_central\Webhooks::DEFAULT_DESCRIPTION_TEMPLATE;
+		$data['webhooks'] = $dbReady
+			? $this->db->order_by('enabled', 'DESC')->order_by('created_at', 'DESC')->get('sim_central_webhooks')->result()
+			: array();
+		$data['edit_row'] = null;
+		if ($dbReady && $editingId > 0) {
+			$data['edit_row'] = $this->db->get_where('sim_central_webhooks', array('id' => $editingId))->row();
+		}
+
+		$this->_regions['title']  .= $f['name'];
+		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
+			->view('webhooks', $this->skin, 'admin', $data);
+
+		Template::assign($this->_regions);
+		Template::render();
+	}
+
 	public function api_explorer()
 	{
 		Auth::check_access('site/settings');
@@ -616,6 +674,36 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				'requires_db' => array(),
 				'shims'       => array(),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/rest_api',
+			),
+			'webhooks' => array(
+				'name'        => 'Event Webhooks',
+				'summary'     => 'Fire HTTP webhooks when posts are saved or activated. Discord-formatted (embed with @mentions of linked authors) or generic JSON (for n8n etc.). Multiple webhooks per event; per-token rate isolation; admin-managed under Configure.',
+				'standalone'  => null,
+				'requires_tables' => array(
+					'sim_central_webhooks' => "CREATE TABLE IF NOT EXISTS `{prefix}sim_central_webhooks` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `url` text NOT NULL, `format` varchar(20) NOT NULL, `events` text NOT NULL, `enabled` tinyint(1) NOT NULL DEFAULT 1, `template_title` text DEFAULT NULL, `template_description` text DEFAULT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_fired_at` datetime DEFAULT NULL, `last_status` int(11) DEFAULT NULL, `last_error` text DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+				),
+				'requires_db' => array(),
+				'shims' => array(
+					'webhooks_create' => array(
+						'file'                  => APPPATH.'models/Posts_model.php',
+						'txt'                   => dirname(__FILE__).'/../posts_model_create.txt',
+						'tag'                   => 'webhooks_create',
+						'method'                => 'create_mission_entry',
+						'label'                 => 'Post create webhook hook',
+						'standalone_marker_ns'  => 'nova_ext_sim_central',
+						'standalone_marker_tag' => 'webhooks_create',
+					),
+					'webhooks_update' => array(
+						'file'                  => APPPATH.'models/Posts_model.php',
+						'txt'                   => dirname(__FILE__).'/../posts_model_update.txt',
+						'tag'                   => 'webhooks_update',
+						'method'                => 'update_post',
+						'label'                 => 'Post update webhook hook',
+						'standalone_marker_ns'  => 'nova_ext_sim_central',
+						'standalone_marker_tag' => 'webhooks_update',
+					),
+				),
+				'config_route' => 'extensions/nova_ext_sim_central/Manage/webhooks',
 			),
 			'ordered_mission_posts' => array(
 				'name'        => 'Ordered Mission Posts',
@@ -1450,6 +1538,89 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		}
 		$this->db->where('id', $id)->delete('sim_central_api_tokens');
 		return array('success', 'Token deleted.');
+	}
+
+	// ---------- webhooks helpers ----------
+
+	private function _webhookAvailableEvents()
+	{
+		return array(
+			'post.saved'  => 'Fires when a draft post is created or saved (status = saved). For nudging co-authors that a draft needs another look.',
+			'post.posted' => 'Fires when a post transitions to activated (i.e. publicly posted). The main announcement event.',
+		);
+	}
+
+	private function _webhookAvailableFormats()
+	{
+		return array(
+			'discord' => 'Discord webhook URL. Fires a formatted embed (with @mentions of authors who have linked Discord).',
+			'generic' => 'Generic JSON. Sends a structured payload suitable for n8n, custom scripts, or any tool that consumes raw JSON.',
+		);
+	}
+
+	private function _saveWebhook($id)
+	{
+		$label = isset($_POST['label']) ? trim((string) $_POST['label']) : '';
+		$url   = isset($_POST['url'])   ? trim((string) $_POST['url'])   : '';
+		$format= isset($_POST['format'])? (string) $_POST['format']      : '';
+		$events= isset($_POST['events']) && is_array($_POST['events']) ? $_POST['events'] : array();
+		$enabled = ! empty($_POST['enabled']) ? 1 : 0;
+		$tplTitle = isset($_POST['template_title']) ? trim((string) $_POST['template_title']) : '';
+		$tplDesc  = isset($_POST['template_description']) ? trim((string) $_POST['template_description']) : '';
+
+		if ($label === '') { return array('error', 'Label is required.'); }
+		if (strlen($label) > 120) { return array('error', 'Label is too long (max 120 chars).'); }
+		if ( ! filter_var($url, FILTER_VALIDATE_URL) || ! preg_match('#^https?://#i', $url)) {
+			return array('error', 'URL must be a valid http(s) URL.');
+		}
+		$availableFormats = $this->_webhookAvailableFormats();
+		if ( ! isset($availableFormats[$format])) {
+			return array('error', 'Unknown format.');
+		}
+		$availableEvents = $this->_webhookAvailableEvents();
+		$cleanEvents = array();
+		foreach ($events as $ev) {
+			if (isset($availableEvents[$ev])) { $cleanEvents[] = $ev; }
+		}
+		if (empty($cleanEvents)) { return array('error', 'Select at least one event.'); }
+
+		$data = array(
+			'label'                => $label,
+			'url'                  => $url,
+			'format'               => $format,
+			'events'               => json_encode(array_values($cleanEvents)),
+			'enabled'              => $enabled,
+			'template_title'       => $tplTitle !== '' ? $tplTitle : null,
+			'template_description' => $tplDesc  !== '' ? $tplDesc  : null,
+		);
+
+		if ($id === null) {
+			$data['created_at'] = date('Y-m-d H:i:s');
+			$data['created_by'] = $this->session ? (int) $this->session->userdata('userid') : null;
+			$this->db->insert('sim_central_webhooks', $data);
+			return array('success', 'Webhook created.');
+		}
+
+		$this->db->where('id', $id)->update('sim_central_webhooks', $data);
+		return array('success', 'Webhook updated.');
+	}
+
+	private function _deleteWebhook()
+	{
+		$id = (int) ($_POST['id'] ?? 0);
+		if ($id <= 0) { return array('error', 'Invalid webhook id.'); }
+		$this->db->where('id', $id)->delete('sim_central_webhooks');
+		return array('success', 'Webhook deleted.');
+	}
+
+	private function _toggleWebhook()
+	{
+		$id = (int) ($_POST['id'] ?? 0);
+		if ($id <= 0) { return array('error', 'Invalid webhook id.'); }
+		$row = $this->db->get_where('sim_central_webhooks', array('id' => $id))->row();
+		if ( ! $row) { return array('error', 'Webhook not found.'); }
+		$this->db->where('id', $id)->update('sim_central_webhooks', array('enabled' => $row->enabled ? 0 : 1));
+		return array('success', $row->enabled ? 'Webhook disabled.' : 'Webhook enabled.');
 	}
 
 	private function _missingColumns($key)

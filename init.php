@@ -147,6 +147,15 @@ if ( ! empty($simCentralFeatures['rest_api'])) {
 	require_once dirname(__FILE__).'/libraries/ApiEndpoints.php';
 }
 
+// ---------- Event Webhooks ----------
+// Webhooks library is consumed by the Posts_model shim (which fires after
+// successful create/update) and by the Manage::webhooks ACP page. Loading
+// unconditionally when the feature is on means the shim's class_exists()
+// guard resolves true and the dispatch fires.
+if ( ! empty($simCentralFeatures['webhooks'])) {
+	require_once dirname(__FILE__).'/libraries/Webhooks.php';
+}
+
 if ( ! empty($simCentralFeatures['summary'])) {
 	require_once dirname(__FILE__).'/events/summary_db.php';
 	require_once dirname(__FILE__).'/events/summary_location_admin_add_mission.php';

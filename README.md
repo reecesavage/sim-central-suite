@@ -1,13 +1,13 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.10.0"><img src="https://img.shields.io/badge/Version-v1.10.0-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.11.0"><img src="https://img.shields.io/badge/Version-v1.11.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
 </p>
 
-One Nova extension that consolidates eight sim-management features behind a single admin dashboard. Toggle each feature on or off independently, configure them in one place, and let the suite manage the database columns, controller shims, and menu plumbing so you don't have to install or update each one separately.
+One Nova extension that consolidates nine sim-management features behind a single admin dashboard. Toggle each feature on or off independently, configure them in one place, and let the suite manage the database columns, controller shims, and menu plumbing so you don't have to install or update each one separately.
 
 This release rolls up:
 
@@ -19,6 +19,7 @@ This release rolls up:
 - **Content Filter** &mdash; age-gates mission post bodies on the public site and in the RSS feed for sims that permit adult language, violence, or sexual content; configurable default for the per-post toggle; writer attests at submit time
 - **Discord Sign-In** &mdash; "Sign in with Discord" / "Sign up with Discord" via the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker); one Discord app serves any number of sims (no per-sim redirect URI registration); link/unlink controls on User Account; optional site-wide enforcement that requires every user to keep Discord linked; optional Discord-only sign-in mode with a sysadmin email + password escape hatch; optional gate by Discord server membership (any-of / all-of); Discord-branded buttons everywhere
 - **REST API** *(v1.9.1+)* &mdash; read-only HTTP API for external integrations (n8n flows, scripts, dashboards); admin-issued bearer tokens with per-scope grants (`posts:read`, `characters:read`, `missions:read`); per-token rate limiting; one-time-display token reveal; surface suite-feature fields (summary, ordered post day/time, display name, etc.) in the JSON when those features are on
+- **Event Webhooks** *(v1.11.0+)* &mdash; fire HTTP webhooks when posts are saved or activated. Discord-formatted (rich embed with @mentions of linked authors via stored Discord IDs) or generic JSON (for n8n etc.). Multiple webhooks per event, per-webhook event subscriptions, customisable Discord embed templates for the `post.posted` event, **Test** button for each webhook, fire-and-forget delivery with status visibility (last_status + last_error per webhook).
 
 ## Requirements
 
@@ -227,6 +228,26 @@ Designed primarily for [n8n](https://n8n.io/) consumers but works with any HTTP 
 
 **API Explorer + OpenAPI spec** *(v1.10.0+)*: The suite ships an interactive explorer at *REST API &rarr; API Explorer* &mdash; lists every endpoint, lets you fire requests against the live API from the admin page, and shows the JSON response inline. Every endpoint also has a "Copy curl" button. The same catalog is exposed as a machine-readable **OpenAPI 3.0** document at `/extensions/nova_ext_sim_central/Api/openapi` (public when the feature is on, 404 when off &mdash; same as every other endpoint), importable into Postman, Insomnia, Stoplight, n8n's OpenAPI nodes, or any other OpenAPI-aware tooling.
 
+### Event Webhooks *(v1.11.0+)*
+
+Fires HTTP webhook notifications when posts change state. Two events:
+
+- `post.saved` &mdash; a draft was created or saved (status = saved). Useful for nudging co-authors that a draft has been updated and needs their attention.
+- `post.posted` &mdash; a post transitioned from non-activated to activated (i.e. publicly posted). The main announcement event.
+
+Each webhook is one row in `sim_central_webhooks` (label, URL, format, events subscription, enabled flag, optional Discord templates, last-fired metadata). Multiple webhooks per event are supported. Two formats:
+
+- **Discord** &mdash; renders a rich embed at the webhook URL (paste your Discord channel's webhook URL straight in). For `post.posted` the embed mimics the layout a lot of sims build by hand in n8n today: title with sim name, italic *"A mission post by..."* byline, **Mission** / **Location** / **Timeline** fields, smart-truncated body excerpt (HTML stripped, basic Markdown applied), random embed colour, *Read the full post* link. Authors with a linked Discord ID (via the *Discord Sign-In* feature) are mentioned via `<@discord_id>` in the message `content` so they actually get a notification ping; un-linked authors render as plain "Rank First Last". For `post.saved` the format is fixed and lighter (title + author mentions + saved-by + admin link) so co-authors see "hey, a draft you're on changed".
+- **Generic JSON** &mdash; flat structured payload (`event`, `post`, `authors`, `actor`, `sim`, `fired_at`). Use for n8n, scripts, or any tool that wants the raw shape and will do its own formatting downstream.
+
+Discord embed templates for the `post.posted` event are admin-customisable per-webhook with `{sim_name}`, `{post_title}`, `{authors}`, `{authors_plain}`, `{mission}`, `{location}`, `{timeline}`, `{body}`, `{url}`, `{url_admin}`, `{actor}` variables. Leave blank to use the bundled defaults.
+
+Delivery is **fire-and-forget** with a 2-second cURL timeout. We never retry, never queue, never block the save &mdash; a slow or broken webhook URL cannot make the writer page hang. Each webhook row stores `last_fired_at`, `last_status` (HTTP code or 0 for network error), and `last_error` (truncated response or curl error message), which the manage page surfaces inline so admins can spot broken integrations at a glance. Each webhook also has a **Test** button that fires a synthetic event with realistic-looking dummy data, letting you verify wiring before saving the first real post.
+
+Hooks into Nova at the model level via `Posts_model` shims (one for `create_mission_entry`, one for `update_post`) &mdash; same managed-block pattern the other suite features use. Disabling the feature removes both shim blocks; the table stays for audit.
+
+See [`WEBHOOKS.md`](WEBHOOKS.md) for the full reference: every template variable, every JSON payload field, and worked-example Discord embed output.
+
 ## Reset / uninstall
 
 - **Reset state to defaults**: `DELETE FROM nova_settings WHERE setting_key = 'sim_central_state';` &mdash; on the next page load, state is re-seeded from `config.json` (all features off).
@@ -236,6 +257,7 @@ Designed primarily for [n8n](https://n8n.io/) consumers but works with any HTTP 
 - **Clean up update backups**: the in-app updater leaves the previous version in `application/extensions/nova_ext_sim_central.backup-YYYYMMDD-HHMMSS/`. Delete these by hand once you're satisfied with the upgrade. The suite never auto-prunes them.
 - **Unlink everyone's Discord at once**: `UPDATE nova_users SET nova_ext_discord_auth_id = NULL, nova_ext_discord_auth_username = NULL, nova_ext_discord_auth_avatar = NULL, nova_ext_discord_auth_email_verified = NULL, nova_ext_discord_auth_linked_at = NULL;` &mdash; useful if you ever rotate the broker (changing public keys would invalidate every existing token but already-linked rows would still work for matching).
 - **Revoke every REST API token at once**: `UPDATE nova_sim_central_api_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL;` &mdash; useful if you suspect a token leak or are handing the sim to a new admin. Or drop the table outright to wipe the audit history too: `DROP TABLE nova_sim_central_api_tokens;` (recreate via *REST API &rarr;* **Setup database** if you re-enable the feature later).
+- **Disable every webhook at once**: `UPDATE nova_sim_central_webhooks SET enabled = 0;` &mdash; stops all deliveries without losing the URL configuration. Or drop the table to wipe everything: `DROP TABLE nova_sim_central_webhooks;` (recreate via *Event Webhooks &rarr;* **Setup database** if you re-enable later).
 
 ## Issues
 

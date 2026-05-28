@@ -1,0 +1,15 @@
+	/* nova_ext_sim_central:webhooks_create v1 START - managed block, do not edit by hand */
+	public function create_mission_entry($data = '')
+	{
+		$result = parent::create_mission_entry($data);
+
+		if ($result > 0 && class_exists('nova_ext_sim_central\\Webhooks')) {
+			$newId = $this->db->insert_id();
+			if ($newId) {
+				\nova_ext_sim_central\Webhooks::onPostChanged($newId, $data, null);
+			}
+		}
+
+		return $result;
+	}
+	/* nova_ext_sim_central:webhooks_create END */

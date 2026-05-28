@@ -1,0 +1,21 @@
+	/* nova_ext_sim_central:webhooks_update v1 START - managed block, do not edit by hand */
+	public function update_post($id = '', $data = [])
+	{
+		// Snapshot the prior status BEFORE the update so we can tell a draft
+		// being saved (post.saved) apart from a draft being activated
+		// (post.posted) - the latter must be a transition, not every edit
+		// of an already-activated post.
+		$previousStatus = null;
+		if (class_exists('nova_ext_sim_central\\Webhooks')) {
+			$previousStatus = $this->get_post($id, 'post_status');
+		}
+
+		$result = parent::update_post($id, $data);
+
+		if ($result > 0 && class_exists('nova_ext_sim_central\\Webhooks')) {
+			\nova_ext_sim_central\Webhooks::onPostChanged($id, $data, $previousStatus);
+		}
+
+		return $result;
+	}
+	/* nova_ext_sim_central:webhooks_update END */
