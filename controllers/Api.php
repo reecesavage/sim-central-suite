@@ -34,12 +34,12 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 
 		$this->load->database();
 
-		// Hard gate: if the feature is off, every endpoint 404s. This avoids
-		// leaking the API surface on sims that never opted in.
-		$features = \nova_ext_sim_central\Config::features();
-		if (empty($features['rest_api'])) {
-			$this->_emit(404, array('error' => 'Not found.'));
-		}
+		// NOTE: the suite's namespace (\nova_ext_sim_central\Config, ApiAuth, ...)
+		// is NOT available here. Nova loads each extension's init.php via the
+		// `extensions` hook on post_controller_constructor, which fires AFTER
+		// this constructor. Any reference to the suite namespace from here would
+		// fatal with "class not found". The feature-toggle 404 gate lives in
+		// _gate() and runs as the first call of every endpoint method instead.
 	}
 
 	/**
@@ -50,6 +50,7 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 */
 	public function ping()
 	{
+		$this->_gate();
 		$token = $this->_authenticate(null);
 		$this->_emit(200, array(
 			'ok'          => true,
@@ -67,6 +68,7 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 */
 	public function posts()
 	{
+		$this->_gate();
 		$this->_authenticate('posts:read');
 		$this->load->model('posts_model', 'posts');
 
@@ -119,6 +121,7 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 */
 	public function characters()
 	{
+		$this->_gate();
 		$this->_authenticate('characters:read');
 		$this->load->model('characters_model', 'characters');
 
@@ -162,6 +165,7 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 */
 	public function missions()
 	{
+		$this->_gate();
 		$this->_authenticate('missions:read');
 		$this->load->model('missions_model', 'missions');
 
@@ -193,6 +197,24 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	}
 
 	// ---------- internals ----------
+
+	/**
+	 * Hard 404 if the rest_api feature toggle is off. Called as the first
+	 * line of every endpoint method - NOT from the constructor, because
+	 * Nova's `extensions` hook loads the suite's namespace on
+	 * post_controller_constructor (which fires AFTER __construct), so
+	 * \nova_ext_sim_central\Config isn't available in the constructor.
+	 *
+	 * By the time any action method runs, the hook has fired and the suite
+	 * namespace is fully loaded.
+	 */
+	private function _gate()
+	{
+		$features = \nova_ext_sim_central\Config::features();
+		if (empty($features['rest_api'])) {
+			$this->_emit(404, array('error' => 'Not found.'));
+		}
+	}
 
 	/**
 	 * Whitelist projector for a post row. Keep this list explicit - if Nova
