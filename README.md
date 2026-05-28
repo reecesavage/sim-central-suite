@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.9.2"><img src="https://img.shields.io/badge/Version-v1.9.2-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.9.3"><img src="https://img.shields.io/badge/Version-v1.9.3-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -207,7 +207,7 @@ Adds one table: `sim_central_api_tokens` (which becomes `<dbprefix>sim_central_a
 - **Delete** &mdash; hard removal for cleanup. Confirm dialog because it's irreversible.
 - **Rate limit** &mdash; rolling 60-second window per token, default 60 requests/minute. Override via the `rest_api_rate_limit_per_minute` setting (set to `0` to disable). Exceeding it returns `429`.
 
-Tokens look like `scapi_<40 hex chars>` and authenticate via the standard `Authorization: Bearer ...` header.
+Tokens look like `scapi_<40 hex chars>` and authenticate via the `X-API-Key: scapi_...` header. Apache strips the standard `Authorization` header before PHP can see it on most shared hosts, so the suite uses `X-API-Key` exclusively &mdash; works on every install with no server config.
 
 Endpoints (all under `/extensions/nova_ext_sim_central/Api/`):
 

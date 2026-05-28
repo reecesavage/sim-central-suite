@@ -404,8 +404,8 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 */
 	private function _authenticate($scope)
 	{
-		$header = $this->_authHeader();
-		$result = \nova_ext_sim_central\ApiAuth::validateBearer($header, $scope);
+		$raw    = $this->_extractToken();
+		$result = \nova_ext_sim_central\ApiAuth::validateToken($raw, $scope);
 
 		if ($result['status'] !== 'ok') {
 			$this->_emit($result['code'], array('error' => $result['message']));
@@ -414,27 +414,43 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	}
 
 	/**
-	 * Read the Authorization header in a way that works under both Apache
-	 * (apache_request_headers) and FastCGI ($_SERVER). Returns null if no
-	 * header is present.
+	 * Pull the raw API token out of the request's `X-API-Key` header.
+	 *
+	 * We deliberately only accept X-API-Key, not Authorization: Bearer.
+	 * Apache strips Authorization on most shared hosts (it considers it
+	 * server-owned), which would silently break the API for admins who
+	 * didn't know to add an .htaccess rewrite. X-* headers pass through
+	 * untouched. One supported form = no configuration footgun.
+	 *
+	 * Returns the trimmed token string or null if the header is absent.
 	 */
-	private function _authHeader()
+	private function _extractToken()
 	{
+		$value = null;
+
 		if (function_exists('apache_request_headers')) {
 			$headers = apache_request_headers();
-			foreach ($headers as $name => $value) {
-				if (strcasecmp($name, 'Authorization') === 0) {
-					return $value;
+			if (is_array($headers)) {
+				foreach ($headers as $hname => $hvalue) {
+					if (strcasecmp($hname, 'X-API-Key') === 0) {
+						$value = $hvalue;
+						break;
+					}
 				}
 			}
 		}
-		if ( ! empty($_SERVER['HTTP_AUTHORIZATION'])) {
-			return $_SERVER['HTTP_AUTHORIZATION'];
+
+		// $_SERVER fallback. PHP exposes "X-API-Key" as HTTP_X_API_KEY
+		// (uppercased, dashes -> underscores, HTTP_ prefix).
+		if ($value === null && ! empty($_SERVER['HTTP_X_API_KEY'])) {
+			$value = $_SERVER['HTTP_X_API_KEY'];
 		}
-		if ( ! empty($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
-			return $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+
+		if ($value === null) {
+			return null;
 		}
-		return null;
+		$value = trim($value);
+		return $value === '' ? null : $value;
 	}
 
 	/**

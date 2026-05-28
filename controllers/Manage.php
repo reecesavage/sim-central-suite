@@ -567,7 +567,7 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			),
 			'rest_api' => array(
 				'name'        => 'REST API',
-				'summary'     => 'Exposes a read-only HTTP API for external integrations (n8n, scripts, dashboards). Tokens are managed under Configure and authenticate via Authorization: Bearer.',
+				'summary'     => 'Exposes a read-only HTTP API for external integrations (n8n, scripts, dashboards). Tokens are managed under Configure and authenticate via the X-API-Key header.',
 				'standalone'  => null,
 				'requires_tables' => array(
 					'sim_central_api_tokens' => "CREATE TABLE IF NOT EXISTS `{prefix}sim_central_api_tokens` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `token_hash` char(64) NOT NULL, `token_prefix` varchar(16) NOT NULL, `scopes` text NOT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_used_at` datetime DEFAULT NULL, `expires_at` datetime DEFAULT NULL, `revoked_at` datetime DEFAULT NULL, `rate_count` int(11) NOT NULL DEFAULT 0, `rate_window_at` datetime DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `token_hash` (`token_hash`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",

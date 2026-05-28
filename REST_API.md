@@ -19,15 +19,17 @@ Tokens are managed entirely in the ACP. There is no self-service issuance &mdash
 
 ## Authentication
 
-Every request must send:
+Every request must send the token in the `X-API-Key` header:
 
 ```
-Authorization: Bearer scapi_<40 hex chars>
+X-API-Key: scapi_<40 hex chars>
 ```
 
 Tokens look like `scapi_a1b2c3d4e5f6...` (a `scapi_` prefix plus 40 random hex characters &mdash; 160 bits of entropy).
 
 The server hashes the supplied token with SHA-256 and looks it up. The raw value is never stored, never logged, and cannot be recovered if lost &mdash; revoke and re-issue if you lose one.
+
+> **Why X-API-Key and not `Authorization: Bearer`?** Apache strips the `Authorization` header before PHP can read it on most shared hosts &mdash; it treats `Authorization` as server-owned. Supporting only `X-API-Key` (which Apache passes through untouched, no config required) means the API works the same way on every install. No `.htaccess` edits, no environment quirks.
 
 ---
 
@@ -243,27 +245,27 @@ TOKEN=scapi_your_token_here
 BASE=https://yoursim.example/extensions/nova_ext_sim_central/Api
 
 # Sanity check
-curl -H "Authorization: Bearer $TOKEN" "$BASE/ping"
+curl -H "X-API-Key: $TOKEN" "$BASE/ping"
 
 # Recent posts
-curl -H "Authorization: Bearer $TOKEN" "$BASE/posts?per_page=5"
+curl -H "X-API-Key: $TOKEN" "$BASE/posts?per_page=5"
 
 # Posts for a single mission
-curl -H "Authorization: Bearer $TOKEN" "$BASE/posts?mission=4&per_page=50"
+curl -H "X-API-Key: $TOKEN" "$BASE/posts?mission=4&per_page=50"
 
 # Single post
-curl -H "Authorization: Bearer $TOKEN" "$BASE/posts/123"
+curl -H "X-API-Key: $TOKEN" "$BASE/posts/123"
 
 # Active crew
-curl -H "Authorization: Bearer $TOKEN" "$BASE/characters?status=active"
+curl -H "X-API-Key: $TOKEN" "$BASE/characters?status=active"
 ```
 
 ### n8n
 
 1. **Credentials &rarr; New &rarr; Header Auth.**
    - Name: `Sim Central API`
-   - Header Name: `Authorization`
-   - Header Value: `Bearer scapi_...`
+   - Header Name: `X-API-Key`
+   - Header Value: `scapi_...` (the raw token; no "Bearer " prefix)
 2. **HTTP Request node**
    - Authentication: *Generic Credential Type &rarr; Header Auth &rarr; Sim Central API*
    - Method: `GET`
@@ -279,6 +281,26 @@ For an "is this token still working" health check, run a daily Schedule trigger 
 The API surface is versioned through the suite itself (`config.json` &rarr; `version`). Breaking changes to the response shape will only happen in a major version bump (e.g. 1.x &rarr; 2.0). Additive changes (new optional fields, new endpoints) ship in minor versions and won't break existing consumers.
 
 If you want to pin against a specific version, check the suite version on `GET /ping` (add your own version-fetch endpoint if needed) or read the GitHub release tag of your installed copy.
+
+---
+
+## Troubleshooting
+
+### 401 "Missing API token"
+
+You forgot the header, or it's named something other than `X-API-Key`. The API doesn't accept `Authorization: Bearer`, `apikey`, `token`, or any other variant &mdash; only the literal `X-API-Key` header. Case doesn't matter (`x-api-key` works too).
+
+### 401 "Unknown token"
+
+The header was parsed but the SHA-256 hash doesn't match any row. Either the token was revoked + deleted, or you're hitting a different sim than where you issued it, or you typoed the value.
+
+### 503 "REST API is enabled but the tokens table is missing"
+
+You toggled the feature on but didn't run **Setup database**. Suite admin &rarr; REST API row &rarr; **Setup database**.
+
+### 429 every few requests
+
+You're over the per-token rate limit. Default is 60/minute per token. Bump `rest_api_rate_limit_per_minute` (set to `0` to disable) or use multiple tokens for higher-throughput flows.
 
 ---
 

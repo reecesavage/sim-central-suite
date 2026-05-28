@@ -30,8 +30,9 @@
 
 <p class="fontSmall gray">
 	Base URL for API requests: <code><?php echo htmlspecialchars($apiBaseUrl, ENT_QUOTES);?></code><br>
-	Every endpoint requires an <code>Authorization: Bearer &lt;token&gt;</code> header.
+	Send the token in the <strong><code>X-API-Key</code></strong> header.
 	Quick check: <code>GET <?php echo htmlspecialchars($apiBaseUrl, ENT_QUOTES);?>/ping</code>.
+	See <code>REST_API.md</code> for the full reference and troubleshooting.
 </p>
 
 <?php if ($newTokenRaw !== null): ?>

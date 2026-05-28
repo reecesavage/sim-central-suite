@@ -5,16 +5,16 @@ namespace nova_ext_sim_central;
 defined('BASEPATH') OR exit('No direct script access allowed');
 
 /**
- * REST API bearer-token auth.
+ * REST API token auth.
  *
- * Tokens are admin-issued from the ACP, stored hashed (sha256), and presented
- * as `Authorization: Bearer scapi_<hex>`. Raw tokens are shown to the admin
- * exactly once at creation time; only the hash + a short display prefix
- * survive in the DB.
+ * Tokens are admin-issued from the ACP, stored hashed (sha256). Raw tokens
+ * are shown to the admin exactly once at creation time; only the hash + a
+ * short display prefix survive in the DB.
  *
- * validateBearer() is the single entry point used by controllers/Api.php. It
- * returns a structured result so the caller can emit the right HTTP status
- * without re-implementing the matrix:
+ * Header parsing (Authorization vs X-API-Key) is the controller's
+ * responsibility - this library only knows how to validate a RAW token
+ * against the database. validateToken() returns a structured result so the
+ * caller can emit the right HTTP status without re-implementing the matrix:
  *
  *   ok     -> 200, $result['token'] is the DB row
  *   401    -> missing / malformed / unknown / revoked / expired
@@ -49,18 +49,22 @@ class ApiAuth
 	}
 
 	/**
-	 * Validate an Authorization header against the tokens table.
+	 * Validate a raw token string against the tokens table.
 	 *
-	 * @param string|null $authHeader     Raw header value (e.g. "Bearer scapi_...").
+	 * @param string|null $raw            Raw token (e.g. "scapi_a1b2c3..."), already
+	 *                                    stripped of any header prefix by the caller.
+	 *                                    Pass null when no header was found at all.
 	 * @param string|null $requiredScope  Scope the endpoint requires, or null for "any valid token".
 	 * @return array { status: 'ok'|'unauthorized'|'forbidden'|'rate_limited',
 	 *                code: int, message: string, token?: object }
 	 */
-	public static function validateBearer($authHeader, $requiredScope = null)
+	public static function validateToken($raw, $requiredScope = null)
 	{
-		$raw = self::extractBearer($authHeader);
-		if ($raw === null) {
-			return self::deny(401, 'Missing or malformed Authorization header.');
+		if ( ! is_string($raw) || $raw === '') {
+			return self::deny(401, 'Missing API token. Send it in the "X-API-Key" header.');
+		}
+		if ( ! preg_match('/^'.preg_quote(self::TOKEN_PREFIX, '/').'[a-f0-9]+$/i', $raw)) {
+			return self::deny(401, 'Malformed API token. Expected "'.self::TOKEN_PREFIX.'" followed by hex characters.');
 		}
 
 		$ci   =& get_instance();
@@ -114,21 +118,6 @@ class ApiAuth
 			'code'   => 200,
 			'token'  => $row,
 		);
-	}
-
-	/**
-	 * Pull the bearer value from a header. Returns null if the header is
-	 * absent or doesn't match the `Bearer scapi_<hex>` shape.
-	 */
-	private static function extractBearer($authHeader)
-	{
-		if ( ! is_string($authHeader) || $authHeader === '') {
-			return null;
-		}
-		if ( ! preg_match('/^Bearer\s+('.preg_quote(self::TOKEN_PREFIX, '/').'[a-f0-9]+)$/i', trim($authHeader), $m)) {
-			return null;
-		}
-		return $m[1];
 	}
 
 	private static function hasScope($row, $scope)
