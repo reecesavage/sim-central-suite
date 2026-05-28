@@ -1693,6 +1693,16 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$prefix  = $this->db->dbprefix;
 		$missing = array();
 		foreach ($f['requires_db'] as $table => $columns) {
+			// The target table might be one this feature creates itself via
+			// requires_tables and which hasn't been created yet (e.g. a sim
+			// that never set up Event Webhooks). list_fields() issues
+			// SHOW COLUMNS, which throws on a missing table - so skip it.
+			// _missingTables() already reports the table as missing, which is
+			// what drives the "Setup database" prompt; that single action
+			// creates the table AND adds the columns together.
+			if ( ! $this->db->table_exists($prefix.$table) && ! $this->db->table_exists($table)) {
+				continue;
+			}
 			$existing = $this->db->list_fields($prefix.$table);
 			foreach ($columns as $column => $def) {
 				if ( ! in_array($column, $existing, true)) {
@@ -1772,6 +1782,12 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 		if ( ! empty($f['requires_db'])) {
 			foreach ($f['requires_db'] as $table => $columns) {
+				// Skip if the table doesn't exist (e.g. its requires_tables
+				// CREATE failed above). Avoids a list_fields() fatal; the
+				// table problem surfaces via _missingTables instead.
+				if ( ! $this->db->table_exists($prefix.$table) && ! $this->db->table_exists($table)) {
+					continue;
+				}
 				$existing = $this->db->list_fields($prefix.$table);
 				foreach ($columns as $column => $def) {
 					if (in_array($column, $existing, true)) {
