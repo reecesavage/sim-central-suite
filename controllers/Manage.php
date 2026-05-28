@@ -156,7 +156,13 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 		$action     = isset($_POST['action']) ? $_POST['action'] : '';
 		$dbReady    = empty($this->_missingTables('webhooks'));
-		$editingId  = (int) $this->uri->segment(5);
+
+		// Edit link is /Manage/webhooks/edit/{id}, so the id is in segment 6
+		// (segment 5 is the literal "edit"). The extension router consumes
+		// segments 1-2 (extensions/<name>); 3=Manage, 4=webhooks, 5=edit, 6=id.
+		$editingId = ($this->uri->segment(5) === 'edit')
+			? (int) $this->uri->segment(6)
+			: 0;
 
 		if ($dbReady) {
 			if ($action === 'create_webhook') {
