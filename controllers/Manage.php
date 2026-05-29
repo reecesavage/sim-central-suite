@@ -1437,6 +1437,14 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				((int) $_POST['content_filter_age_gate_default'] === 1) ? 1 : 0;
 		}
 
+		// Also fire the submit-confirm popup on Save (not just Post). Off by
+		// default - drafts aren't public, so the attestation only matters at
+		// publish time unless the admin opts in here.
+		if (isset($_POST['content_filter_confirm_on_save'])) {
+			$json['setting']['content_filter_confirm_on_save'] =
+				((int) $_POST['content_filter_confirm_on_save'] === 1) ? 1 : 0;
+		}
+
 		// Migrate away from the v1.2-v1.4 numeric rating keys. Their
 		// values have already been read by ContentFilter::allows() as
 		// the initial state of the checkboxes, so dropping them now

@@ -91,14 +91,44 @@
 (function() {
 	var cb = document.getElementById('nova_ext_content_filter_age_gated');
 	if ( ! cb || ! cb.form) return;
-	var form        = cb.form;
-	var confirmText = <?php echo json_encode($confirm_text_js);?>;
+	var form          = cb.form;
+	var confirmText   = <?php echo json_encode($confirm_text_js);?>;
+	var confirmOnSave = <?php echo ! empty($confirm_on_save) ? 'true' : 'false';?>;
+
+	// The write-post form has three submit buttons, all name="submit":
+	// value="post" (publish), "save" (draft), "delete". We confirm on
+	// publish always; on save only when the admin enabled it; never on
+	// delete. Track the button that triggered submission - prefer the
+	// native SubmitEvent.submitter, fall back to the last-clicked submit.
+	var lastClicked = null;
+	form.addEventListener('click', function(e) {
+		var t = e.target;
+		while (t && t !== form) {
+			if ((t.tagName === 'BUTTON' || t.tagName === 'INPUT') && t.type === 'submit') {
+				lastClicked = t;
+				return;
+			}
+			t = t.parentNode;
+		}
+	}, true);
 
 	// Capture-phase listener so this runs before any Nova-stock handler
 	// that might also be wired to the same form, and so cancelling stops
 	// the submission whether or not other listeners would have run.
 	form.addEventListener('submit', function(e) {
 		if (cb.checked) return;
+
+		var btn    = e.submitter || lastClicked;
+		var action = btn ? (btn.value || '') : '';
+
+		// Never prompt on delete.
+		if (action === 'delete') return;
+		// Prompt on save only when opted in.
+		if (action === 'save' && ! confirmOnSave) return;
+		// action === 'post' (publish) always prompts; an unknown action
+		// (button undetectable) falls through to prompting too, which is
+		// the safe default.
+
 		if ( ! window.confirm(confirmText)) {
 			e.preventDefault();
 			e.stopPropagation();

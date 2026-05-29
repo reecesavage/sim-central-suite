@@ -143,6 +143,25 @@ class ContentFilter
 	}
 
 	/**
+	 * Whether the age-gate confirmation popup should also fire when the
+	 * writer SAVES a draft (clicks Save), rather than only when they POST
+	 * (publish) the post.
+	 *
+	 * Default is FALSE - drafts aren't public, so there's no leak risk on
+	 * save; the confirmation only matters at the moment content goes live.
+	 * Admins who want the attestation on every save can flip this on.
+	 */
+	public static function confirmOnSave()
+	{
+		$c = Config::load();
+		$s = isset($c['setting']) ? $c['setting'] : array();
+		if ( ! array_key_exists('content_filter_confirm_on_save', $s)) {
+			return false;
+		}
+		return ! empty($s['content_filter_confirm_on_save']);
+	}
+
+	/**
 	 * True when the given post row should be hidden from guests. Pass
 	 * either a DB row object or an array; the column we look at is
 	 * `nova_ext_content_filter_age_gated`.

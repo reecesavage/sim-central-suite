@@ -56,6 +56,9 @@ $this->event->listen(['location', 'view', 'output', 'admin', 'write_missionpost'
 		'definitions'     => $definitions,
 		'confirm_text_js' => $confirmText,
 		'help_intro'      => $helpIntro,
+		// When false (default) the submit-confirm only fires on Post (publish);
+		// when true it also fires on Save (draft). Never fires on Delete.
+		'confirm_on_save' => \nova_ext_sim_central\ContentFilter::confirmOnSave(),
 	);
 
 	// Place the block just above the timeline field, same anchor pattern

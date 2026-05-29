@@ -1,6 +1,7 @@
 <?php
 	$allows         = \nova_ext_sim_central\ContentFilter::allows();
 	$defaultGate    = \nova_ext_sim_central\ContentFilter::defaultAgeGate();
+	$confirmOnSave  = \nova_ext_sim_central\ContentFilter::confirmOnSave();
 	$active         = \nova_ext_sim_central\ContentFilter::isActive();
 	$labels         = isset($jsons['nova_ext_content_filter']) && is_array($jsons['nova_ext_content_filter'])
 		? $jsons['nova_ext_content_filter']
@@ -80,6 +81,26 @@
 		then opt IN to gating per post instead of opting out. The submit
 		confirmation still fires whenever a writer leaves the checkbox
 		unticked, so they always confirm their decision.
+	</p>
+
+	<br>
+	<?php echo text_output('Submit confirmation', 'h3', 'page-subhead');?>
+
+	<p>
+		<input type="hidden" name="content_filter_confirm_on_save" value="0">
+		<label>
+			<input type="checkbox" name="content_filter_confirm_on_save" value="1"
+				<?php echo $confirmOnSave ? 'checked' : '';?>>
+			<strong>Also confirm when saving a draft</strong>
+		</label>
+	</p>
+	<p class="fontSmall gray italic">
+		When a writer leaves the age-gate toggle unticked, a confirmation popup
+		asks them to attest the post has no explicit content. By default that
+		popup fires <strong>only when they click Post</strong> (publish) &mdash;
+		drafts aren't public, so there's nothing to leak on save. Tick this to
+		also show the popup when they click <strong>Save</strong>. Default is
+		<strong>off</strong>.
 	</p>
 
 	<br>

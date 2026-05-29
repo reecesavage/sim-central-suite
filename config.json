@@ -1,5 +1,5 @@
 {
-	"version": "1.14.0",
+	"version": "1.14.1",
 	"features": {
 		"display_name": false,
 		"anti_spam": false,
@@ -102,6 +102,7 @@
 		"content_filter_allows_violence": 0,
 		"content_filter_allows_sex": 0,
 		"content_filter_age_gate_default": 1,
+		"content_filter_confirm_on_save": 0,
 		"discord_auth_broker_url": "https://auth.simcentral.host",
 		"discord_auth_public_key": "",
 		"discord_auth_required_on_join": 0,

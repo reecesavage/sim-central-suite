@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.14.0"><img src="https://img.shields.io/badge/Version-v1.14.0-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.14.1"><img src="https://img.shields.io/badge/Version-v1.14.1-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -162,8 +162,9 @@ Adds a `nova_ext_content_filter_age_gated` column to `posts` (TINYINT, default `
 
 - **Permitted explicit content** &mdash; three independent yes/no toggles, one each for **Adult language**, **Violence**, and **Sex**. The filter activates as soon as any are ticked. Definitions follow [rpgrating.com](https://rpgrating.com/create); all three are admin-editable.
 - **New posts are age-gated by default** &mdash; controls the initial state of the per-post toggle. **On** (default) means writers have to deliberately untick the box to publish ungated; **off** means writers opt IN per post (useful for sims with rare explicit content).
+- **Also confirm when saving a draft** *(v1.14.1+)* &mdash; the submit-confirmation popup (shown when a writer leaves the age-gate toggle off) fires **only on Post** by default, since drafts aren't public. Tick this to also show it when clicking **Save**. **Off** by default; the popup never fires on **Delete**.
 
-When the filter is active, the write/edit-post form gains an **Age-gate this post** checkbox. The helper text shows only the definitions for whichever dimensions are actually permitted on this sim. If a writer unchecks the box, the submit button triggers a JS confirm that names exactly what they're attesting to.
+When the filter is active, the write/edit-post form gains an **Age-gate this post** checkbox. The helper text shows only the definitions for whichever dimensions are actually permitted on this sim. If a writer unchecks the box, clicking **Post** triggers a JS confirm that names exactly what they're attesting to (and **Save** too, when the option above is on).
 
 For gated posts viewed by guests (logged-out users):
 
