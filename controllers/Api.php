@@ -213,6 +213,177 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
 	}
 
+	/**
+	 * POST /Api/users/disable      - put a user + their linked characters inactive
+	 * POST /Api/users/reactivate   - put a user active (+ characters unless opted out)
+	 *
+	 * Identify the user by `user_id` (int) OR `discord_id` (the user's linked
+	 * Discord account id). `user_id` always works; `discord_id` requires the
+	 * Discord Auth feature to be enabled (it's the column that stores the link)
+	 * and returns a clear 409 if that feature is off.
+	 *
+	 * disable     -> users.status = inactive; every currently-active linked
+	 *                character -> crew_type = inactive.
+	 * reactivate  -> users.status = active; every previously-inactive linked
+	 *                character -> crew_type = active, UNLESS the request sets
+	 *                reactivate_characters=false (then only the user is touched).
+	 *
+	 * Body accepted as JSON, form-encoded, or query string.
+	 * Scope: users:write.
+	 */
+	public function users()
+	{
+		$this->_gate();
+		$this->_requireMethod('POST');
+		$this->_authenticate('users:write');
+
+		$action = $this->uri->segment(5);
+		if ($action !== 'disable' && $action !== 'reactivate') {
+			$this->_emit(404, array('error' => 'Unknown user action. Use /users/disable or /users/reactivate.'));
+		}
+
+		$input = $this->_readInput();
+		$user  = $this->_resolveUser($input);
+
+		$now = time();
+
+		if ($action === 'disable') {
+			$charIds = $this->_linkedCharIds((int) $user->userid, 'active');
+			if ( ! empty($charIds)) {
+				$this->db->where('user', (int) $user->userid)
+					->where('crew_type', 'active')
+					->update('characters', array('crew_type' => 'inactive', 'date_deactivate' => $now));
+			}
+			$this->db->where('userid', (int) $user->userid)
+				->update('users', array('status' => 'inactive', 'leave_date' => $now));
+
+			$this->_emit(200, array(
+				'user_id'    => (int) $user->userid,
+				'discord_id' => isset($user->nova_ext_discord_auth_id) ? ($user->nova_ext_discord_auth_id ?: null) : null,
+				'status'     => 'inactive',
+				'characters' => array(
+					'status'   => 'inactive',
+					'affected' => count($charIds),
+					'ids'      => $charIds,
+				),
+			));
+		}
+
+		// reactivate
+		$reactivateChars = $this->_boolParam($input, 'reactivate_characters', true);
+		$this->db->where('userid', (int) $user->userid)
+			->update('users', array('status' => 'active', 'leave_date' => null));
+
+		$charIds = array();
+		if ($reactivateChars) {
+			$charIds = $this->_linkedCharIds((int) $user->userid, 'inactive');
+			if ( ! empty($charIds)) {
+				$this->db->where('user', (int) $user->userid)
+					->where('crew_type', 'inactive')
+					->update('characters', array('crew_type' => 'active', 'date_activate' => $now));
+			}
+		}
+
+		$this->_emit(200, array(
+			'user_id'    => (int) $user->userid,
+			'discord_id' => isset($user->nova_ext_discord_auth_id) ? ($user->nova_ext_discord_auth_id ?: null) : null,
+			'status'     => 'active',
+			'characters' => array(
+				'status'   => $reactivateChars ? 'active' : 'unchanged',
+				'affected' => count($charIds),
+				'ids'      => $charIds,
+			),
+		));
+	}
+
+	/**
+	 * Event Webhooks management.
+	 *
+	 *   GET    /Api/webhooks         - list webhooks                  (webhooks:read)
+	 *   GET    /Api/webhooks/{id}    - single webhook                 (webhooks:read)
+	 *   POST   /Api/webhooks         - create a webhook               (webhooks:write)
+	 *   PATCH  /Api/webhooks/{id}    - update a webhook (partial)     (webhooks:write)
+	 *   PUT    /Api/webhooks/{id}    - alias of PATCH                 (webhooks:write)
+	 *   DELETE /Api/webhooks/{id}    - delete a webhook               (webhooks:write)
+	 *
+	 * All of these require the Event Webhooks feature to be enabled on the sim;
+	 * if it isn't, every verb returns 409 with a clear message. Validation of
+	 * create/update bodies is shared with the ACP via Webhooks::validateWebhookInput.
+	 */
+	public function webhooks()
+	{
+		$this->_gate();
+		$this->_requireWebhooksFeature();
+
+		$method = $this->_method();
+		$id     = $this->uri->segment(5);
+		$hasId  = ($id !== null && $id !== '' && ctype_digit((string) $id));
+		$id     = $hasId ? (int) $id : 0;
+
+		switch ($method) {
+			case 'GET':
+				$this->_authenticate('webhooks:read');
+				if ($hasId) {
+					$row = $this->db->get_where('sim_central_webhooks', array('id' => $id))->row();
+					if ( ! $row) { $this->_emit(404, array('error' => 'Webhook not found.')); }
+					$this->_emit(200, $this->_projectWebhook($row));
+				}
+				$rows = $this->db->order_by('enabled', 'DESC')->order_by('created_at', 'DESC')
+					->get('sim_central_webhooks')->result();
+				$data = array();
+				foreach ($rows as $row) { $data[] = $this->_projectWebhook($row); }
+				$this->_emit(200, array('data' => $data, 'total' => count($data)));
+				break;
+
+			case 'POST':
+				$this->_authenticate('webhooks:write');
+				if ($hasId) {
+					$this->_emit(405, array('error' => 'Use PATCH /webhooks/{id} to update, POST /webhooks (no id) to create.'));
+				}
+				$input  = $this->_readInput();
+				$result = \nova_ext_sim_central\Webhooks::validateWebhookInput($this->_webhookInputDefaults($input));
+				if ( ! empty($result['errors'])) {
+					$this->_emit(422, array('error' => 'Validation failed.', 'details' => $result['errors']));
+				}
+				$data = $result['data'];
+				$data['created_at'] = date('Y-m-d H:i:s');
+				$data['created_by'] = null; // API-created; no ACP session user
+				$this->db->insert('sim_central_webhooks', $data);
+				$newId = (int) $this->db->insert_id();
+				$row = $this->db->get_where('sim_central_webhooks', array('id' => $newId))->row();
+				$this->_emit(201, $this->_projectWebhook($row));
+				break;
+
+			case 'PUT':
+			case 'PATCH':
+				$this->_authenticate('webhooks:write');
+				if ( ! $hasId) { $this->_emit(400, array('error' => 'Webhook id required in path.')); }
+				$existing = $this->db->get_where('sim_central_webhooks', array('id' => $id))->row();
+				if ( ! $existing) { $this->_emit(404, array('error' => 'Webhook not found.')); }
+				$merged = $this->_mergeWebhookInput($existing, $this->_readInput());
+				$result = \nova_ext_sim_central\Webhooks::validateWebhookInput($merged);
+				if ( ! empty($result['errors'])) {
+					$this->_emit(422, array('error' => 'Validation failed.', 'details' => $result['errors']));
+				}
+				$this->db->where('id', $id)->update('sim_central_webhooks', $result['data']);
+				$row = $this->db->get_where('sim_central_webhooks', array('id' => $id))->row();
+				$this->_emit(200, $this->_projectWebhook($row));
+				break;
+
+			case 'DELETE':
+				$this->_authenticate('webhooks:write');
+				if ( ! $hasId) { $this->_emit(400, array('error' => 'Webhook id required in path.')); }
+				$existing = $this->db->get_where('sim_central_webhooks', array('id' => $id))->row();
+				if ( ! $existing) { $this->_emit(404, array('error' => 'Webhook not found.')); }
+				$this->db->where('id', $id)->delete('sim_central_webhooks');
+				$this->_emit(200, array('deleted' => true, 'id' => $id));
+				break;
+
+			default:
+				$this->_emit(405, array('error' => 'Method not allowed. Use GET, POST, PATCH, PUT, or DELETE.'));
+		}
+	}
+
 	// ---------- internals ----------
 
 	/**
@@ -231,6 +402,242 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		if (empty($features['rest_api'])) {
 			$this->_emit(404, array('error' => 'Not found.'));
 		}
+	}
+
+	/**
+	 * Webhook endpoints require the Event Webhooks feature to be enabled AND
+	 * its table to exist. 409 (feature off) and 503 (enabled but un-migrated)
+	 * are surfaced distinctly so the consumer knows whether to ask the admin
+	 * to flip the toggle or to run "Setup database".
+	 */
+	private function _requireWebhooksFeature()
+	{
+		$features = $this->_suiteFeatures();
+		if (empty($features['webhooks'])) {
+			$this->_emit(409, array(
+				'error'   => 'The Event Webhooks feature is not enabled on this sim.',
+				'feature' => 'webhooks',
+				'enabled' => false,
+			));
+		}
+		$prefix = $this->db->dbprefix;
+		if ( ! $this->db->table_exists($prefix.'sim_central_webhooks')
+			&& ! $this->db->table_exists('sim_central_webhooks')) {
+			$this->_emit(503, array(
+				'error' => 'Event Webhooks is enabled but its table is missing. Ask the sim admin to run "Setup database" on the Event Webhooks feature.',
+			));
+		}
+	}
+
+	/** Current request method, uppercased. */
+	private function _method()
+	{
+		$m = $this->input->server('REQUEST_METHOD');
+		return strtoupper((string) ($m ?: 'GET'));
+	}
+
+	/** Hard 405 unless the request uses the expected HTTP method. */
+	private function _requireMethod($expected)
+	{
+		if ($this->_method() !== strtoupper($expected)) {
+			$this->_emit(405, array('error' => 'Method not allowed. Use '.strtoupper($expected).'.'));
+		}
+	}
+
+	/**
+	 * Merge request inputs for write endpoints into one associative array.
+	 * Accepts a JSON body (Content-Type: application/json), form-encoded POST,
+	 * and query-string params - later sources do NOT override earlier ones, so
+	 * precedence is: JSON body > POST > GET.
+	 */
+	private function _readInput()
+	{
+		$out = array();
+
+		$get = $this->input->get();
+		if (is_array($get)) { $out = array_merge($out, $get); }
+
+		$post = $this->input->post();
+		if (is_array($post)) { $out = array_merge($out, $post); }
+
+		$raw = $this->input->raw_input_stream;
+		if (is_string($raw) && $raw !== '') {
+			$json = json_decode($raw, true);
+			if (is_array($json)) { $out = array_merge($out, $json); }
+		}
+
+		return $out;
+	}
+
+	private function _param(array $input, $key, $default = null)
+	{
+		return array_key_exists($key, $input) ? $input[$key] : $default;
+	}
+
+	/**
+	 * Interpret a request param as a boolean. Treats "false", "0", "no", "off",
+	 * 0, and false as false; everything else (including absence) falls back to
+	 * $default.
+	 */
+	private function _boolParam(array $input, $key, $default)
+	{
+		if ( ! array_key_exists($key, $input)) {
+			return $default;
+		}
+		$v = $input[$key];
+		if (is_bool($v)) { return $v; }
+		if (is_int($v))  { return $v !== 0; }
+		$s = strtolower(trim((string) $v));
+		return ! in_array($s, array('false', '0', 'no', 'off', ''), true);
+	}
+
+	/**
+	 * Resolve the target user for a status change from the request input.
+	 * Prefers `user_id` (always available); falls back to `discord_id`, which
+	 * only works when the Discord Auth feature is enabled (it owns the column
+	 * the link lives in). Emits and halts on any failure.
+	 */
+	private function _resolveUser(array $input)
+	{
+		$userId    = $this->_param($input, 'user_id');
+		$discordId = $this->_param($input, 'discord_id');
+
+		if ($userId !== null && $userId !== '' && ctype_digit((string) $userId)) {
+			$row = $this->db->get_where('users', array('userid' => (int) $userId))->row();
+			if ( ! $row) { $this->_emit(404, array('error' => 'User not found.')); }
+			return $row;
+		}
+
+		if ($discordId !== null && $discordId !== '') {
+			$features = $this->_suiteFeatures();
+			if (empty($features['discord_auth'])) {
+				$this->_emit(409, array(
+					'error'   => 'Cannot look up a user by Discord ID: the Discord Auth feature is not enabled on this sim. Use user_id instead.',
+					'feature' => 'discord_auth',
+					'enabled' => false,
+				));
+			}
+			if ( ! ctype_digit((string) $discordId)) {
+				$this->_emit(400, array('error' => 'discord_id must be a numeric Discord account ID.'));
+			}
+			$row = $this->db->get_where('users', array('nova_ext_discord_auth_id' => (string) $discordId))->row();
+			if ( ! $row) { $this->_emit(404, array('error' => 'No user is linked to that Discord ID.')); }
+			return $row;
+		}
+
+		$this->_emit(400, array('error' => 'Provide either user_id or discord_id.'));
+	}
+
+	/** charids linked to a user that currently hold the given crew_type. */
+	private function _linkedCharIds($userId, $crewType)
+	{
+		$rows = $this->db->select('charid')
+			->where('user', (int) $userId)
+			->where('crew_type', $crewType)
+			->get('characters')->result();
+		$ids = array();
+		foreach ($rows as $r) { $ids[] = (int) $r->charid; }
+		return $ids;
+	}
+
+	/**
+	 * Whitelist projector for a webhook row. The destination URL is included
+	 * because managing a webhook requires seeing it, and these endpoints are
+	 * already gated behind the privileged webhooks:read / webhooks:write scope.
+	 */
+	private function _projectWebhook($row)
+	{
+		$events = json_decode((string) $row->events, true);
+		if ( ! is_array($events)) { $events = array(); }
+		$roleEvents = isset($row->mention_role_events) ? json_decode((string) $row->mention_role_events, true) : null;
+		if ( ! is_array($roleEvents)) { $roleEvents = array(); }
+
+		return array(
+			'id'                        => (int) $row->id,
+			'label'                     => $row->label,
+			'url'                       => $row->url,
+			'format'                    => $row->format,
+			'events'                    => array_values($events),
+			'enabled'                   => (bool) (int) $row->enabled,
+			'news_types'                => isset($row->news_types) ? $row->news_types : 'public',
+			'mention_role_id'           => isset($row->mention_role_id) ? ($row->mention_role_id ?: null) : null,
+			'mention_role_events'       => array_values($roleEvents),
+			'template_title'            => isset($row->template_title) ? $row->template_title : null,
+			'template_description'      => isset($row->template_description) ? $row->template_description : null,
+			'template_log_title'        => isset($row->template_log_title) ? $row->template_log_title : null,
+			'template_log_description'  => isset($row->template_log_description) ? $row->template_log_description : null,
+			'template_news_title'       => isset($row->template_news_title) ? $row->template_news_title : null,
+			'template_news_description' => isset($row->template_news_description) ? $row->template_news_description : null,
+			'created_at'                => isset($row->created_at) ? $row->created_at : null,
+			'last_fired_at'             => isset($row->last_fired_at) ? $row->last_fired_at : null,
+			'last_status'               => isset($row->last_status) ? ($row->last_status !== null ? (int) $row->last_status : null) : null,
+			'last_error'                => isset($row->last_error) ? $row->last_error : null,
+		);
+	}
+
+	/**
+	 * Normalise a create body into the flat shape validateWebhookInput expects,
+	 * applying field defaults so a minimal create (label/url/format/events) works.
+	 */
+	private function _webhookInputDefaults(array $input)
+	{
+		return array(
+			'label'                     => $this->_param($input, 'label', ''),
+			'url'                       => $this->_param($input, 'url', ''),
+			'format'                    => $this->_param($input, 'format', ''),
+			'events'                    => $this->_param($input, 'events', array()),
+			'enabled'                   => $this->_boolParam($input, 'enabled', true) ? 1 : 0,
+			'news_types'                => $this->_param($input, 'news_types', 'public'),
+			'mention_role_id'           => $this->_param($input, 'mention_role_id', ''),
+			'mention_role_events'       => $this->_param($input, 'mention_role_events', array()),
+			'template_title'            => $this->_param($input, 'template_title', ''),
+			'template_description'      => $this->_param($input, 'template_description', ''),
+			'template_log_title'        => $this->_param($input, 'template_log_title', ''),
+			'template_log_description'  => $this->_param($input, 'template_log_description', ''),
+			'template_news_title'       => $this->_param($input, 'template_news_title', ''),
+			'template_news_description' => $this->_param($input, 'template_news_description', ''),
+		);
+	}
+
+	/**
+	 * Build a full validateWebhookInput payload for a PATCH/PUT: start from the
+	 * existing row, overlay only the fields the request actually supplied. This
+	 * makes updates partial (omit a field -> keep its stored value).
+	 */
+	private function _mergeWebhookInput($existing, array $input)
+	{
+		$events = json_decode((string) $existing->events, true);
+		if ( ! is_array($events)) { $events = array(); }
+		$roleEvents = isset($existing->mention_role_events) ? json_decode((string) $existing->mention_role_events, true) : null;
+		if ( ! is_array($roleEvents)) { $roleEvents = array(); }
+
+		$base = array(
+			'label'                     => $existing->label,
+			'url'                       => $existing->url,
+			'format'                    => $existing->format,
+			'events'                    => $events,
+			'enabled'                   => (int) $existing->enabled,
+			'news_types'                => isset($existing->news_types) ? $existing->news_types : 'public',
+			'mention_role_id'           => isset($existing->mention_role_id) ? (string) $existing->mention_role_id : '',
+			'mention_role_events'       => $roleEvents,
+			'template_title'            => isset($existing->template_title) ? (string) $existing->template_title : '',
+			'template_description'      => isset($existing->template_description) ? (string) $existing->template_description : '',
+			'template_log_title'        => isset($existing->template_log_title) ? (string) $existing->template_log_title : '',
+			'template_log_description'  => isset($existing->template_log_description) ? (string) $existing->template_log_description : '',
+			'template_news_title'       => isset($existing->template_news_title) ? (string) $existing->template_news_title : '',
+			'template_news_description' => isset($existing->template_news_description) ? (string) $existing->template_news_description : '',
+		);
+
+		foreach ($base as $key => $val) {
+			if (array_key_exists($key, $input)) {
+				if ($key === 'enabled') {
+					$base[$key] = $this->_boolParam($input, 'enabled', (bool) $val) ? 1 : 0;
+				} else {
+					$base[$key] = $input[$key];
+				}
+			}
+		}
+		return $base;
 	}
 
 	/**

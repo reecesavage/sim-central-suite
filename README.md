@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.13.0"><img src="https://img.shields.io/badge/Version-v1.13.0-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.14.0"><img src="https://img.shields.io/badge/Version-v1.14.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -18,7 +18,7 @@ This release rolls up:
 - **Ordered Mission Posts** &mdash; order posts by Day/Time, Date/Time, or Stardate; optional post numbering; configurable date + time display formats; HTML5 native date/time inputs; inline word counts on the missions pages
 - **Content Filter** &mdash; age-gates mission post bodies on the public site and in the RSS feed for sims that permit adult language, violence, or sexual content; configurable default for the per-post toggle; writer attests at submit time
 - **Discord Sign-In** &mdash; "Sign in with Discord" / "Sign up with Discord" via the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker); one Discord app serves any number of sims (no per-sim redirect URI registration); link/unlink controls on User Account; optional site-wide enforcement that requires every user to keep Discord linked; optional Discord-only sign-in mode with a sysadmin email + password escape hatch; optional gate by Discord server membership (any-of / all-of); Discord-branded buttons everywhere
-- **REST API** *(v1.9.1+)* &mdash; read-only HTTP API for external integrations (n8n flows, scripts, dashboards); admin-issued bearer tokens with per-scope grants (`posts:read`, `characters:read`, `missions:read`); per-token rate limiting; one-time-display token reveal; surface suite-feature fields (summary, ordered post day/time, display name, etc.) in the JSON when those features are on
+- **REST API** *(v1.9.1+)* &mdash; HTTP API for external integrations (n8n flows, scripts, dashboards); admin-issued bearer tokens with per-scope grants (`posts:read`, `characters:read`, `missions:read`, plus write scopes `users:write`, `webhooks:read`, `webhooks:write` *(v1.14.0+)*); read endpoints for posts/characters/missions, write endpoints to disable/reactivate users + their characters and to manage event webhooks *(v1.14.0+)*; per-token rate limiting; one-time-display token reveal; surface suite-feature fields (summary, ordered post day/time, display name, etc.) in the JSON when those features are on
 - **Event Webhooks** *(v1.11.0+)* &mdash; fire HTTP webhooks when posts are saved or activated. Discord-formatted (rich embed with @mentions of linked authors via stored Discord IDs) or generic JSON (for n8n etc.). Multiple webhooks per event, per-webhook event subscriptions, customisable Discord embed templates for `post.posted`, `log.posted`, and `news.posted` *(v1.13.0+)*, an optional per-event Discord role ping *(v1.13.0+)*, **Test** button for each webhook, fire-and-forget delivery with status visibility (last_status + last_error per webhook).
 
 ## Requirements
@@ -199,11 +199,11 @@ For complete self-hosting instructions, broker architecture, and the security mo
 
 ### REST API *(v1.9.1+)*
 
-Exposes a read-only HTTP API for external integrations &mdash; n8n workflows, automation scripts, dashboards, anything that needs to pull mission posts, characters, or missions out of the sim programmatically. The API is **off by default** and stays invisible (every endpoint 404s) until enabled; once on, authentication is by admin-issued bearer token only. There is no fallback to Nova session cookies, and there is no per-user self-service token issuance &mdash; only sysadmins with `site/settings` access can create or revoke tokens.
+Exposes an HTTP API for external integrations &mdash; n8n workflows, automation scripts, dashboards, anything that needs to read mission posts, characters, or missions, or to manage user activation status and event webhooks, programmatically. The API is **off by default** and stays invisible (every endpoint 404s) until enabled; once on, authentication is by admin-issued bearer token only. There is no fallback to Nova session cookies, and there is no per-user self-service token issuance &mdash; only sysadmins with `site/settings` access can create or revoke tokens. Read endpoints use `*:read` scopes; the mutating endpoints *(v1.14.0+)* are gated behind `users:write` / `webhooks:write` &mdash; issue those only to trusted automation.
 
 Adds one table: `sim_central_api_tokens` (which becomes `<dbprefix>sim_central_api_tokens` on disk &mdash; typically `nova_sim_central_api_tokens`). Columns: label, hashed token + display prefix, JSON scope list, created/last-used/expires/revoked timestamps, per-token rate counter. Configure on the *REST API &rarr; Configure* page:
 
-- **Create token** &mdash; pick a free-form label, tick the scopes (`posts:read`, `characters:read`, `missions:read`), optionally set an expiry. The raw token is shown **exactly once** on the next page render &mdash; copy it immediately. Only its SHA-256 hash survives in the database; if you lose the token, revoke and re-issue.
+- **Create token** &mdash; pick a free-form label, tick the scopes (`posts:read`, `characters:read`, `missions:read`, and the write scopes `users:write`, `webhooks:read`, `webhooks:write`), optionally set an expiry. The raw token is shown **exactly once** on the next page render &mdash; copy it immediately. Only its SHA-256 hash survives in the database; if you lose the token, revoke and re-issue.
 - **Revoke** &mdash; soft-disable a token. Sets `revoked_at`, preserves the row for audit, and starts returning `401 Token has been revoked.` to any client still using it.
 - **Delete** &mdash; hard removal for cleanup. Confirm dialog because it's irreversible.
 - **Rate limit** &mdash; rolling 60-second window per token, default 60 requests/minute. Override via the `rest_api_rate_limit_per_minute` setting (set to `0` to disable). Exceeding it returns `429`.
@@ -221,6 +221,12 @@ Endpoints (all under `/extensions/nova_ext_sim_central/Api/`):
 | `GET` | `/characters/{id}` | `characters:read` |
 | `GET` | `/missions` *(filters: `?status=`, `?page=`, `?per_page=`)* | `missions:read` |
 | `GET` | `/missions/{id}` | `missions:read` |
+| `POST` | `/users/disable` *(body: `user_id` or `discord_id`)* | `users:write` |
+| `POST` | `/users/reactivate` *(body: `user_id`/`discord_id`, optional `reactivate_characters`)* | `users:write` |
+| `GET` | `/webhooks` &middot; `/webhooks/{id}` | `webhooks:read` |
+| `POST` | `/webhooks` *(create)* &middot; `PATCH`/`PUT` `/webhooks/{id}` *(update)* &middot; `DELETE` `/webhooks/{id}` | `webhooks:write` |
+
+The write endpoints *(v1.14.0+)*: **user activation** &mdash; `disable` sets the user `inactive` and flips their *active* linked characters to `inactive`; `reactivate` sets the user `active` and (unless `reactivate_characters=false`) flips their *inactive* characters back. Only the `active`↔`inactive` transition is touched &mdash; `pending` and `npc` characters are left alone. Users are addressable by `user_id` or by `discord_id` (the latter requires the *Discord Sign-In* feature, else `409`). **Webhook management** mirrors the ACP form (shared validation) and requires the *Event Webhooks* feature on (`409` if off); create/update bodies accept the full webhook field set (label, url, format, events, templates, role ping, etc.).
 
 Response JSON uses whitelisted, documented fields &mdash; not raw column dumps &mdash; so internal schema churn doesn't leak through. Suite-feature fields are **layered on conditionally**: when *Mission Post Summary* is on, posts gain a `summary` key; when *Ordered Mission Posts* is on, posts gain an `ordered` object and missions gain ordering config; when *Display Name* is on, characters gain `display_name` and a precomputed `preferred_name`; when *Content Filter* is on, posts gain an `age_gated` boolean (full content is still returned &mdash; the flag lets consumers decide whether to redact). Field *presence* is the signal that a feature is enabled &mdash; consumers can detect what's available without an extra config endpoint.
 

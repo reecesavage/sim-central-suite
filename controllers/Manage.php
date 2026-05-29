@@ -1498,9 +1498,9 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 	 * registry rather than a free-form string so the ACP create form can
 	 * render real checkboxes and the validator can reject unknowns.
 	 *
-	 * v1 is read-only. Write scopes (posts:write etc.) will join this list
-	 * once the corresponding endpoints exist and the "act as" author setting
-	 * is added.
+	 * Read scopes gate the GET endpoints. Write scopes gate the mutating
+	 * endpoints (user status changes, webhook management) - grant these only
+	 * to trusted automation.
 	 */
 	private function _apiAvailableScopes()
 	{
@@ -1508,6 +1508,9 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			'posts:read'      => 'Read mission posts (list + view).',
 			'characters:read' => 'Read characters (list + view).',
 			'missions:read'   => 'Read missions (list + view).',
+			'users:write'     => 'Disable or reactivate users and their linked characters.',
+			'webhooks:read'   => 'List event webhooks and view their config.',
+			'webhooks:write'  => 'Create, update, and delete event webhooks.',
 		);
 	}
 
@@ -1599,95 +1602,44 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 	private function _webhookAvailableEvents()
 	{
-		return array(
-			'post.saved'  => 'Fires when a draft mission post is created or saved (status = saved). For nudging co-authors that a draft needs another look. Discord pings the authors.',
-			'post.posted' => 'Fires when a mission post transitions to activated (i.e. publicly posted). The main announcement event.',
-			'log.posted'  => 'Fires when a personal log is activated. Author, title, content.',
-			'news.posted' => 'Fires when a news item is activated. Author, title, category, type, content. Honours the public/private filter below.',
-		);
+		return \nova_ext_sim_central\Webhooks::availableEvents();
 	}
 
 	private function _webhookNewsTypes()
 	{
-		return array(
-			'public'  => 'Public news items only (default)',
-			'private' => 'Private news items only',
-			'both'    => 'Both public and private',
-		);
+		return \nova_ext_sim_central\Webhooks::availableNewsTypes();
 	}
 
 	private function _webhookAvailableFormats()
 	{
-		return array(
-			'discord' => 'Discord webhook URL. Fires a formatted embed (with @mentions of authors who have linked Discord).',
-			'generic' => 'Generic JSON. Sends a structured payload suitable for n8n, custom scripts, or any tool that consumes raw JSON.',
-		);
+		return \nova_ext_sim_central\Webhooks::availableFormats();
 	}
 
 	private function _saveWebhook($id)
 	{
-		$label = isset($_POST['label']) ? trim((string) $_POST['label']) : '';
-		$url   = isset($_POST['url'])   ? trim((string) $_POST['url'])   : '';
-		$format= isset($_POST['format'])? (string) $_POST['format']      : '';
-		$events= isset($_POST['events']) && is_array($_POST['events']) ? $_POST['events'] : array();
-		$enabled = ! empty($_POST['enabled']) ? 1 : 0;
-		$tplTitle = isset($_POST['template_title']) ? trim((string) $_POST['template_title']) : '';
-		$tplDesc  = isset($_POST['template_description']) ? trim((string) $_POST['template_description']) : '';
-		$tplLogTitle  = isset($_POST['template_log_title']) ? trim((string) $_POST['template_log_title']) : '';
-		$tplLogDesc   = isset($_POST['template_log_description']) ? trim((string) $_POST['template_log_description']) : '';
-		$tplNewsTitle = isset($_POST['template_news_title']) ? trim((string) $_POST['template_news_title']) : '';
-		$tplNewsDesc  = isset($_POST['template_news_description']) ? trim((string) $_POST['template_news_description']) : '';
-		$roleId   = isset($_POST['mention_role_id']) ? trim((string) $_POST['mention_role_id']) : '';
-		if ($roleId !== '' && ! ctype_digit($roleId)) {
-			return array('error', 'Mention role ID must be a numeric Discord role ID (or left blank).');
-		}
-		$roleEventsRaw = isset($_POST['mention_role_events']) && is_array($_POST['mention_role_events'])
-			? $_POST['mention_role_events'] : array();
-		$newsTypes = isset($_POST['news_types']) ? (string) $_POST['news_types'] : 'public';
-		if ( ! isset($this->_webhookNewsTypes()[$newsTypes])) {
-			$newsTypes = 'public';
-		}
+		// Validation + normalisation lives in the Webhooks library so the ACP
+		// form and the REST API share exactly one rule set.
+		$result = \nova_ext_sim_central\Webhooks::validateWebhookInput(array(
+			'label'                     => isset($_POST['label']) ? $_POST['label'] : '',
+			'url'                       => isset($_POST['url']) ? $_POST['url'] : '',
+			'format'                    => isset($_POST['format']) ? $_POST['format'] : '',
+			'events'                    => isset($_POST['events']) ? $_POST['events'] : array(),
+			'enabled'                   => ! empty($_POST['enabled']) ? 1 : 0,
+			'news_types'                => isset($_POST['news_types']) ? $_POST['news_types'] : 'public',
+			'mention_role_id'           => isset($_POST['mention_role_id']) ? $_POST['mention_role_id'] : '',
+			'mention_role_events'       => isset($_POST['mention_role_events']) ? $_POST['mention_role_events'] : array(),
+			'template_title'            => isset($_POST['template_title']) ? $_POST['template_title'] : '',
+			'template_description'      => isset($_POST['template_description']) ? $_POST['template_description'] : '',
+			'template_log_title'        => isset($_POST['template_log_title']) ? $_POST['template_log_title'] : '',
+			'template_log_description'  => isset($_POST['template_log_description']) ? $_POST['template_log_description'] : '',
+			'template_news_title'       => isset($_POST['template_news_title']) ? $_POST['template_news_title'] : '',
+			'template_news_description' => isset($_POST['template_news_description']) ? $_POST['template_news_description'] : '',
+		));
 
-		if ($label === '') { return array('error', 'Label is required.'); }
-		if (strlen($label) > 120) { return array('error', 'Label is too long (max 120 chars).'); }
-		if ( ! filter_var($url, FILTER_VALIDATE_URL) || ! preg_match('#^https?://#i', $url)) {
-			return array('error', 'URL must be a valid http(s) URL.');
+		if ( ! empty($result['errors'])) {
+			return array('error', $result['errors'][0]);
 		}
-		$availableFormats = $this->_webhookAvailableFormats();
-		if ( ! isset($availableFormats[$format])) {
-			return array('error', 'Unknown format.');
-		}
-		$availableEvents = $this->_webhookAvailableEvents();
-		$cleanEvents = array();
-		foreach ($events as $ev) {
-			if (isset($availableEvents[$ev])) { $cleanEvents[] = $ev; }
-		}
-		if (empty($cleanEvents)) { return array('error', 'Select at least one event.'); }
-
-		// Role-ping events: keep only events the webhook actually subscribes to.
-		$cleanRoleEvents = array();
-		foreach ($roleEventsRaw as $ev) {
-			if (in_array($ev, $cleanEvents, true)) { $cleanRoleEvents[] = $ev; }
-		}
-		// A role can only ping if one is configured.
-		if ($roleId === '') { $cleanRoleEvents = array(); }
-
-		$data = array(
-			'label'                => $label,
-			'url'                  => $url,
-			'format'               => $format,
-			'events'               => json_encode(array_values($cleanEvents)),
-			'enabled'              => $enabled,
-			'news_types'           => $newsTypes,
-			'mention_role_id'      => $roleId !== '' ? $roleId : null,
-			'mention_role_events'  => ! empty($cleanRoleEvents) ? json_encode(array_values($cleanRoleEvents)) : null,
-			'template_title'       => $tplTitle !== '' ? $tplTitle : null,
-			'template_description' => $tplDesc  !== '' ? $tplDesc  : null,
-			'template_log_title'        => $tplLogTitle  !== '' ? $tplLogTitle  : null,
-			'template_log_description'  => $tplLogDesc   !== '' ? $tplLogDesc   : null,
-			'template_news_title'       => $tplNewsTitle !== '' ? $tplNewsTitle : null,
-			'template_news_description' => $tplNewsDesc  !== '' ? $tplNewsDesc  : null,
-		);
+		$data = $result['data'];
 
 		if ($id === null) {
 			$data['created_at'] = date('Y-m-d H:i:s');

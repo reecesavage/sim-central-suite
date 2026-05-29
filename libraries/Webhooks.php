@@ -54,6 +54,139 @@ class Webhooks
 	const DEFAULT_NEWS_TITLE_TEMPLATE = '{sim_name} News | {title}';
 	const DEFAULT_NEWS_DESCRIPTION_TEMPLATE = "*{meta}*\n\n{body}\n\n[Read the full item]({url})";
 
+	// ---------- config registries + validation (shared by ACP + REST API) ----------
+
+	/**
+	 * Canonical event registry. Single source of truth for both the ACP
+	 * webhook form (Manage) and the REST API webhook endpoints (Api), so the
+	 * two never drift on which events exist or what they mean.
+	 */
+	public static function availableEvents()
+	{
+		return array(
+			self::EVENT_POST_SAVED  => 'Fires when a draft mission post is created or saved (status = saved). For nudging co-authors that a draft needs another look. Discord pings the authors.',
+			self::EVENT_POST_POSTED => 'Fires when a mission post transitions to activated (i.e. publicly posted). The main announcement event.',
+			self::EVENT_LOG_POSTED  => 'Fires when a personal log is activated. Author, title, content.',
+			self::EVENT_NEWS_POSTED => 'Fires when a news item is activated. Author, title, category, type, content. Honours the public/private filter.',
+		);
+	}
+
+	public static function availableFormats()
+	{
+		return array(
+			'discord' => 'Discord webhook URL. Fires a formatted embed (with @mentions of authors who have linked Discord).',
+			'generic' => 'Generic JSON. Sends a structured payload suitable for n8n, custom scripts, or any tool that consumes raw JSON.',
+		);
+	}
+
+	public static function availableNewsTypes()
+	{
+		return array(
+			'public'  => 'Public news items only (default)',
+			'private' => 'Private news items only',
+			'both'    => 'Both public and private',
+		);
+	}
+
+	/**
+	 * Validate and normalise a complete set of webhook fields into a DB-ready
+	 * data array. Used by both the ACP save path and the REST API create/update
+	 * path so validation rules live in exactly one place.
+	 *
+	 * $in is a flat associative array with these keys (all optional in the
+	 * array sense; missing keys are treated as empty/defaults):
+	 *   label, url, format, events[], enabled, news_types, mention_role_id,
+	 *   mention_role_events[], template_title, template_description,
+	 *   template_log_title, template_log_description,
+	 *   template_news_title, template_news_description
+	 *
+	 * For partial updates, callers should merge the existing row's values into
+	 * $in first, then pass the merged set here (validation always sees a
+	 * complete record).
+	 *
+	 * @return array { errors: string[], data: array|null }
+	 *         When errors is non-empty, data is null. Otherwise data is ready
+	 *         for $db->insert/update (no created_at/created_by - caller adds).
+	 */
+	public static function validateWebhookInput(array $in)
+	{
+		$errors = array();
+
+		$label  = isset($in['label'])  ? trim((string) $in['label'])  : '';
+		$url    = isset($in['url'])    ? trim((string) $in['url'])     : '';
+		$format = isset($in['format']) ? (string) $in['format']        : '';
+		$events = isset($in['events']) && is_array($in['events']) ? $in['events'] : array();
+		$enabled = ! empty($in['enabled']) ? 1 : 0;
+
+		$tplTitle     = isset($in['template_title']) ? trim((string) $in['template_title']) : '';
+		$tplDesc      = isset($in['template_description']) ? trim((string) $in['template_description']) : '';
+		$tplLogTitle  = isset($in['template_log_title']) ? trim((string) $in['template_log_title']) : '';
+		$tplLogDesc   = isset($in['template_log_description']) ? trim((string) $in['template_log_description']) : '';
+		$tplNewsTitle = isset($in['template_news_title']) ? trim((string) $in['template_news_title']) : '';
+		$tplNewsDesc  = isset($in['template_news_description']) ? trim((string) $in['template_news_description']) : '';
+
+		$roleId = isset($in['mention_role_id']) ? trim((string) $in['mention_role_id']) : '';
+		if ($roleId !== '' && ! ctype_digit($roleId)) {
+			$errors[] = 'mention_role_id must be a numeric Discord role ID (or omitted).';
+		}
+		$roleEventsRaw = isset($in['mention_role_events']) && is_array($in['mention_role_events'])
+			? $in['mention_role_events'] : array();
+
+		$newsTypes = isset($in['news_types']) ? (string) $in['news_types'] : 'public';
+		if ( ! isset(self::availableNewsTypes()[$newsTypes])) {
+			$newsTypes = 'public';
+		}
+
+		if ($label === '') { $errors[] = 'label is required.'; }
+		if (strlen($label) > 120) { $errors[] = 'label is too long (max 120 chars).'; }
+		if ( ! filter_var($url, FILTER_VALIDATE_URL) || ! preg_match('#^https?://#i', $url)) {
+			$errors[] = 'url must be a valid http(s) URL.';
+		}
+		if ( ! isset(self::availableFormats()[$format])) {
+			$errors[] = 'format must be one of: '.implode(', ', array_keys(self::availableFormats())).'.';
+		}
+
+		$availableEvents = self::availableEvents();
+		$cleanEvents = array();
+		foreach ($events as $ev) {
+			if (isset($availableEvents[$ev])) { $cleanEvents[] = $ev; }
+		}
+		if (empty($cleanEvents)) {
+			$errors[] = 'events must contain at least one of: '.implode(', ', array_keys($availableEvents)).'.';
+		}
+
+		// Role-ping events: keep only events the webhook actually subscribes to.
+		$cleanRoleEvents = array();
+		foreach ($roleEventsRaw as $ev) {
+			if (in_array($ev, $cleanEvents, true)) { $cleanRoleEvents[] = $ev; }
+		}
+		// A role can only ping if one is configured.
+		if ($roleId === '') { $cleanRoleEvents = array(); }
+
+		if ( ! empty($errors)) {
+			return array('errors' => $errors, 'data' => null);
+		}
+
+		$data = array(
+			'label'                => $label,
+			'url'                  => $url,
+			'format'               => $format,
+			'events'               => json_encode(array_values($cleanEvents)),
+			'enabled'              => $enabled,
+			'news_types'           => $newsTypes,
+			'mention_role_id'      => $roleId !== '' ? $roleId : null,
+			'mention_role_events'  => ! empty($cleanRoleEvents) ? json_encode(array_values($cleanRoleEvents)) : null,
+			'template_title'       => $tplTitle !== '' ? $tplTitle : null,
+			'template_description' => $tplDesc  !== '' ? $tplDesc  : null,
+			'template_log_title'        => $tplLogTitle  !== '' ? $tplLogTitle  : null,
+			'template_log_description'  => $tplLogDesc   !== '' ? $tplLogDesc   : null,
+			'template_news_title'       => $tplNewsTitle !== '' ? $tplNewsTitle : null,
+			'template_news_description' => $tplNewsDesc  !== '' ? $tplNewsDesc  : null,
+		);
+
+		return array('errors' => array(), 'data' => $data);
+	}
+
 	// ---------- entry points (called by the model shims) ----------
 
 	public static function onPostChanged($postId, $newData, $previousStatus)

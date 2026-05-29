@@ -1,8 +1,8 @@
 # Sim Central Suite — REST API Reference
 
-The suite's REST API exposes read-only HTTP endpoints for external integrations: n8n workflows, scripts, dashboards, anything that needs to pull mission posts, characters, or missions out of the sim without scraping HTML.
+The suite's REST API exposes HTTP endpoints for external integrations: n8n workflows, scripts, dashboards, anything that needs to read mission posts, characters, or missions — or to manage user activation status and event webhooks — without scraping HTML.
 
-> **Status:** v1 — read-only. Write endpoints (post creation, character edits) are not yet exposed.
+> **Status:** read endpoints for posts/characters/missions, plus write endpoints for user activation status (disable/reactivate) and event-webhook management (create/update/delete). Write endpoints are gated behind their own `*:write` scopes — issue those only to trusted automation.
 
 ---
 
@@ -51,8 +51,13 @@ Tokens carry an explicit scope list. Endpoints check for the scope they require 
 | `posts:read` | List posts, view a single post |
 | `characters:read` | List characters, view a single character |
 | `missions:read` | List missions, view a single mission |
+| `users:write` | Disable / reactivate users and their linked characters |
+| `webhooks:read` | List event webhooks and view their config |
+| `webhooks:write` | Create, update, and delete event webhooks |
 
 A token with no relevant scope but a valid signature will still get `200` on `/ping`, since that endpoint is scope-free by design (it's the n8n "does this token work?" check).
+
+The `*:write` scopes mutate sim state — grant them sparingly. Webhook config includes destination URLs (returned in full by the webhook endpoints), so a `webhooks:read` token is sensitive too.
 
 ---
 
@@ -95,11 +100,17 @@ All endpoints return JSON.
 | Status | When |
 |---|---|
 | `200` | OK |
+| `201` | Created (webhook create) |
 | `401` | Missing / malformed / unknown / revoked / expired token |
 | `403` | Token is valid but lacks the required scope |
 | `404` | Resource not found, *or* the REST API feature is disabled on this sim |
+| `405` | Wrong HTTP method for the endpoint |
+| `409` | A required suite feature is off (Event Webhooks, or Discord Auth for `discord_id` lookups) |
+| `422` | Validation failed on a write body (response includes a `details` array) |
 | `429` | Rate limit exceeded |
 | `500` | Bug. File an issue. |
+
+Write endpoints accept their body as JSON (`Content-Type: application/json`), form-encoded fields, or query-string params.
 
 ---
 
@@ -226,6 +237,136 @@ List missions, most recent start first. Scope: `missions:read`.
 ### `GET /missions/{id}`
 
 Single mission by id. Scope: `missions:read`.
+
+---
+
+## User activation status (write)
+
+Two endpoints flip a user's activation status and cascade to their linked characters. Scope: `users:write`.
+
+Identify the user either way:
+
+- **`user_id`** — the Nova user id. Always available.
+- **`discord_id`** — the user's linked Discord account id. Only works when the **Discord Auth** feature is enabled (that's the feature that stores the link). If it's off, the endpoint returns `409` telling you to use `user_id`.
+
+If both are supplied, `user_id` wins (so a request never fails on Discord Auth being off when you also gave a user id).
+
+### `POST /users/disable`
+
+Sets the user to `status = inactive` and every **currently-active** linked character to `crew_type = inactive`.
+
+**Body:** `user_id` *or* `discord_id`.
+
+```bash
+curl -X POST "$BASE/users/disable" \
+  -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"discord_id": "123456789012345678"}'
+```
+
+**Response (`UserStatusResult`):**
+```json
+{
+  "user_id": 42,
+  "discord_id": "123456789012345678",
+  "status": "inactive",
+  "characters": { "status": "inactive", "affected": 2, "ids": [10, 11] }
+}
+```
+
+### `POST /users/reactivate`
+
+Sets the user to `status = active`. By default every **previously-inactive** linked character is set back to `crew_type = active`.
+
+**Body:** `user_id` *or* `discord_id`; optional `reactivate_characters` (default `true`). Pass `false` to reactivate only the user and leave characters inactive.
+
+```bash
+curl -X POST "$BASE/users/reactivate" \
+  -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"user_id": 42, "reactivate_characters": false}'
+```
+
+When `reactivate_characters` is `false`, the response's `characters.status` is `"unchanged"` and `affected` is `0`.
+
+---
+
+## Event webhooks (read + write)
+
+Manage the suite's [event webhooks](WEBHOOKS.md) over the API. **All of these require the Event Webhooks feature to be enabled** — every verb returns `409` (`"The Event Webhooks feature is not enabled on this sim."`) when it's off, and `503` if it's on but the table hasn't been created via *Setup database*.
+
+The destination `url` is returned in full — these endpoints are privileged.
+
+### `GET /webhooks`
+
+List every webhook (enabled first). Scope: `webhooks:read`.
+
+**Response:** `{ "data": [ Webhook, ... ], "total": N }`.
+
+### `GET /webhooks/{id}`
+
+Single webhook by id. Scope: `webhooks:read`.
+
+**Webhook object:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | |
+| `label` | string | |
+| `url` | string | Destination URL |
+| `format` | string | `discord` or `generic` |
+| `events` | string[] | Subset of `post.saved`, `post.posted`, `log.posted`, `news.posted` |
+| `enabled` | bool | |
+| `news_types` | string | `public` / `private` / `both` (for `news.posted`) |
+| `mention_role_id` | string \| null | Numeric Discord role id |
+| `mention_role_events` | string[] | Events on which the role is pinged |
+| `template_title` / `template_description` | string \| null | `post.posted` Discord embed templates |
+| `template_log_title` / `template_log_description` | string \| null | `log.posted` templates |
+| `template_news_title` / `template_news_description` | string \| null | `news.posted` templates |
+| `created_at`, `last_fired_at`, `last_status`, `last_error` | — | Delivery bookkeeping |
+
+### `POST /webhooks`
+
+Create a webhook. Scope: `webhooks:write`. Returns `201` with the created `Webhook`.
+
+**Body** (minimum `label`, `url`, `format`, `events`):
+
+| Field | Required | Notes |
+|---|---|---|
+| `label` | ✓ | Max 120 chars |
+| `url` | ✓ | Valid `http(s)` URL |
+| `format` | ✓ | `discord` or `generic` |
+| `events` | ✓ | Array; one or more of `post.saved`, `post.posted`, `log.posted`, `news.posted` |
+| `enabled` | | Default `true` |
+| `news_types` | | `public` (default) / `private` / `both` |
+| `mention_role_id` | | Numeric Discord role id (discord format) |
+| `mention_role_events` | | Subset of `events` to ping the role on |
+| `template_*` | | Discord embed templates (see table above) |
+
+```bash
+curl -X POST "$BASE/webhooks" \
+  -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"label":"Feed","url":"https://discord.com/api/webhooks/...","format":"discord","events":["post.posted"]}'
+```
+
+Validation failures return `422` with a `details` array:
+```json
+{ "error": "Validation failed.", "details": ["url must be a valid http(s) URL."] }
+```
+
+### `PATCH /webhooks/{id}` (alias `PUT`)
+
+Update a webhook. Scope: `webhooks:write`. **Partial** — only the fields you send change; omitted fields keep their stored values. Same field set and validation as create. Returns the updated `Webhook`.
+
+```bash
+curl -X PATCH "$BASE/webhooks/3" \
+  -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+### `DELETE /webhooks/{id}`
+
+Permanently delete a webhook. Scope: `webhooks:write`.
+
+**Response:** `{ "deleted": true, "id": 3 }`.
 
 ---
 

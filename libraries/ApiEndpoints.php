@@ -130,6 +130,127 @@ class ApiEndpoints
 				'try_it'         => true,
 			),
 			array(
+				'method'         => 'POST',
+				'path'           => '/users/disable',
+				'operation_id'   => 'disableUser',
+				'scope'          => 'users:write',
+				'summary'        => 'Disable a user and their characters.',
+				'description'    => 'Sets the user to status=inactive and every currently-active linked character to crew_type=inactive. Identify the user by user_id (always works) or discord_id (requires the Discord Auth feature; returns 409 if it is off). Body accepted as JSON, form-encoded, or query string.',
+				'parameters'     => array(
+					array('name' => 'user_id',    'in' => 'body', 'required' => false, 'type' => 'integer', 'default' => null, 'description' => 'Nova user id. Provide this OR discord_id.'),
+					array('name' => 'discord_id', 'in' => 'body', 'required' => false, 'type' => 'string',  'default' => null, 'description' => 'Linked Discord account id. Requires the Discord Auth feature.'),
+				),
+				'response_schema'=> 'UserStatusResult',
+				'try_it'         => false,
+				'feature_gated'  => true,
+			),
+			array(
+				'method'         => 'POST',
+				'path'           => '/users/reactivate',
+				'operation_id'   => 'reactivateUser',
+				'scope'          => 'users:write',
+				'summary'        => 'Reactivate a user (and optionally their characters).',
+				'description'    => 'Sets the user to status=active. By default every previously-inactive linked character is set back to crew_type=active; pass reactivate_characters=false to leave characters untouched. Identify the user by user_id or discord_id (the latter requires the Discord Auth feature).',
+				'parameters'     => array(
+					array('name' => 'user_id',               'in' => 'body', 'required' => false, 'type' => 'integer', 'default' => null, 'description' => 'Nova user id. Provide this OR discord_id.'),
+					array('name' => 'discord_id',            'in' => 'body', 'required' => false, 'type' => 'string',  'default' => null, 'description' => 'Linked Discord account id. Requires the Discord Auth feature.'),
+					array('name' => 'reactivate_characters', 'in' => 'body', 'required' => false, 'type' => 'boolean', 'default' => true, 'description' => 'Set false to reactivate only the user, leaving characters inactive.'),
+				),
+				'response_schema'=> 'UserStatusResult',
+				'try_it'         => false,
+				'feature_gated'  => true,
+			),
+			array(
+				'method'         => 'GET',
+				'path'           => '/webhooks',
+				'operation_id'   => 'listWebhooks',
+				'scope'          => 'webhooks:read',
+				'summary'        => 'List event webhooks.',
+				'description'    => 'Returns every configured event webhook (enabled first). Requires the Event Webhooks feature to be enabled (409 if off). The destination URL is included since these endpoints are already privileged.',
+				'parameters'     => array(),
+				'response_schema'=> 'WebhookList',
+				'try_it'         => true,
+				'feature_gated'  => true,
+			),
+			array(
+				'method'         => 'GET',
+				'path'           => '/webhooks/{id}',
+				'operation_id'   => 'getWebhook',
+				'scope'          => 'webhooks:read',
+				'summary'        => 'Get a single webhook.',
+				'description'    => 'Fetches one event webhook by id. Requires the Event Webhooks feature.',
+				'parameters'     => array(
+					array('name' => 'id', 'in' => 'path', 'required' => true, 'type' => 'integer', 'default' => null, 'description' => 'Webhook id.'),
+				),
+				'response_schema'=> 'Webhook',
+				'try_it'         => true,
+				'feature_gated'  => true,
+			),
+			array(
+				'method'         => 'POST',
+				'path'           => '/webhooks',
+				'operation_id'   => 'createWebhook',
+				'scope'          => 'webhooks:write',
+				'summary'        => 'Create an event webhook.',
+				'description'    => 'Creates a webhook. Minimum body: label, url, format ("discord" or "generic"), and events (array of post.saved / post.posted / log.posted / news.posted). Optional: enabled, news_types, mention_role_id + mention_role_events, and the template_* fields. Requires the Event Webhooks feature. Returns 201 with the created webhook.',
+				'parameters'     => array(
+					array('name' => 'label',                'in' => 'body', 'required' => true,  'type' => 'string',  'default' => null, 'description' => 'Display label (max 120 chars).'),
+					array('name' => 'url',                  'in' => 'body', 'required' => true,  'type' => 'string',  'default' => null, 'description' => 'Destination http(s) URL.'),
+					array('name' => 'format',               'in' => 'body', 'required' => true,  'type' => 'string',  'default' => null, 'description' => '"discord" or "generic".'),
+					array('name' => 'events',               'in' => 'body', 'required' => true,  'type' => 'array',   'default' => null, 'description' => 'One or more of: post.saved, post.posted, log.posted, news.posted.'),
+					array('name' => 'enabled',              'in' => 'body', 'required' => false, 'type' => 'boolean', 'default' => true, 'description' => 'Whether the webhook fires. Defaults to true.'),
+					array('name' => 'news_types',           'in' => 'body', 'required' => false, 'type' => 'string',  'default' => 'public', 'description' => 'For news.posted: public, private, or both.'),
+					array('name' => 'mention_role_id',      'in' => 'body', 'required' => false, 'type' => 'string',  'default' => null, 'description' => 'Numeric Discord role id to ping (discord format only).'),
+					array('name' => 'mention_role_events',  'in' => 'body', 'required' => false, 'type' => 'array',   'default' => null, 'description' => 'Subset of events on which the role is pinged.'),
+					array('name' => 'template_title',       'in' => 'body', 'required' => false, 'type' => 'string',  'default' => null, 'description' => 'Discord embed title template for post.posted.'),
+					array('name' => 'template_description', 'in' => 'body', 'required' => false, 'type' => 'string',  'default' => null, 'description' => 'Discord embed description template for post.posted.'),
+					array('name' => 'template_log_title',       'in' => 'body', 'required' => false, 'type' => 'string', 'default' => null, 'description' => 'Discord embed title template for log.posted.'),
+					array('name' => 'template_log_description', 'in' => 'body', 'required' => false, 'type' => 'string', 'default' => null, 'description' => 'Discord embed description template for log.posted.'),
+					array('name' => 'template_news_title',       'in' => 'body', 'required' => false, 'type' => 'string', 'default' => null, 'description' => 'Discord embed title template for news.posted.'),
+					array('name' => 'template_news_description', 'in' => 'body', 'required' => false, 'type' => 'string', 'default' => null, 'description' => 'Discord embed description template for news.posted.'),
+				),
+				'response_schema'=> 'Webhook',
+				'success_code'   => 201,
+				'try_it'         => false,
+				'feature_gated'  => true,
+			),
+			array(
+				'method'         => 'PATCH',
+				'path'           => '/webhooks/{id}',
+				'operation_id'   => 'updateWebhook',
+				'scope'          => 'webhooks:write',
+				'summary'        => 'Update a webhook (partial).',
+				'description'    => 'Updates an existing webhook. Only the fields you send are changed; omitted fields keep their stored values. Same field set and validation as create. PUT is accepted as an alias. Requires the Event Webhooks feature.',
+				'parameters'     => array(
+					array('name' => 'id',                   'in' => 'path', 'required' => true,  'type' => 'integer', 'default' => null, 'description' => 'Webhook id.'),
+					array('name' => 'label',                'in' => 'body', 'required' => false, 'type' => 'string',  'default' => null, 'description' => 'Display label (max 120 chars).'),
+					array('name' => 'url',                  'in' => 'body', 'required' => false, 'type' => 'string',  'default' => null, 'description' => 'Destination http(s) URL.'),
+					array('name' => 'format',               'in' => 'body', 'required' => false, 'type' => 'string',  'default' => null, 'description' => '"discord" or "generic".'),
+					array('name' => 'events',               'in' => 'body', 'required' => false, 'type' => 'array',   'default' => null, 'description' => 'One or more of: post.saved, post.posted, log.posted, news.posted.'),
+					array('name' => 'enabled',              'in' => 'body', 'required' => false, 'type' => 'boolean', 'default' => null, 'description' => 'Whether the webhook fires.'),
+					array('name' => 'news_types',           'in' => 'body', 'required' => false, 'type' => 'string',  'default' => null, 'description' => 'For news.posted: public, private, or both.'),
+					array('name' => 'mention_role_id',      'in' => 'body', 'required' => false, 'type' => 'string',  'default' => null, 'description' => 'Numeric Discord role id to ping.'),
+					array('name' => 'mention_role_events',  'in' => 'body', 'required' => false, 'type' => 'array',   'default' => null, 'description' => 'Subset of events on which the role is pinged.'),
+				),
+				'response_schema'=> 'Webhook',
+				'try_it'         => false,
+				'feature_gated'  => true,
+			),
+			array(
+				'method'         => 'DELETE',
+				'path'           => '/webhooks/{id}',
+				'operation_id'   => 'deleteWebhook',
+				'scope'          => 'webhooks:write',
+				'summary'        => 'Delete a webhook.',
+				'description'    => 'Permanently deletes an event webhook by id. Requires the Event Webhooks feature.',
+				'parameters'     => array(
+					array('name' => 'id', 'in' => 'path', 'required' => true, 'type' => 'integer', 'default' => null, 'description' => 'Webhook id.'),
+				),
+				'response_schema'=> 'WebhookDeleteResult',
+				'try_it'         => false,
+				'feature_gated'  => true,
+			),
+			array(
 				'method'         => 'GET',
 				'path'           => '/openapi',
 				'operation_id'   => 'getOpenApiSpec',
@@ -240,6 +361,65 @@ class ApiEndpoints
 				),
 				'required' => array('data', 'page', 'per_page', 'total'),
 			),
+			'UserStatusResult' => array(
+				'type' => 'object',
+				'properties' => array(
+					'user_id'    => array('type' => 'integer'),
+					'discord_id' => array('type' => 'string', 'nullable' => true),
+					'status'     => array('type' => 'string', 'description' => 'New user status: active or inactive.'),
+					'characters' => array(
+						'type' => 'object',
+						'description' => 'Summary of the linked-character change.',
+						'properties' => array(
+							'status'   => array('type' => 'string', 'description' => 'active, inactive, or unchanged.'),
+							'affected' => array('type' => 'integer'),
+							'ids'      => array('type' => 'array', 'items' => array('type' => 'integer')),
+						),
+					),
+				),
+				'required' => array('user_id', 'status', 'characters'),
+			),
+			'Webhook' => array(
+				'type' => 'object',
+				'properties' => array(
+					'id'                        => array('type' => 'integer'),
+					'label'                     => array('type' => 'string'),
+					'url'                        => array('type' => 'string', 'description' => 'Destination URL (included; endpoints are privileged).'),
+					'format'                    => array('type' => 'string', 'description' => 'discord or generic.'),
+					'events'                    => array('type' => 'array', 'items' => array('type' => 'string')),
+					'enabled'                   => array('type' => 'boolean'),
+					'news_types'                => array('type' => 'string'),
+					'mention_role_id'           => array('type' => 'string', 'nullable' => true),
+					'mention_role_events'       => array('type' => 'array', 'items' => array('type' => 'string')),
+					'template_title'            => array('type' => 'string', 'nullable' => true),
+					'template_description'      => array('type' => 'string', 'nullable' => true),
+					'template_log_title'        => array('type' => 'string', 'nullable' => true),
+					'template_log_description'  => array('type' => 'string', 'nullable' => true),
+					'template_news_title'       => array('type' => 'string', 'nullable' => true),
+					'template_news_description' => array('type' => 'string', 'nullable' => true),
+					'created_at'                => array('type' => 'string', 'nullable' => true),
+					'last_fired_at'             => array('type' => 'string', 'nullable' => true),
+					'last_status'               => array('type' => 'integer', 'nullable' => true),
+					'last_error'                => array('type' => 'string', 'nullable' => true),
+				),
+				'required' => array('id', 'label', 'url', 'format', 'events', 'enabled'),
+			),
+			'WebhookList' => array(
+				'type' => 'object',
+				'properties' => array(
+					'data'  => array('type' => 'array', 'items' => array('$ref' => '#/components/schemas/Webhook')),
+					'total' => array('type' => 'integer'),
+				),
+				'required' => array('data', 'total'),
+			),
+			'WebhookDeleteResult' => array(
+				'type' => 'object',
+				'properties' => array(
+					'deleted' => array('type' => 'boolean'),
+					'id'      => array('type' => 'integer'),
+				),
+				'required' => array('deleted', 'id'),
+			),
 			'ErrorResponse' => array(
 				'type' => 'object',
 				'properties' => array(
@@ -271,12 +451,13 @@ class ApiEndpoints
 				$paths[$pathKey] = array();
 			}
 
+			$successCode = isset($ep['success_code']) ? (string) $ep['success_code'] : '200';
 			$op = array(
 				'operationId' => $ep['operation_id'],
 				'summary'     => $ep['summary'],
 				'description' => $ep['description'],
 				'responses'   => array(
-					'200' => array(
+					$successCode => array(
 						'description' => 'Success',
 						'content' => array(
 							'application/json' => array(
@@ -317,19 +498,59 @@ class ApiEndpoints
 				'content' => array('application/json' => array('schema' => array('$ref' => '#/components/schemas/ErrorResponse'))),
 			);
 
+			// Feature-gated endpoints answer 409 when the underlying suite
+			// feature (Event Webhooks, Discord Auth) is toggled off.
+			if ( ! empty($ep['feature_gated'])) {
+				$op['responses']['409'] = array(
+					'description' => 'A required suite feature is not enabled on this sim (e.g. Event Webhooks, or Discord Auth for discord_id lookups).',
+					'content' => array('application/json' => array('schema' => array('$ref' => '#/components/schemas/ErrorResponse'))),
+				);
+			}
+
+			// Body params (in => body) become a JSON requestBody; path/query
+			// params stay in `parameters`.
 			if ( ! empty($ep['parameters'])) {
-				$op['parameters'] = array();
+				$pathQueryParams = array();
+				$bodyProps       = array();
+				$bodyRequired    = array();
 				foreach ($ep['parameters'] as $p) {
 					$schema = array('type' => $p['type']);
 					if (array_key_exists('default', $p) && $p['default'] !== null) {
 						$schema['default'] = $p['default'];
 					}
-					$op['parameters'][] = array(
+					if ($p['in'] === 'body') {
+						$bodyProps[$p['name']] = array_merge($schema, array('description' => $p['description']));
+						if ( ! empty($p['required'])) {
+							$bodyRequired[] = $p['name'];
+						}
+						continue;
+					}
+					$pathQueryParams[] = array(
 						'name'        => $p['name'],
 						'in'          => $p['in'],
 						'required'    => ! empty($p['required']),
 						'description' => $p['description'],
 						'schema'      => $schema,
+					);
+				}
+
+				if ( ! empty($pathQueryParams)) {
+					$op['parameters'] = $pathQueryParams;
+				}
+				if ( ! empty($bodyProps)) {
+					$bodySchema = array('type' => 'object', 'properties' => $bodyProps);
+					if ( ! empty($bodyRequired)) {
+						$bodySchema['required'] = $bodyRequired;
+					}
+					$op['requestBody'] = array(
+						'required' => ! empty($bodyRequired),
+						'content'  => array(
+							'application/json' => array('schema' => $bodySchema),
+						),
+					);
+					$op['responses']['422'] = array(
+						'description' => 'Validation failed. See the details array.',
+						'content' => array('application/json' => array('schema' => array('$ref' => '#/components/schemas/ErrorResponse'))),
 					);
 				}
 			}
@@ -341,7 +562,7 @@ class ApiEndpoints
 			'openapi' => '3.0.3',
 			'info' => array(
 				'title'       => 'Sim Central Suite REST API',
-				'description' => 'Read-only HTTP API for external integrations (n8n flows, scripts, dashboards). Authenticate with the X-API-Key header.',
+				'description' => 'HTTP API for external integrations (n8n flows, scripts, dashboards). Read endpoints for posts, characters, and missions; write endpoints for user activation status and event-webhook management. Authenticate with the X-API-Key header.',
 				'version'     => Config::version(),
 			),
 			'servers' => array(
