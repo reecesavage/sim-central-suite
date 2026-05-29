@@ -37,6 +37,25 @@ $this->event->listen(['location', 'view', 'data', 'admin', 'write_missionpost'],
        break;
     default:
 
+      // Resolve the mission this form is bound to so we only show the box when
+      // that mission has the summary enabled. Existing post -> its mission;
+      // new post -> the single current mission if there's only one (otherwise
+      // the dropdown's first option, which the JS below keeps in sync on change).
+      $missionId = ($post && !empty($post->post_mission)) ? $post->post_mission : false;
+      if (!$missionId) {
+        $current = $this->mis->get_all_missions('current');
+        if ($current->num_rows() > 0) {
+          $missionId = $current->row()->mission_id;
+        }
+      }
+
+      $summaryEnabled = false;
+      if ($missionId) {
+        $mq = $this->db->get_where('missions', array('mission_id' => $missionId));
+        $summaryEnabled = ($mq->num_rows() > 0 && $mq->row()->mission_ext_mission_post_summary_enable == 1);
+      }
+
+      $event['data']['nova_ext_mission_post_summary_enabled'] = $summaryEnabled;
       $event['data']['label']['nova_ext_mission_post_summary'] = $summaryLabel;
       $event['data']['inputs']['nova_ext_mission_post_summary'] = array(
         'name' => 'nova_ext_mission_post_summary',
@@ -61,6 +80,28 @@ $this->event->listen(['location', 'view', 'output', 'admin', 'write_missionpost'
                         $this->extension['nova_ext_sim_central']
                              ->view('summary_form', $this->skin, 'admin', $event['data'])
                       );
+
+                // Toggle the box live when the mission dropdown changes (sims
+                // with more than one current mission). Single-mission sims have
+                // no dropdown; their initial server-rendered state stands. Reuses
+                // the suite's ordered_mission lookup (returns the mission row).
+                $ajaxUrl = site_url('extensions/nova_ext_sim_central/Ajax/ordered_mission');
+                $event['output'] .= "<script>\n"
+                  ."(function(\$){\n"
+                  ."  if (typeof \$ === 'undefined') { return; }\n"
+                  ."  function scSummaryToggle(mission){\n"
+                  ."    if (!mission) { return; }\n"
+                  ."    \$.get('".$ajaxUrl."', { mission: mission }, function(data){\n"
+                  ."      var r; try { r = JSON.parse(data); } catch(e){ return; }\n"
+                  ."      if (r.status !== 'OK' || !r.post) { return; }\n"
+                  ."      \$('.nova_ext_mission_post_summary').css('display', r.post.mission_ext_mission_post_summary_enable == 1 ? 'block' : 'none');\n"
+                  ."    });\n"
+                  ."  }\n"
+                  ."  \$(function(){\n"
+                  ."    \$(document).on('change', '[name=\"mission\"]', function(){ scSummaryToggle(\$(this).val()); });\n"
+                  ."  });\n"
+                  ."})(window.jQuery);\n"
+                  ."</script>";
 
  }
 

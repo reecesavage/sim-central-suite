@@ -7,6 +7,10 @@
 	$editRow          = isset($edit_row) ? $edit_row : null;
 	$defaultTitle     = isset($default_title_template) ? $default_title_template : '';
 	$defaultDesc      = isset($default_description_template) ? $default_description_template : '';
+	$defaultLogTitle  = isset($default_log_title_template) ? $default_log_title_template : '';
+	$defaultLogDesc   = isset($default_log_description_template) ? $default_log_description_template : '';
+	$defaultNewsTitle = isset($default_news_title_template) ? $default_news_title_template : '';
+	$defaultNewsDesc  = isset($default_news_description_template) ? $default_news_description_template : '';
 
 	// Pre-fill form values from edit_row if editing, otherwise empty defaults.
 	$valLabel     = $editRow ? $editRow->label : '';
@@ -15,8 +19,14 @@
 	$valEvents    = $editRow ? (array) json_decode($editRow->events, true) : array();
 	$valEnabled   = $editRow ? (int) $editRow->enabled : 1;
 	$valNewsTypes = ($editRow && isset($editRow->news_types) && $editRow->news_types !== '') ? $editRow->news_types : 'public';
+	$valRoleId    = ($editRow && isset($editRow->mention_role_id)) ? (string) $editRow->mention_role_id : '';
+	$valRoleEvents = ($editRow && isset($editRow->mention_role_events)) ? (array) json_decode($editRow->mention_role_events, true) : array();
 	$valTplTitle  = $editRow ? (string) $editRow->template_title : '';
 	$valTplDesc   = $editRow ? (string) $editRow->template_description : '';
+	$valTplLogTitle  = ($editRow && isset($editRow->template_log_title)) ? (string) $editRow->template_log_title : '';
+	$valTplLogDesc   = ($editRow && isset($editRow->template_log_description)) ? (string) $editRow->template_log_description : '';
+	$valTplNewsTitle = ($editRow && isset($editRow->template_news_title)) ? (string) $editRow->template_news_title : '';
+	$valTplNewsDesc  = ($editRow && isset($editRow->template_news_description)) ? (string) $editRow->template_news_description : '';
 ?>
 
 <?php echo text_output($title, 'h1', 'page-head');?>
@@ -106,18 +116,41 @@
 			Receive deliveries</label>
 	</p>
 
-	<div id="sc-discord-fields" style="<?php echo $valFormat === 'discord' ? 'display:block;' : 'display:none;';?> background: #f8fafc; border: 1px solid #cdd; padding: 12px; margin-top: 12px;">
-		<?php echo text_output('Discord templates (post.posted only)', 'h3', 'page-subhead');?>
-		<p class="fontSmall gray">
-			Customise the embed title and body for the <code>post.posted</code> event.
-			Leave blank to use the defaults. <code>post.saved</code>, <code>log.posted</code>,
-			and <code>news.posted</code> use fixed (non-templateable) formats &mdash; sensible
-			defaults tailored to each content type.
+	<p>
+		<kbd>Mention role (Discord)</kbd>
+		<input type="text" name="mention_role_id" size="32" pattern="[0-9]*"
+			value="<?php echo htmlspecialchars($valRoleId, ENT_QUOTES);?>"
+			placeholder="e.g. 123456789012345678">
+		<br>
+		<span class="fontSmall gray">Optional. A Discord <strong>role ID</strong> to ping. Enable Developer Mode in Discord, right-click the role &rarr; <em>Copy Role ID</em>. Leave blank for no role ping. Only applies to the Discord format. Pick which events ping it below.</span>
+	</p>
+
+	<div style="background: #f8fafc; border: 1px solid #cdd; padding: 12px; margin-top: 8px;">
+		<p>
+			<kbd>Ping role on</kbd>
+			<?php foreach ($availableEvents as $ev => $desc): ?>
+				<label style="display: block; margin: 4px 0;">
+					<input type="checkbox" name="mention_role_events[]" value="<?php echo htmlspecialchars($ev, ENT_QUOTES);?>"
+						<?php if (in_array($ev, $valRoleEvents, true)) echo 'checked';?>>
+					<code><?php echo htmlspecialchars($ev, ENT_QUOTES);?></code>
+				</label>
+			<?php endforeach;?>
+			<span class="fontSmall gray">The role is pinged (via <code>&lt;@&amp;role&gt;</code> in the message content) only on the events checked here, and only for events this webhook is subscribed to above. Leave all unchecked for no role ping.</span>
 		</p>
+	</div>
+
+	<div id="sc-discord-fields" style="<?php echo $valFormat === 'discord' ? 'display:block;' : 'display:none;';?> background: #f8fafc; border: 1px solid #cdd; padding: 12px; margin-top: 12px;">
+		<?php echo text_output('Discord embed templates', 'h3', 'page-subhead');?>
+		<p class="fontSmall gray">
+			Customise the embed title and body for each announcement event. Leave a field blank to use its default.
+			<code>post.saved</code> uses a fixed (non-templateable) format &mdash; it's a lightweight ping, not an announcement.
+		</p>
+
+		<?php echo text_output('Mission posts (post.posted)', 'h3', 'page-subhead');?>
 		<p class="fontSmall">
-			Variables: <code>{sim_name}</code>, <code>{post_title}</code>, <code>{post_type}</code>,
+			Variables: <code>{sim_name}</code>, <code>{post_title}</code>, <code>{title}</code>, <code>{post_type}</code>,
 			<code>{authors}</code> (plain "Rank Name" &mdash; no pings), <code>{authors_plain}</code> (alias),
-			<code>{authors_mentions}</code> (clickable Discord mentions, but silent &mdash; post.posted never pings),
+			<code>{authors_mentions}</code> (clickable Discord mentions, but silent &mdash; announcements never ping),
 			<code>{mission}</code>, <code>{location}</code>, <code>{timeline}</code>, <code>{body}</code>,
 			<code>{url}</code>, <code>{url_admin}</code>, <code>{actor}</code>.
 		</p>
@@ -140,6 +173,53 @@
 			<br>
 			<textarea name="template_description" rows="9" cols="80" style="font-family: monospace; font-size: 12px;"
 				placeholder="<?php echo htmlspecialchars($defaultDesc, ENT_QUOTES);?>"><?php echo htmlspecialchars($valTplDesc, ENT_QUOTES);?></textarea>
+		</p>
+
+		<hr>
+		<?php echo text_output('Personal logs (log.posted)', 'h3', 'page-subhead');?>
+		<p class="fontSmall">
+			Variables: <code>{sim_name}</code>, <code>{title}</code>, <code>{authors}</code>,
+			<code>{authors_plain}</code>, <code>{authors_mentions}</code>, <code>{body}</code>,
+			<code>{url}</code>, <code>{url_admin}</code>, <code>{actor}</code>.
+		</p>
+
+		<p>
+			<kbd>Embed title template</kbd>
+			<br>
+			<input type="text" name="template_log_title" size="80"
+				value="<?php echo htmlspecialchars($valTplLogTitle, ENT_QUOTES);?>"
+				placeholder="<?php echo htmlspecialchars($defaultLogTitle, ENT_QUOTES);?>">
+		</p>
+
+		<p>
+			<kbd>Embed description template</kbd>
+			<br>
+			<textarea name="template_log_description" rows="6" cols="80" style="font-family: monospace; font-size: 12px;"
+				placeholder="<?php echo htmlspecialchars($defaultLogDesc, ENT_QUOTES);?>"><?php echo htmlspecialchars($valTplLogDesc, ENT_QUOTES);?></textarea>
+		</p>
+
+		<hr>
+		<?php echo text_output('News items (news.posted)', 'h3', 'page-subhead');?>
+		<p class="fontSmall">
+			Variables: <code>{sim_name}</code>, <code>{title}</code>, <code>{authors}</code>,
+			<code>{authors_plain}</code>, <code>{authors_mentions}</code>, <code>{category}</code>,
+			<code>{type}</code> (Public/Private), <code>{meta}</code> (the "Category &middot; Type &middot; by Author" line),
+			<code>{body}</code>, <code>{url}</code>, <code>{url_admin}</code>, <code>{actor}</code>.
+		</p>
+
+		<p>
+			<kbd>Embed title template</kbd>
+			<br>
+			<input type="text" name="template_news_title" size="80"
+				value="<?php echo htmlspecialchars($valTplNewsTitle, ENT_QUOTES);?>"
+				placeholder="<?php echo htmlspecialchars($defaultNewsTitle, ENT_QUOTES);?>">
+		</p>
+
+		<p>
+			<kbd>Embed description template</kbd>
+			<br>
+			<textarea name="template_news_description" rows="6" cols="80" style="font-family: monospace; font-size: 12px;"
+				placeholder="<?php echo htmlspecialchars($defaultNewsDesc, ENT_QUOTES);?>"><?php echo htmlspecialchars($valTplNewsDesc, ENT_QUOTES);?></textarea>
 		</p>
 	</div>
 

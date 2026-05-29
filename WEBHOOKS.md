@@ -71,36 +71,47 @@ description: **Title** - {post_title}
              [View the post]({url_admin})
 ```
 
-Always tags every linked author in the `content` line so the whole co-author group gets a notification ping that the draft moved.
+Tags the **other** linked co-authors in the `content` line so they get a notification ping that the draft moved — the author who actually saved is **not** pinged (no point notifying someone of their own edit). Optionally also pings a configured Discord role if `post.saved` is checked under *Mention role* (see below).
 
-**`log.posted` embed** (fixed format, no ping)
+**`log.posted` embed** (templateable, no author ping)
+
+Configurable per webhook via `template_log_title` and `template_log_description`. Defaults:
 
 ```
-title:       {sim_name} Log | {log title}
-description: *A personal log by {author}*
+title:       {sim_name} Log | {title}
+description: *A personal log by {authors}*
 
              {body}
 
              [Read the full log]({url})
 ```
 
-**`news.posted` embed** (fixed format, no ping)
+**`news.posted` embed** (templateable, no author ping)
+
+Configurable per webhook via `template_news_title` and `template_news_description`. Defaults:
 
 ```
-title:       {sim_name} News | {news title}
-description: *{category} · {Public|Private} · by {author}*
+title:       {sim_name} News | {title}
+description: *{meta}*
 
              {body}
 
              [Read the full item]({url})
 ```
 
-Only `post.posted` is templateable (via `template_title` / `template_description`). `post.saved`, `log.posted`, and `news.posted` use the fixed formats above.
+`{meta}` expands to the `Category · {Public|Private} · by {authors}` line (category is omitted when unset). Use `{category}` and `{type}` directly if you want a different layout.
+
+`post.posted`, `log.posted`, and `news.posted` are all templateable. `post.saved` uses a fixed format (it's a lightweight ping, not an announcement).
+
+**Mention role**
+
+Each webhook can store an optional Discord **role ID** (`mention_role_id`) plus a per-event opt-in list (`mention_role_events`, a JSON array). When a role is set, it's pinged via `<@&id>` in the message `content` on exactly the events checked under *Ping role on* — any of `post.saved`, `post.posted`, `log.posted`, `news.posted` (intersected with the events the webhook is actually subscribed to). For `post.saved` the role ping rides alongside the co-author pings; for the announcement events it's the only thing in `content` (the embed stays silent). Role mentions only fire from `content`, which is why the opt-in is needed. Leave all boxes unchecked for no role ping.
 
 ### Pinging vs. not pinging
 
-- **`post.saved` pings.** The whole point of the saved event is to alert co-authors that a draft they're on has a new revision. Linked authors go in the `content` field as `<@id>` mentions (which is what actually triggers a Discord notification).
-- **Everything else does not ping.** `post.posted`, `log.posted`, and `news.posted` are public announcements — bylines render plain "Rank Name" text and `content` is empty, so authors don't get pinged every time their content goes live.
+- **`post.saved` pings.** The whole point of the saved event is to alert co-authors that a draft they're on has a new revision. The other linked authors go in the `content` field as `<@id>` mentions (which is what actually triggers a Discord notification); the author who made the save is excluded. A configured `mention_role_id` is also pinged here as `<@&id>`.
+- **Authors are only pinged on `post.saved`.** `post.posted`, `log.posted`, and `news.posted` are public announcements — bylines render plain "Rank Name" text and `content` carries no author mentions, so authors don't get pinged every time their content goes live.
+- **A role can ping on any event** you opt into via *Mention role* — that's the one thing that puts a mention in `content` for the announcement events.
 
 **Template variables**
 
@@ -119,6 +130,8 @@ Only `post.posted` is templateable (via `template_title` / `template_description
 | `{url}` | Public post URL: `/sim/viewpost/{id}` |
 | `{url_admin}` | Backend write URL: `/write/missionpost/{id}/view` |
 | `{actor}` | Display name of the character whose user did the save |
+
+The `log.posted` and `news.posted` templates share `{sim_name}`, `{title}`, `{authors}`, `{authors_plain}`, `{authors_mentions}`, `{body}`, `{url}`, `{url_admin}`, and `{actor}`. News additionally exposes `{category}`, `{type}` (`Public`/`Private`), and `{meta}` (the combined `Category · Type · by Author` line). `{post_title}` remains an alias for `{title}` on posts.
 
 Author rendering rule: `<@discord_id>` if the linked Nova user has `nova_ext_discord_auth_id` set (requires the Discord Sign-In feature to be configured and the user to have linked their account), else `Rank First Last`. The list is joined human-friendly: `"A"`, `"A & B"`, `"A, B, & C"`.
 

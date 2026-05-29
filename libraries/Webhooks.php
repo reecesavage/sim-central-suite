@@ -48,6 +48,12 @@ class Webhooks
 	const DEFAULT_TITLE_TEMPLATE = '{sim_name} Post | {post_title}';
 	const DEFAULT_DESCRIPTION_TEMPLATE = "*A mission post by {authors}*\n\n**Mission** - {mission}\n**Location** - {location}\n**Timeline** - {timeline}\n\n{body}\n\n[Read the full post]({url})";
 
+	const DEFAULT_LOG_TITLE_TEMPLATE = '{sim_name} Log | {title}';
+	const DEFAULT_LOG_DESCRIPTION_TEMPLATE = "*A personal log by {authors}*\n\n{body}\n\n[Read the full log]({url})";
+
+	const DEFAULT_NEWS_TITLE_TEMPLATE = '{sim_name} News | {title}';
+	const DEFAULT_NEWS_DESCRIPTION_TEMPLATE = "*{meta}*\n\n{body}\n\n[Read the full item]({url})";
+
 	// ---------- entry points (called by the model shims) ----------
 
 	public static function onPostChanged($postId, $newData, $previousStatus)
@@ -161,11 +167,11 @@ class Webhooks
 			case self::EVENT_POST_POSTED:
 				return self::discordPostPosted($webhook, $item);
 			case self::EVENT_POST_SAVED:
-				return self::discordPostSaved($item);
+				return self::discordPostSaved($webhook, $item);
 			case self::EVENT_LOG_POSTED:
-				return self::discordLogPosted($item);
+				return self::discordLogPosted($webhook, $item);
 			case self::EVENT_NEWS_POSTED:
-				return self::discordNewsPosted($item);
+				return self::discordNewsPosted($webhook, $item);
 		}
 		return null;
 	}
@@ -180,9 +186,9 @@ class Webhooks
 		$descTpl = trim((string) $webhook->template_description) !== ''
 			? $webhook->template_description : self::DEFAULT_DESCRIPTION_TEMPLATE;
 
-		$vars = self::templateVars($item, true);
+		$vars = self::templateVars($item);
 		return array(
-			'content' => '',
+			'content' => self::roleMentionForEvent($webhook, self::EVENT_POST_POSTED),
 			'embeds'  => array(array(
 				'title'       => self::renderTemplate($titleTpl, $vars),
 				'description' => self::renderTemplate($descTpl, $vars),
@@ -194,11 +200,16 @@ class Webhooks
 	}
 
 	/**
-	 * post.saved - lightweight, DOES ping co-authors.
+	 * post.saved - lightweight, DOES ping co-authors (but never the actor who
+	 * saved) and optionally a configured role.
 	 */
-	private static function discordPostSaved($item)
+	private static function discordPostSaved($webhook, $item)
 	{
-		$mentions    = self::authorMentions($item);
+		$mentions = self::authorMentions($item, true);
+		$role     = self::roleMentionForEvent($webhook, self::EVENT_POST_SAVED);
+		if ($role !== '') {
+			array_unshift($mentions, $role);
+		}
 		$contentLine = empty($mentions) ? '' : implode(' ', $mentions);
 
 		$desc = "**Title** - ".self::nz($item['title'])."\n"
@@ -219,23 +230,21 @@ class Webhooks
 	}
 
 	/**
-	 * log.posted - personal log announcement. Simpler than a post: just
-	 * author, title, body. No ping (public announcement).
+	 * log.posted - personal log announcement. Templated, public, no ping.
 	 */
-	private static function discordLogPosted($item)
+	private static function discordLogPosted($webhook, $item)
 	{
-		$author = self::renderAuthorsPlain($item['authors']);
-		$body   = self::smartTruncate(self::htmlToMarkdown($item['content']), self::BODY_MAX_CHARS);
+		$titleVal = isset($webhook->template_log_title) ? (string) $webhook->template_log_title : '';
+		$descVal  = isset($webhook->template_log_description) ? (string) $webhook->template_log_description : '';
+		$titleTpl = trim($titleVal) !== '' ? $titleVal : self::DEFAULT_LOG_TITLE_TEMPLATE;
+		$descTpl  = trim($descVal) !== '' ? $descVal : self::DEFAULT_LOG_DESCRIPTION_TEMPLATE;
 
-		$desc = "*A personal log by ".$author."*\n\n"
-			. $body."\n\n"
-			. "[Read the full log](".$item['url_public'].")";
-
+		$vars = self::templateVars($item);
 		return array(
-			'content' => '',
+			'content' => self::roleMentionForEvent($webhook, self::EVENT_LOG_POSTED),
 			'embeds'  => array(array(
-				'title'       => self::nz($item['sim_name'])." Log | ".self::nz($item['title']),
-				'description' => $desc,
+				'title'       => self::renderTemplate($titleTpl, $vars),
+				'description' => self::renderTemplate($descTpl, $vars),
 				'url'         => $item['url_public'],
 				'color'       => self::COLORS[array_rand(self::COLORS)],
 				'timestamp'   => date('c', (int) $item['date_ts']),
@@ -244,29 +253,21 @@ class Webhooks
 	}
 
 	/**
-	 * news.posted - news item announcement. Author, title, category, type,
-	 * body. No ping.
+	 * news.posted - news item announcement. Templated, public, no ping.
 	 */
-	private static function discordNewsPosted($item)
+	private static function discordNewsPosted($webhook, $item)
 	{
-		$author = self::renderAuthorsPlain($item['authors']);
-		$body   = self::smartTruncate(self::htmlToMarkdown($item['content']), self::BODY_MAX_CHARS);
-		$type   = ! empty($item['is_private']) ? 'Private' : 'Public';
+		$titleVal = isset($webhook->template_news_title) ? (string) $webhook->template_news_title : '';
+		$descVal  = isset($webhook->template_news_description) ? (string) $webhook->template_news_description : '';
+		$titleTpl = trim($titleVal) !== '' ? $titleVal : self::DEFAULT_NEWS_TITLE_TEMPLATE;
+		$descTpl  = trim($descVal) !== '' ? $descVal : self::DEFAULT_NEWS_DESCRIPTION_TEMPLATE;
 
-		$meta = array();
-		if (self::nz($item['category'], '') !== '') { $meta[] = $item['category']; }
-		$meta[] = $type;
-		$meta[] = 'by '.$author;
-
-		$desc = "*".implode(' · ', $meta)."*\n\n"
-			. $body."\n\n"
-			. "[Read the full item](".$item['url_public'].")";
-
+		$vars = self::templateVars($item);
 		return array(
-			'content' => '',
+			'content' => self::roleMentionForEvent($webhook, self::EVENT_NEWS_POSTED),
 			'embeds'  => array(array(
-				'title'       => self::nz($item['sim_name'])." News | ".self::nz($item['title']),
-				'description' => $desc,
+				'title'       => self::renderTemplate($titleTpl, $vars),
+				'description' => self::renderTemplate($descTpl, $vars),
 				'url'         => $item['url_public'],
 				'color'       => self::COLORS[array_rand(self::COLORS)],
 				'timestamp'   => date('c', (int) $item['date_ts']),
@@ -488,28 +489,38 @@ class Webhooks
 
 	// ---------- template + formatting helpers ----------
 
-	private static function templateVars($item, $includeBody)
+	private static function templateVars($item)
 	{
 		$authorsPlain    = self::renderAuthorsPlain($item['authors']);
 		$authorsMentions = self::renderAuthorsWithMentions($item['authors']);
 
 		$vars = array(
 			'{sim_name}'         => $item['sim_name'],
-			'{post_title}'       => $item['title'],
-			'{post_type}'        => 'Mission Post',
+			'{title}'            => self::nz($item['title']),
+			'{post_title}'       => self::nz($item['title']),
 			'{authors}'          => $authorsPlain,
 			'{authors_plain}'    => $authorsPlain,
 			'{authors_mentions}' => $authorsMentions,
-			'{mission}'          => self::nz(isset($item['mission_title']) ? $item['mission_title'] : '', '(no mission)'),
-			'{location}'         => self::nz(isset($item['post_location']) ? $item['post_location'] : '', '(unspecified)'),
-			'{timeline}'         => self::nz(isset($item['timeline']) ? $item['timeline'] : '', '(no timeline)'),
+			'{body}'             => self::smartTruncate(self::htmlToMarkdown($item['content']), self::BODY_MAX_CHARS),
 			'{url}'              => $item['url_public'],
 			'{url_admin}'        => $item['url_admin'],
 			'{actor}'            => $item['actor']['name'],
 		);
 
-		if ($includeBody) {
-			$vars['{body}'] = self::smartTruncate(self::htmlToMarkdown($item['content']), self::BODY_MAX_CHARS);
+		if ($item['type'] === 'post') {
+			$vars['{post_type}'] = 'Mission Post';
+			$vars['{mission}']   = self::nz(isset($item['mission_title']) ? $item['mission_title'] : '', '(no mission)');
+			$vars['{location}']  = self::nz(isset($item['post_location']) ? $item['post_location'] : '', '(unspecified)');
+			$vars['{timeline}']  = self::nz(isset($item['timeline']) ? $item['timeline'] : '', '(no timeline)');
+		} elseif ($item['type'] === 'news') {
+			$type = ! empty($item['is_private']) ? 'Private' : 'Public';
+			$vars['{category}'] = self::nz(isset($item['category']) ? $item['category'] : '');
+			$vars['{type}']     = $type;
+			$meta = array();
+			if (self::nz(isset($item['category']) ? $item['category'] : '', '') !== '') { $meta[] = $item['category']; }
+			$meta[] = $type;
+			$meta[] = 'by '.$authorsPlain;
+			$vars['{meta}'] = implode(' · ', $meta);
 		}
 		return $vars;
 	}
@@ -561,15 +572,49 @@ class Webhooks
 		return implode(', ', $parts).', & '.$last;
 	}
 
-	private static function authorMentions($item)
+	private static function authorMentions($item, $excludeActor = false)
 	{
+		$actorDiscord = isset($item['actor']['discord_id']) ? (string) $item['actor']['discord_id'] : '';
+		$actorId      = isset($item['actor']['id']) ? (int) $item['actor']['id'] : 0;
+
 		$out = array();
 		foreach ($item['authors'] as $a) {
-			if ( ! empty($a['discord_id'])) {
-				$out[(int) $a['discord_id']] = '<@'.$a['discord_id'].'>';
+			if (empty($a['discord_id'])) {
+				continue;
 			}
+			if ($excludeActor) {
+				// Skip the author who triggered the save - match on the linked
+				// Discord account first, then fall back to the character id.
+				if ($actorDiscord !== '' && (string) $a['discord_id'] === $actorDiscord) {
+					continue;
+				}
+				if ($actorId > 0 && (int) $a['id'] === $actorId) {
+					continue;
+				}
+			}
+			$out[(int) $a['discord_id']] = '<@'.$a['discord_id'].'>';
 		}
 		return array_values($out);
+	}
+
+	/**
+	 * Returns a Discord role mention (<@&id>) to put in the content line for
+	 * the given event, or '' if no role is configured or this event isn't
+	 * opted in. Role pings only fire from message content, so each builder
+	 * places the result in the payload's `content`.
+	 */
+	private static function roleMentionForEvent($webhook, $eventName)
+	{
+		$roleId = isset($webhook->mention_role_id) ? trim((string) $webhook->mention_role_id) : '';
+		if ($roleId === '' || ! ctype_digit($roleId)) {
+			return '';
+		}
+		$events = isset($webhook->mention_role_events)
+			? json_decode((string) $webhook->mention_role_events, true) : null;
+		if ( ! is_array($events) || ! in_array($eventName, $events, true)) {
+			return '';
+		}
+		return '<@&'.$roleId.'>';
 	}
 
 	private static function formatTimeline($postRow, $missionRow)

@@ -192,6 +192,10 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['available_news_types'] = $this->_webhookNewsTypes();
 		$data['default_title_template']       = \nova_ext_sim_central\Webhooks::DEFAULT_TITLE_TEMPLATE;
 		$data['default_description_template'] = \nova_ext_sim_central\Webhooks::DEFAULT_DESCRIPTION_TEMPLATE;
+		$data['default_log_title_template']        = \nova_ext_sim_central\Webhooks::DEFAULT_LOG_TITLE_TEMPLATE;
+		$data['default_log_description_template']  = \nova_ext_sim_central\Webhooks::DEFAULT_LOG_DESCRIPTION_TEMPLATE;
+		$data['default_news_title_template']       = \nova_ext_sim_central\Webhooks::DEFAULT_NEWS_TITLE_TEMPLATE;
+		$data['default_news_description_template'] = \nova_ext_sim_central\Webhooks::DEFAULT_NEWS_DESCRIPTION_TEMPLATE;
 		$data['webhooks'] = $dbReady
 			? $this->db->order_by('enabled', 'DESC')->order_by('created_at', 'DESC')->get('sim_central_webhooks')->result()
 			: array();
@@ -687,13 +691,19 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				'summary'     => 'Fire HTTP webhooks when mission posts, personal logs, or news items are posted (and when posts are saved). Discord-formatted (embed with @mentions of linked authors on saved-post pings) or generic JSON (for n8n etc.). Multiple webhooks per event; news public/private filter; admin-managed under Configure.',
 				'standalone'  => null,
 				'requires_tables' => array(
-					'sim_central_webhooks' => "CREATE TABLE IF NOT EXISTS `{prefix}sim_central_webhooks` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `url` text NOT NULL, `format` varchar(20) NOT NULL, `events` text NOT NULL, `enabled` tinyint(1) NOT NULL DEFAULT 1, `news_types` varchar(20) NOT NULL DEFAULT 'public', `template_title` text DEFAULT NULL, `template_description` text DEFAULT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_fired_at` datetime DEFAULT NULL, `last_status` int(11) DEFAULT NULL, `last_error` text DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+					'sim_central_webhooks' => "CREATE TABLE IF NOT EXISTS `{prefix}sim_central_webhooks` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `url` text NOT NULL, `format` varchar(20) NOT NULL, `events` text NOT NULL, `enabled` tinyint(1) NOT NULL DEFAULT 1, `news_types` varchar(20) NOT NULL DEFAULT 'public', `mention_role_id` varchar(32) DEFAULT NULL, `mention_role_events` text DEFAULT NULL, `template_title` text DEFAULT NULL, `template_description` text DEFAULT NULL, `template_log_title` text DEFAULT NULL, `template_log_description` text DEFAULT NULL, `template_news_title` text DEFAULT NULL, `template_news_description` text DEFAULT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_fired_at` datetime DEFAULT NULL, `last_status` int(11) DEFAULT NULL, `last_error` text DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
 				),
-				// news_types is added to existing installs via this ALTER path
-				// (the CREATE above already has it for fresh installs).
+				// Columns added to existing installs via this ALTER path (the
+				// CREATE above already has them for fresh installs).
 				'requires_db' => array(
 					'sim_central_webhooks' => array(
-						'news_types' => "VARCHAR(20) NOT NULL DEFAULT 'public'",
+						'news_types'                => "VARCHAR(20) NOT NULL DEFAULT 'public'",
+						'mention_role_id'           => "VARCHAR(32) DEFAULT NULL",
+						'mention_role_events'       => "TEXT DEFAULT NULL",
+						'template_log_title'        => "TEXT DEFAULT NULL",
+						'template_log_description'  => "TEXT DEFAULT NULL",
+						'template_news_title'       => "TEXT DEFAULT NULL",
+						'template_news_description' => "TEXT DEFAULT NULL",
 					),
 				),
 				'shims' => array(
@@ -1623,6 +1633,16 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$enabled = ! empty($_POST['enabled']) ? 1 : 0;
 		$tplTitle = isset($_POST['template_title']) ? trim((string) $_POST['template_title']) : '';
 		$tplDesc  = isset($_POST['template_description']) ? trim((string) $_POST['template_description']) : '';
+		$tplLogTitle  = isset($_POST['template_log_title']) ? trim((string) $_POST['template_log_title']) : '';
+		$tplLogDesc   = isset($_POST['template_log_description']) ? trim((string) $_POST['template_log_description']) : '';
+		$tplNewsTitle = isset($_POST['template_news_title']) ? trim((string) $_POST['template_news_title']) : '';
+		$tplNewsDesc  = isset($_POST['template_news_description']) ? trim((string) $_POST['template_news_description']) : '';
+		$roleId   = isset($_POST['mention_role_id']) ? trim((string) $_POST['mention_role_id']) : '';
+		if ($roleId !== '' && ! ctype_digit($roleId)) {
+			return array('error', 'Mention role ID must be a numeric Discord role ID (or left blank).');
+		}
+		$roleEventsRaw = isset($_POST['mention_role_events']) && is_array($_POST['mention_role_events'])
+			? $_POST['mention_role_events'] : array();
 		$newsTypes = isset($_POST['news_types']) ? (string) $_POST['news_types'] : 'public';
 		if ( ! isset($this->_webhookNewsTypes()[$newsTypes])) {
 			$newsTypes = 'public';
@@ -1644,6 +1664,14 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		}
 		if (empty($cleanEvents)) { return array('error', 'Select at least one event.'); }
 
+		// Role-ping events: keep only events the webhook actually subscribes to.
+		$cleanRoleEvents = array();
+		foreach ($roleEventsRaw as $ev) {
+			if (in_array($ev, $cleanEvents, true)) { $cleanRoleEvents[] = $ev; }
+		}
+		// A role can only ping if one is configured.
+		if ($roleId === '') { $cleanRoleEvents = array(); }
+
 		$data = array(
 			'label'                => $label,
 			'url'                  => $url,
@@ -1651,8 +1679,14 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			'events'               => json_encode(array_values($cleanEvents)),
 			'enabled'              => $enabled,
 			'news_types'           => $newsTypes,
+			'mention_role_id'      => $roleId !== '' ? $roleId : null,
+			'mention_role_events'  => ! empty($cleanRoleEvents) ? json_encode(array_values($cleanRoleEvents)) : null,
 			'template_title'       => $tplTitle !== '' ? $tplTitle : null,
 			'template_description' => $tplDesc  !== '' ? $tplDesc  : null,
+			'template_log_title'        => $tplLogTitle  !== '' ? $tplLogTitle  : null,
+			'template_log_description'  => $tplLogDesc   !== '' ? $tplLogDesc   : null,
+			'template_news_title'       => $tplNewsTitle !== '' ? $tplNewsTitle : null,
+			'template_news_description' => $tplNewsDesc  !== '' ? $tplNewsDesc  : null,
 		);
 
 		if ($id === null) {
