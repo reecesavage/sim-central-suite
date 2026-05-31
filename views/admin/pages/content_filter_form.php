@@ -95,22 +95,29 @@
 	var confirmText   = <?php echo json_encode($confirm_text_js);?>;
 	var confirmOnSave = <?php echo ! empty($confirm_on_save) ? 'true' : 'false';?>;
 
-	// The write-post form has three submit buttons, all name="submit":
-	// value="post" (publish), "save" (draft), "delete". We confirm on
-	// publish always; on save only when the admin enabled it; never on
-	// delete. Track the button that triggered submission - prefer the
-	// native SubmitEvent.submitter, fall back to the last-clicked submit.
-	var lastClicked = null;
-	form.addEventListener('click', function(e) {
-		var t = e.target;
-		while (t && t !== form) {
-			if ((t.tagName === 'BUTTON' || t.tagName === 'INPUT') && t.type === 'submit') {
-				lastClicked = t;
-				return;
-			}
-			t = t.parentNode;
-		}
-	}, true);
+	// The write-post form has three buttons, all name="submit" with
+	// value post/save/delete (Post is also id="submitPost", Delete is
+	// id="submitDelete"). We confirm on publish always; on save only when
+	// the admin opted in; never on delete. Bind directly to each button so
+	// detection doesn't depend on the button's `type` or on SubmitEvent
+	// .submitter support - mousedown/click fire before the form submits.
+	var pending = '';
+	function mark(el, action) {
+		if ( ! el) return;
+		var set = function() { pending = action; };
+		el.addEventListener('mousedown', set, true);
+		el.addEventListener('click', set, true);
+		el.addEventListener('keydown', function(ev) {
+			if (ev.keyCode === 13 || ev.keyCode === 32) set();
+		}, true);
+	}
+	mark(document.getElementById('submitPost'), 'post');
+	mark(document.getElementById('submitDelete'), 'delete');
+	var subs = form.querySelectorAll('[name="submit"]');
+	for (var i = 0; i < subs.length; i++) {
+		var v = (subs[i].value || subs[i].getAttribute('value') || '').toLowerCase();
+		if (v) { mark(subs[i], v); }
+	}
 
 	// Capture-phase listener so this runs before any Nova-stock handler
 	// that might also be wired to the same form, and so cancelling stops
@@ -118,16 +125,16 @@
 	form.addEventListener('submit', function(e) {
 		if (cb.checked) return;
 
-		var btn    = e.submitter || lastClicked;
-		var action = btn ? (btn.value || '') : '';
+		var action = (e.submitter && e.submitter.value)
+			? String(e.submitter.value).toLowerCase()
+			: pending;
 
 		// Never prompt on delete.
 		if (action === 'delete') return;
 		// Prompt on save only when opted in.
 		if (action === 'save' && ! confirmOnSave) return;
-		// action === 'post' (publish) always prompts; an unknown action
-		// (button undetectable) falls through to prompting too, which is
-		// the safe default.
+		// 'post' (publish) always prompts; an undetectable action falls
+		// through to prompting too, which is the safe default.
 
 		if ( ! window.confirm(confirmText)) {
 			e.preventDefault();
