@@ -470,8 +470,11 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 	{
 		Auth::check_access('site/settings');
 
+		// The delete confirm form posts to Manage/anti_spam/delete/{id}, so the
+		// "delete" action sits at URI segment 5 (segment 4 is the method name,
+		// "anti_spam"). Checking segment 4 here meant the branch never ran.
 		$submit = isset($_POST['submit']) ? strtolower($_POST['submit']) : '';
-		if ($this->uri->segment(4) === 'delete' && $submit === 'submit') {
+		if ($this->uri->segment(5) === 'delete' && $submit === 'submit') {
 			$this->_flash($this->_antiSpamDelete());
 		}
 
