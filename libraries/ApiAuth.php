@@ -32,6 +32,110 @@ class ApiAuth
 	const HASH_ALGO = 'sha256';
 
 	/**
+	 * Canonical registry of scopes the API understands. Single source of truth
+	 * for the ACP token form (Manage), the token-create validator below, and
+	 * the API's own token-management endpoints. Read scopes gate GET endpoints;
+	 * write scopes gate mutating ones. The posts:*.all and tokens:* scopes are
+	 * additionally gated on the bound user being a sysadmin at request time.
+	 */
+	public static function availableScopes()
+	{
+		return array(
+			'posts:read'       => 'Read public (activated) mission posts (list + view).',
+			'posts:read.own'   => 'Read the bound user\'s own posts, including drafts. Requires a user-bound token.',
+			'posts:write'      => 'Create and update the bound user\'s posts (save or activate). Requires a user-bound token.',
+			'posts:delete'     => 'Delete the bound user\'s posts. Requires a user-bound token.',
+			'posts:read.all'   => 'Read ANY post including others\' drafts. Sysadmin bypass: also requires the bound user to be a sysadmin.',
+			'posts:write.all'  => 'Create/update ANY post (and add a character to it). Sysadmin bypass: also requires the bound user to be a sysadmin.',
+			'posts:delete.all' => 'Delete ANY post. Sysadmin bypass: also requires the bound user to be a sysadmin.',
+			'characters:read'  => 'Read characters (list + view).',
+			'missions:read'    => 'Read missions (list + view).',
+			'users:write'      => 'Disable or reactivate users and their linked characters.',
+			'webhooks:read'    => 'List event webhooks and view their config.',
+			'webhooks:write'   => 'Create, update, and delete event webhooks.',
+			'tokens:read'      => 'List API tokens and view their metadata. Requires a sysadmin-bound token.',
+			'tokens:write'     => 'Create, revoke, and delete API tokens. Requires a sysadmin-bound token.',
+		);
+	}
+
+	/**
+	 * Scopes that only act when the token is bound to a user. Used to require a
+	 * binding at token-create time (the ACP form and the API both call this).
+	 */
+	public static function scopeNeedsUser($scope)
+	{
+		return strpos($scope, 'posts:') === 0 && $scope !== 'posts:read';
+	}
+
+	/**
+	 * Validate + normalise a token-create request from either the ACP form or
+	 * the REST API. $in keys: label, scopes (array), user_id (int|string|''),
+	 * expires_at (string|'').
+	 *
+	 * @return array { errors: string[], data: array|null }
+	 *         data = { label, scopes(string[]), user_id(int|null), expires_at(string|null) }
+	 */
+	public static function validateTokenInput(array $in)
+	{
+		$ci =& get_instance();
+		$errors = array();
+
+		$label = isset($in['label']) ? trim((string) $in['label']) : '';
+		if ($label === '') {
+			$errors[] = 'label is required.';
+		} elseif (strlen($label) > 120) {
+			$errors[] = 'label is too long (max 120 chars).';
+		}
+
+		$available = self::availableScopes();
+		$posted    = isset($in['scopes']) && is_array($in['scopes']) ? $in['scopes'] : array();
+		$scopes    = array();
+		foreach ($posted as $s) {
+			if (isset($available[$s])) { $scopes[] = $s; }
+		}
+		$scopes = array_values(array_unique($scopes));
+		if (empty($scopes)) {
+			$errors[] = 'Select at least one valid scope.';
+		}
+
+		$rawUser     = isset($in['user_id']) ? trim((string) $in['user_id']) : '';
+		$boundUserId = ($rawUser !== '' && ctype_digit($rawUser)) ? (int) $rawUser : 0;
+
+		$needsUser = false;
+		foreach ($scopes as $s) {
+			if (self::scopeNeedsUser($s)) { $needsUser = true; break; }
+		}
+		if ($boundUserId > 0) {
+			$exists = $ci->db->where('userid', $boundUserId)->count_all_results('users') > 0;
+			if ( ! $exists) {
+				$errors[] = 'Selected user does not exist.';
+			}
+		} elseif ($needsUser) {
+			$errors[] = 'A user binding is required for the post own/write/delete scopes.';
+		}
+
+		$expiresAt = null;
+		if ( ! empty($in['expires_at'])) {
+			$ts = strtotime((string) $in['expires_at']);
+			if ($ts === false || $ts < time()) {
+				$errors[] = 'expires_at must be a valid future date/time.';
+			} else {
+				$expiresAt = date('Y-m-d H:i:s', $ts);
+			}
+		}
+
+		if ( ! empty($errors)) {
+			return array('errors' => $errors, 'data' => null);
+		}
+		return array('errors' => array(), 'data' => array(
+			'label'      => $label,
+			'scopes'     => $scopes,
+			'user_id'    => $boundUserId > 0 ? $boundUserId : null,
+			'expires_at' => $expiresAt,
+		));
+	}
+
+	/**
 	 * Generate a fresh token. Returns the raw token (show to admin ONCE),
 	 * the sha256 hash (store in DB), and the display prefix (first 12 chars).
 	 *

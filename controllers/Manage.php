@@ -1545,20 +1545,7 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 	 */
 	private function _apiAvailableScopes()
 	{
-		return array(
-			'posts:read'       => 'Read public (activated) mission posts (list + view).',
-			'posts:read.own'   => 'Read the bound user\'s own posts, including drafts. Requires a user-bound token.',
-			'posts:write'      => 'Create and update the bound user\'s posts (save or activate). Requires a user-bound token.',
-			'posts:delete'     => 'Delete the bound user\'s posts. Requires a user-bound token.',
-			'posts:read.all'   => 'Read ANY post including others\' drafts. Sysadmin bypass: also requires the bound user to be a sysadmin.',
-			'posts:write.all'  => 'Create/update ANY post (and add a character to it). Sysadmin bypass: also requires the bound user to be a sysadmin.',
-			'posts:delete.all' => 'Delete ANY post. Sysadmin bypass: also requires the bound user to be a sysadmin.',
-			'characters:read'  => 'Read characters (list + view).',
-			'missions:read'    => 'Read missions (list + view).',
-			'users:write'      => 'Disable or reactivate users and their linked characters.',
-			'webhooks:read'    => 'List event webhooks and view their config.',
-			'webhooks:write'   => 'Create, update, and delete event webhooks.',
-		);
+		return \nova_ext_sim_central\ApiAuth::availableScopes();
 	}
 
 	/**
@@ -1622,69 +1609,31 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 	private function _createApiToken()
 	{
-		$label = isset($_POST['label']) ? trim((string) $_POST['label']) : '';
-		if ($label === '') {
-			return array(array('error', 'Label is required.'), null);
+		// Validation lives in ApiAuth so the ACP form and the REST API token
+		// endpoints enforce identical rules.
+		$result = \nova_ext_sim_central\ApiAuth::validateTokenInput(array(
+			'label'      => isset($_POST['label']) ? $_POST['label'] : '',
+			'scopes'     => isset($_POST['scopes']) ? $_POST['scopes'] : array(),
+			'user_id'    => isset($_POST['user_id']) ? $_POST['user_id'] : '',
+			'expires_at' => isset($_POST['expires_at']) ? $_POST['expires_at'] : '',
+		));
+		if ( ! empty($result['errors'])) {
+			return array(array('error', $result['errors'][0]), null);
 		}
-		if (strlen($label) > 120) {
-			return array(array('error', 'Label is too long (max 120 chars).'), null);
-		}
+		$data = $result['data'];
 
-		$postedScopes = isset($_POST['scopes']) && is_array($_POST['scopes']) ? $_POST['scopes'] : array();
-		$available    = $this->_apiAvailableScopes();
-		$scopes       = array();
-		foreach ($postedScopes as $s) {
-			if (isset($available[$s])) {
-				$scopes[] = $s;
-			}
-		}
-		if (empty($scopes)) {
-			return array(array('error', 'Select at least one scope.'), null);
-		}
-
-		// Bind-to-user. Required whenever a scope that acts AS a user is granted
-		// (the post own/write/delete family). Public read scopes don't need one.
-		$boundUserId = isset($_POST['user_id']) && ctype_digit((string) $_POST['user_id'])
-			? (int) $_POST['user_id'] : 0;
-		// Every post scope except the public read one acts as a user, so it
-		// needs a binding (own/write/delete and the .all sysadmin variants).
-		$needsUser = false;
-		foreach ($scopes as $s) {
-			if (strpos($s, 'posts:') === 0 && $s !== 'posts:read') {
-				$needsUser = true;
-				break;
-			}
-		}
-		if ($boundUserId > 0) {
-			$exists = $this->db->where('userid', $boundUserId)->count_all_results('users') > 0;
-			if ( ! $exists) {
-				return array(array('error', 'Selected user does not exist.'), null);
-			}
-		} elseif ($needsUser) {
-			return array(array('error', 'Select a user to bind the token to - the post own/write/delete scopes act as a specific user.'), null);
-		}
-
-		$expiresAt = null;
-		if ( ! empty($_POST['expires_at'])) {
-			$ts = strtotime((string) $_POST['expires_at']);
-			if ($ts === false || $ts < time()) {
-				return array(array('error', 'Expiry must be a valid future date/time.'), null);
-			}
-			$expiresAt = date('Y-m-d H:i:s', $ts);
-		}
-
-		$token = \nova_ext_sim_central\ApiAuth::generateToken();
+		$token  = \nova_ext_sim_central\ApiAuth::generateToken();
 		$userId = $this->session ? (int) $this->session->userdata('userid') : null;
 
 		$this->db->insert('sim_central_api_tokens', array(
-			'label'        => $label,
+			'label'        => $data['label'],
 			'token_hash'   => $token['hash'],
 			'token_prefix' => $token['prefix'],
-			'scopes'       => json_encode(array_values($scopes)),
-			'user_id'      => $boundUserId > 0 ? $boundUserId : null,
+			'scopes'       => json_encode($data['scopes']),
+			'user_id'      => $data['user_id'],
 			'created_by'   => $userId ?: null,
 			'created_at'   => date('Y-m-d H:i:s'),
-			'expires_at'   => $expiresAt,
+			'expires_at'   => $data['expires_at'],
 		));
 
 		return array(array('success', 'Token created. Copy it now - it will not be shown again.'), $token['raw']);

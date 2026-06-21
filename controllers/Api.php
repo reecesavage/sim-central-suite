@@ -808,6 +808,114 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		}
 	}
 
+	/**
+	 * API token management (the same actions as the ACP token page).
+	 *
+	 *   GET    /Api/tokens        - list tokens (metadata only)        (tokens:read)
+	 *   GET    /Api/tokens/{id}   - single token metadata             (tokens:read)
+	 *   POST   /Api/tokens        - create a token (raw shown once)    (tokens:write)
+	 *   PATCH  /Api/tokens/{id}   - revoke / un-revoke a token         (tokens:write)
+	 *   DELETE /Api/tokens/{id}   - delete a token                     (tokens:write)
+	 *
+	 * Every verb requires the calling token to carry the tokens:* scope AND be
+	 * bound to a sysadmin user - mirroring the ACP, where only sysadmins manage
+	 * tokens. The raw token value is only ever returned once, at creation; the
+	 * stored hash is never exposed.
+	 */
+	public function tokens()
+	{
+		$this->_gate();
+		$token  = $this->_authenticate(null);
+		$method = $this->_method();
+
+		$id    = $this->uri->segment(5);
+		$hasId = ($id !== null && $id !== '' && ctype_digit((string) $id));
+		$id    = $hasId ? (int) $id : 0;
+
+		switch ($method) {
+			case 'GET':
+				$this->_requireSysadminToken($token, 'tokens:read');
+				if ($hasId) {
+					$row = $this->db->get_where('sim_central_api_tokens', array('id' => $id))->row();
+					if ( ! $row) { $this->_emit(404, array('error' => 'Token not found.')); }
+					$this->_emit(200, $this->_projectToken($row));
+				}
+				$rows = $this->db->order_by('revoked_at IS NULL', 'DESC', false)
+					->order_by('created_at', 'DESC')
+					->get('sim_central_api_tokens')->result();
+				$data = array();
+				foreach ($rows as $r) { $data[] = $this->_projectToken($r); }
+				$this->_emit(200, array('data' => $data, 'total' => count($data)));
+				break;
+
+			case 'POST':
+				$user = $this->_requireSysadminToken($token, 'tokens:write');
+				if ($hasId) {
+					$this->_emit(405, array('error' => 'Use PATCH/DELETE /tokens/{id}; POST /tokens (no id) to create.'));
+				}
+				$input  = $this->_readInput();
+				$result = \nova_ext_sim_central\ApiAuth::validateTokenInput(array(
+					'label'      => isset($input['label']) ? $input['label'] : '',
+					'scopes'     => isset($input['scopes']) ? $input['scopes'] : array(),
+					'user_id'    => isset($input['user_id']) ? $input['user_id'] : '',
+					'expires_at' => isset($input['expires_at']) ? $input['expires_at'] : '',
+				));
+				if ( ! empty($result['errors'])) {
+					$this->_emit(422, array('error' => 'Validation failed.', 'details' => $result['errors']));
+				}
+				$d   = $result['data'];
+				$gen = \nova_ext_sim_central\ApiAuth::generateToken();
+				$this->db->insert('sim_central_api_tokens', array(
+					'label'        => $d['label'],
+					'token_hash'   => $gen['hash'],
+					'token_prefix' => $gen['prefix'],
+					'scopes'       => json_encode($d['scopes']),
+					'user_id'      => $d['user_id'],
+					'created_by'   => (int) $user->userid,
+					'created_at'   => date('Y-m-d H:i:s'),
+					'expires_at'   => $d['expires_at'],
+				));
+				// token_hash is unique, so it's a reliable fallback if insert_id()
+				// is unavailable for any reason.
+				$newId = (int) $this->db->insert_id();
+				$row   = ($newId > 0) ? $this->db->get_where('sim_central_api_tokens', array('id' => $newId))->row() : false;
+				if ( ! $row) {
+					$row = $this->db->get_where('sim_central_api_tokens', array('token_hash' => $gen['hash']))->row();
+				}
+				$out = $this->_projectToken($row);
+				$out['token'] = $gen['raw']; // shown exactly once
+				$this->_emit(201, $out);
+				break;
+
+			case 'PUT':
+			case 'PATCH':
+				$this->_requireSysadminToken($token, 'tokens:write');
+				if ( ! $hasId) { $this->_emit(400, array('error' => 'Token id required in path.')); }
+				$existing = $this->db->get_where('sim_central_api_tokens', array('id' => $id))->row();
+				if ( ! $existing) { $this->_emit(404, array('error' => 'Token not found.')); }
+				$input  = $this->_readInput();
+				$revoke = $this->_boolParam($input, 'revoked', true);
+				$this->db->where('id', $id)->update('sim_central_api_tokens', array(
+					'revoked_at' => $revoke ? date('Y-m-d H:i:s') : null,
+				));
+				$row = $this->db->get_where('sim_central_api_tokens', array('id' => $id))->row();
+				$this->_emit(200, $this->_projectToken($row));
+				break;
+
+			case 'DELETE':
+				$this->_requireSysadminToken($token, 'tokens:write');
+				if ( ! $hasId) { $this->_emit(400, array('error' => 'Token id required in path.')); }
+				$existing = $this->db->get_where('sim_central_api_tokens', array('id' => $id))->row();
+				if ( ! $existing) { $this->_emit(404, array('error' => 'Token not found.')); }
+				$this->db->where('id', $id)->delete('sim_central_api_tokens');
+				$this->_emit(200, array('deleted' => true, 'id' => $id));
+				break;
+
+			default:
+				$this->_emit(405, array('error' => 'Method not allowed. Use GET, POST, PATCH, PUT, or DELETE.'));
+		}
+	}
+
 	// ---------- internals ----------
 
 	/**
@@ -919,6 +1027,41 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		}
 		$ids = array_map('intval', array_filter(explode(',', $csv), 'strlen'));
 		return in_array((int) $userId, $ids, true);
+	}
+
+	/**
+	 * Gate for token-management endpoints: the calling token must carry the
+	 * given scope AND be bound to a sysadmin user (mirrors the ACP, where only
+	 * sysadmins manage tokens). Returns the bound sysadmin user row.
+	 */
+	private function _requireSysadminToken($token, $scope)
+	{
+		$this->_requireTokenScope($token, $scope);
+		$user = $this->_requireBoundUser($token);
+		if ( ! isset($user->is_sysadmin) || $user->is_sysadmin !== 'y') {
+			$this->_emit(403, array('error' => 'Token management requires a token bound to a sysadmin user.'));
+		}
+		return $user;
+	}
+
+	/** Whitelist projector for an API token row. Never exposes token_hash or the raw token. */
+	private function _projectToken($row)
+	{
+		$scopes = isset($row->scopes) ? json_decode((string) $row->scopes, true) : null;
+		if ( ! is_array($scopes)) { $scopes = array(); }
+		return array(
+			'id'           => (int) $row->id,
+			'label'        => $row->label,
+			'token_prefix' => $row->token_prefix,
+			'scopes'       => array_values($scopes),
+			'user_id'      => (isset($row->user_id) && $row->user_id !== null) ? (int) $row->user_id : null,
+			'created_by'   => (isset($row->created_by) && $row->created_by !== null) ? (int) $row->created_by : null,
+			'created_at'   => isset($row->created_at) ? $row->created_at : null,
+			'last_used_at' => isset($row->last_used_at) ? $row->last_used_at : null,
+			'expires_at'   => isset($row->expires_at) ? $row->expires_at : null,
+			'revoked_at'   => isset($row->revoked_at) ? $row->revoked_at : null,
+			'revoked'      => ! empty($row->revoked_at),
+		);
 	}
 
 	/** Compose a character's display name (display_name override, else first/last/suffix). */

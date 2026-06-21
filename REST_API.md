@@ -70,6 +70,8 @@ Tokens carry an explicit scope list. Endpoints check for the scope they require 
 | `users:write` | Disable / reactivate users and their linked characters |
 | `webhooks:read` | List event webhooks and view their config |
 | `webhooks:write` | Create, update, and delete event webhooks |
+| `tokens:read` | List API tokens and view their metadata *(sysadmin-bound token only)* |
+| `tokens:write` | Create, revoke, and delete API tokens *(sysadmin-bound token only)* |
 
 A token with no relevant scope but a valid signature will still get `200` on `/ping`, since that endpoint is scope-free by design (it's the n8n "does this token work?" check).
 
@@ -454,6 +456,50 @@ curl -X PATCH "$BASE/webhooks/3" \
 Permanently delete a webhook. Scope: `webhooks:write`.
 
 **Response:** `{ "deleted": true, "id": 3 }`.
+
+---
+
+## API tokens (read + write) *(v1.16.0+)*
+
+Manage API tokens over the API &mdash; the same actions as the ACP token page. **Every token endpoint requires the calling token to carry the `tokens:*` scope *and* be bound to a sysadmin user** (`403` otherwise), mirroring the ACP where only sysadmins (`site/settings`) manage tokens. The raw token value is returned **only once**, at creation; the stored hash is never exposed.
+
+> Treat a `tokens:write` token as highly sensitive &mdash; it can mint tokens with any scope. Bind it to a sysadmin, scope it narrowly, and prefer a short expiry.
+
+### `GET /tokens` &middot; `GET /tokens/{id}`
+
+List tokens / fetch one (metadata only). Scope: `tokens:read`.
+
+**Token object:** `id`, `label`, `token_prefix`, `scopes[]`, `user_id`, `created_by`, `created_at`, `last_used_at`, `expires_at`, `revoked_at`, `revoked`.
+
+### `POST /tokens`
+
+Create a token. Scope: `tokens:write`. Returns `201` with the token plus the one-time raw value.
+
+| Field | Required | Notes |
+|---|---|---|
+| `label` | ✓ | Identifies the token |
+| `scopes` | ✓ | Array of scope strings (see the Scopes table) |
+| `user_id` | | Bind to a user (required for the post own/write/delete scopes) |
+| `expires_at` | | Optional future date/time |
+
+```bash
+curl -X POST "$BASE/tokens" \
+  -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"label":"n8n read","scopes":["posts:read","missions:read"]}'
+```
+
+**Response** (the `token` is shown once):
+```json
+{ "id": 7, "label": "n8n read", "token": "scapi_…", "scopes": ["posts:read","missions:read"] }
+```
+
+### `PATCH /tokens/{id}` (alias `PUT`)
+
+Revoke or un-revoke a token. Scope: `tokens:write`. Body `{"revoked": true}` (default) revokes; `{"revoked": false}` restores. Revoking preserves the row for audit (a revoked token returns `401`).
+
+### `DELETE /tokens/{id}`
+
+Permanently delete a token. Scope: `tokens:write`. Returns `{ "deleted": true, "id": 7 }`. (Prefer `PATCH` revoke when you want to keep the audit trail.)
 
 ---
 
