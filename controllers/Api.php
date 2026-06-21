@@ -183,24 +183,35 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$hasId = ($id !== null && $id !== '' && ctype_digit((string) $id));
 		$id    = $hasId ? (int) $id : 0;
 
-		switch ($method) {
-			case 'POST':
-				if ($hasId) {
-					$this->_emit(405, array('error' => 'Use PATCH /posts/{id} to update, POST /posts (no id) to create.'));
-				}
-				$this->_postCreate($token);
-				break;
-			case 'PUT':
-			case 'PATCH':
-				if ( ! $hasId) { $this->_emit(400, array('error' => 'Post id required in path.')); }
-				$this->_postUpdate($token, $id);
-				break;
-			case 'DELETE':
-				if ( ! $hasId) { $this->_emit(400, array('error' => 'Post id required in path.')); }
-				$this->_postDelete($token, $id);
-				break;
-			default:
-				$this->_emit(405, array('error' => 'Method not allowed. Use GET, POST, PATCH, PUT, or DELETE.'));
+		// Surface unexpected errors as a clean JSON 500 instead of a blank
+		// fatal page - a privileged write client should get something it can
+		// act on. (_emit() exits, so successful handlers never reach the catch.)
+		try {
+			switch ($method) {
+				case 'POST':
+					if ($hasId) {
+						$this->_emit(405, array('error' => 'Use PATCH /posts/{id} to update, POST /posts (no id) to create.'));
+					}
+					$this->_postCreate($token);
+					break;
+				case 'PUT':
+				case 'PATCH':
+					if ( ! $hasId) { $this->_emit(400, array('error' => 'Post id required in path.')); }
+					$this->_postUpdate($token, $id);
+					break;
+				case 'DELETE':
+					if ( ! $hasId) { $this->_emit(400, array('error' => 'Post id required in path.')); }
+					$this->_postDelete($token, $id);
+					break;
+				default:
+					$this->_emit(405, array('error' => 'Method not allowed. Use GET, POST, PATCH, PUT, or DELETE.'));
+			}
+		} catch (\Throwable $e) {
+			$this->_emit(500, array(
+				'error'  => 'Server error while handling the post write.',
+				'detail' => $e->getMessage(),
+				'at'     => basename($e->getFile()).':'.$e->getLine(),
+			));
 		}
 	}
 
@@ -261,11 +272,21 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$this->posts->create_mission_entry($fields);
 		$newId = (int) $this->db->insert_id();
 
+		if ($newId <= 0) {
+			$this->_emit(500, array(
+				'error'     => 'Post was created but its new id could not be determined.',
+				'insert_id' => $newId,
+			));
+		}
+
 		if ($status === 'activated') {
 			\nova_ext_sim_central\PostWrite::afterActivate($newId, $authorIds, $actor);
 		}
 
 		$row = $this->posts->get_post($newId);
+		if ( ! $row) {
+			$this->_emit(500, array('error' => 'Post was created but could not be reloaded.', 'id' => $newId));
+		}
 		$this->_emit(201, $this->_projectPost($row));
 	}
 
