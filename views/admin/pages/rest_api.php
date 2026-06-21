@@ -4,6 +4,8 @@
 	$newTokenRaw     = isset($new_token_raw) ? $new_token_raw : null;
 	$apiBaseUrl      = isset($api_base_url) ? $api_base_url : '';
 	$dbReady         = isset($db_ready) ? (bool) $db_ready : true;
+	$users           = isset($users) && is_array($users) ? $users : array();
+	$userNames       = isset($user_names) && is_array($user_names) ? $user_names : array();
 ?>
 
 <?php echo text_output($title, 'h1', 'page-head');?>
@@ -85,6 +87,22 @@
 	</p>
 
 	<p>
+		<kbd>Act as user (optional)</kbd>
+		<select name="user_id">
+			<option value="">&mdash; none (read-only / public token) &mdash;</option>
+			<?php foreach ($users as $u): ?>
+				<?php
+					$mainName = trim(($u->display_name ?: trim(($u->first_name ?? '').' '.($u->last_name ?? ''))));
+					$label    = $u->name.($mainName !== '' ? ' ('.$mainName.')' : '').($u->is_sysadmin === 'y' ? ' [sysadmin]' : '');
+				?>
+				<option value="<?php echo (int) $u->userid;?>"><?php echo htmlspecialchars($label, ENT_QUOTES);?></option>
+			<?php endforeach;?>
+		</select>
+		<br>
+		<span class="fontSmall gray">Binds the token to a Nova user so it can author/manage that user's posts. <strong>Required</strong> for the <code>posts:read.own</code> / <code>posts:write</code> / <code>posts:delete</code> scopes. The <code>*.all</code> bypass scopes additionally require the bound user to be a sysadmin.</span>
+	</p>
+
+	<p>
 		<kbd>Expires at (optional)</kbd>
 		<input type="datetime-local" name="expires_at">
 		<br>
@@ -104,6 +122,7 @@
 			<tr>
 				<th>Label</th>
 				<th>Prefix</th>
+				<th>User</th>
 				<th>Scopes</th>
 				<th>Created</th>
 				<th>Last used</th>
@@ -129,6 +148,16 @@
 					<strong><?php echo htmlspecialchars($t->label, ENT_QUOTES);?></strong>
 				</td>
 				<td><code><?php echo htmlspecialchars($t->token_prefix, ENT_QUOTES);?>&hellip;</code></td>
+				<td class="fontSmall">
+					<?php
+						$boundUid = isset($t->user_id) ? (int) $t->user_id : 0;
+						if ($boundUid > 0):
+							echo htmlspecialchars(isset($userNames[$boundUid]) ? $userNames[$boundUid] : ('#'.$boundUid), ENT_QUOTES);
+						else:
+							echo '<span class="gray">&mdash;</span>';
+						endif;
+					?>
+				</td>
 				<td class="fontSmall">
 					<?php if (empty($scopeList)): ?>
 						<span class="gray">(none)</span>

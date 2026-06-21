@@ -83,51 +83,389 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 * Default status filter is 'activated' (i.e. public). Override with
 	 * ?status=any to include drafts/saved, or ?status=saved etc.
 	 */
+	/**
+	 * Mission posts.
+	 *
+	 *   GET    /Api/posts        - list   (posts:read public, posts:read.own, posts:read.all)
+	 *   GET    /Api/posts/{id}   - single
+	 *   POST   /Api/posts        - create (posts:write)
+	 *   PATCH  /Api/posts/{id}   - update (posts:write / posts:write.all); PUT alias
+	 *   DELETE /Api/posts/{id}   - delete (posts:delete / posts:delete.all)
+	 *
+	 * Read access tiers:
+	 *   posts:read       public, activated posts only (legacy behaviour preserved)
+	 *   posts:read.own   the bound user's posts, including drafts
+	 *   posts:read.all   any post incl. others' drafts (sysadmin bypass)
+	 */
 	public function posts()
 	{
 		$this->_gate();
-		$this->_authenticate('posts:read');
 		$this->load->model('posts_model', 'posts');
+
+		$method = $this->_method();
+		if ($method !== 'GET') {
+			$this->_postsWrite($method);
+			return;
+		}
+
+		$token = $this->_authenticate(null);
+
+		// Resolve the strongest read tier this token is entitled to.
+		$level = null;
+		$uid   = 0;
+		if ($this->_tokenHasScope($token, 'posts:read.all')) {
+			$user = $this->_requireBoundUser($token);
+			if ($this->_canUseAll($token, $user, 'read')) { $level = 'all'; }
+		}
+		if ($level === null && $this->_tokenHasScope($token, 'posts:read.own')) {
+			$user  = $this->_requireBoundUser($token);
+			$level = 'own';
+			$uid   = (int) $user->userid;
+		}
+		if ($level === null && $this->_tokenHasScope($token, 'posts:read')) {
+			$level = 'public';
+		}
+		if ($level === null) {
+			$this->_emit(403, array('error' => 'Token lacks a posts read scope (posts:read, posts:read.own, or posts:read.all).'));
+		}
 
 		$id = $this->uri->segment(5);
 		if ($id !== null && $id !== '' && ctype_digit((string) $id)) {
 			$row = $this->posts->get_post((int) $id);
-			if ( ! $row || ! $this->_postIsVisible($row)) {
+			if ( ! $row) { $this->_emit(404, array('error' => 'Post not found.')); }
+			if ($level === 'public' && ! $this->_postIsVisible($row)) {
+				$this->_emit(404, array('error' => 'Post not found.'));
+			}
+			if ($level === 'own' && ! $this->_userOnPost($row, $uid)) {
 				$this->_emit(404, array('error' => 'Post not found.'));
 			}
 			$this->_emit(200, $this->_projectPost($row));
 		}
 
-		$status = $this->input->get('status', true);
-		if ($status === null || $status === '') {
-			$status = 'activated';
-		}
+		$status  = $this->input->get('status', true);
 		$mission = $this->input->get('mission', true);
 		list($page, $perPage, $offset) = $this->_paging();
 
-		$query = $this->posts->get_post_list(
-			$mission ?: '',
-			'desc',
-			$perPage,
-			$offset,
-			$status === 'any' ? '' : $status
-		);
+		// Public tokens default to activated (and may still opt into ?status=any
+		// as before); own/all default to every status so drafts are included.
+		if ($status === null || $status === '') {
+			$status = ($level === 'public') ? 'activated' : 'any';
+		}
 
-		// Count separately - get_post_list doesn't return a total.
 		$this->db->from('posts');
 		if ( ! empty($mission)) {
-			$this->db->where('post_mission', $mission);
+			$this->db->where('post_mission', (int) $mission);
 		}
 		if ($status !== 'any') {
 			$this->db->where('post_status', $status);
 		}
-		$total = (int) $this->db->count_all_results();
+		if ($level === 'own') {
+			$this->db->where($this->_authorsUsersClause($uid), null, false);
+		}
+		$total = (int) $this->db->count_all_results('', false);
+		$rows  = $this->db->order_by('post_date', 'desc')->limit($perPage, $offset)->get()->result();
 
 		$data = array();
-		foreach ($query->result() as $row) {
+		foreach ($rows as $row) {
 			$data[] = $this->_projectPost($row);
 		}
 		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	// ---------- post write (create / update / delete) ----------
+
+	/** Dispatch non-GET /posts requests by verb. */
+	private function _postsWrite($method)
+	{
+		$token = $this->_authenticate(null);
+
+		$id    = $this->uri->segment(5);
+		$hasId = ($id !== null && $id !== '' && ctype_digit((string) $id));
+		$id    = $hasId ? (int) $id : 0;
+
+		switch ($method) {
+			case 'POST':
+				if ($hasId) {
+					$this->_emit(405, array('error' => 'Use PATCH /posts/{id} to update, POST /posts (no id) to create.'));
+				}
+				$this->_postCreate($token);
+				break;
+			case 'PUT':
+			case 'PATCH':
+				if ( ! $hasId) { $this->_emit(400, array('error' => 'Post id required in path.')); }
+				$this->_postUpdate($token, $id);
+				break;
+			case 'DELETE':
+				if ( ! $hasId) { $this->_emit(400, array('error' => 'Post id required in path.')); }
+				$this->_postDelete($token, $id);
+				break;
+			default:
+				$this->_emit(405, array('error' => 'Method not allowed. Use GET, POST, PATCH, PUT, or DELETE.'));
+		}
+	}
+
+	private function _postCreate($token)
+	{
+		$this->_requireTokenScope($token, 'posts:write');
+		$user  = $this->_requireBoundUser($token);
+		$input = $this->_readInput();
+
+		$title = isset($input['title']) ? trim((string) $input['title']) : '';
+		if ($title === '') {
+			$this->_emit(422, array('error' => 'title is required.'));
+		}
+
+		$authorIds = $this->_resolveAuthorIds($input);
+		if (empty($authorIds)) {
+			$this->_emit(422, array('error' => 'authors is required (array of character ids).'));
+		}
+
+		$missionId = isset($input['mission_id']) ? (int) $input['mission_id'] : 0;
+		if ($missionId <= 0 || ! $this->_missionExists($missionId)) {
+			$this->_emit(422, array('error' => 'mission_id is required and must reference an existing mission.'));
+		}
+
+		// Authorization: at least one author must be one of the user's own
+		// characters, unless this is a sysadmin write.all token.
+		$canAll = $this->_canUseAll($token, $user, 'write');
+		$userChars = \nova_ext_sim_central\PostWrite::userCharacterIds((int) $user->userid);
+		if ( ! $canAll && empty(array_intersect($authorIds, $userChars))) {
+			$this->_emit(403, array('error' => 'At least one author must be one of your own characters.'));
+		}
+
+		$authorsCsv = implode(',', $authorIds);
+		$usersCsv   = \nova_ext_sim_central\PostWrite::authorsUsersCsv($authorIds);
+		$reqStatus  = $this->_normalizeStatus($input);
+		$status     = \nova_ext_sim_central\PostWrite::moderatedStatus($reqStatus, $authorsCsv);
+		$actor      = $this->_resolveActorOrFallback($user, $authorIds);
+
+		\nova_ext_sim_central\PostWrite::populateRequestInputs($input);
+
+		$fields = array(
+			'post_authors'       => $authorsCsv,
+			'post_authors_users' => $usersCsv,
+			'post_date'          => now(),
+			'post_title'         => $title,
+			'post_content'       => isset($input['body']) ? (string) $input['body'] : '',
+			'post_tags'          => $this->_tagsCsv($input),
+			'post_status'        => $status,
+			'post_timeline'      => isset($input['timeline']) ? (string) $input['timeline'] : '',
+			'post_location'      => isset($input['location']) ? (string) $input['location'] : '',
+			'post_mission'       => $missionId,
+			'post_saved'         => $actor,
+			'post_participants'  => $usersCsv,
+			'post_lock_user'     => 0,
+			'post_lock_date'     => 0,
+		);
+
+		$this->posts->create_mission_entry($fields);
+		$newId = (int) $this->db->insert_id();
+
+		if ($status === 'activated') {
+			\nova_ext_sim_central\PostWrite::afterActivate($newId, $authorIds, $actor);
+		}
+
+		$row = $this->posts->get_post($newId);
+		$this->_emit(201, $this->_projectPost($row));
+	}
+
+	private function _postUpdate($token, $id)
+	{
+		$this->_requireTokenScope($token, 'posts:write');
+		$user     = $this->_requireBoundUser($token);
+		$existing = $this->posts->get_post($id);
+		if ( ! $existing) {
+			$this->_emit(404, array('error' => 'Post not found.'));
+		}
+
+		$canAll = $this->_canUseAll($token, $user, 'write');
+		if ( ! $canAll && ! $this->_userOnPost($existing, (int) $user->userid)) {
+			$this->_emit(403, array('error' => 'You can only edit posts you author.'));
+		}
+
+		$input = $this->_readInput();
+
+		// Author set: keep existing unless the request supplies a new one.
+		if (array_key_exists('authors', $input)) {
+			$authorIds = $this->_resolveAuthorIds($input);
+			if (empty($authorIds)) {
+				$this->_emit(422, array('error' => 'authors, if provided, must be a non-empty array of character ids.'));
+			}
+			$userChars = \nova_ext_sim_central\PostWrite::userCharacterIds((int) $user->userid);
+			if ( ! $canAll && empty(array_intersect($authorIds, $userChars))) {
+				$this->_emit(403, array('error' => 'At least one author must be one of your own characters.'));
+			}
+			$authorsCsv = implode(',', $authorIds);
+			$usersCsv   = \nova_ext_sim_central\PostWrite::authorsUsersCsv($authorIds);
+		} else {
+			$authorsCsv = (string) $existing->post_authors;
+			$authorIds  = array_values(array_filter(array_map('intval', explode(',', $authorsCsv))));
+			$usersCsv   = (string) $existing->post_authors_users;
+		}
+
+		// Body: replace (default) or append.
+		$content = (string) $existing->post_content;
+		if (array_key_exists('body', $input)) {
+			$mode = isset($input['body_mode']) ? strtolower((string) $input['body_mode']) : 'replace';
+			$content = ($mode === 'append')
+				? (string) $existing->post_content.(string) $input['body']
+				: (string) $input['body'];
+		}
+
+		$reqStatus = array_key_exists('status', $input) ? $this->_normalizeStatus($input) : $existing->post_status;
+		$status    = ($reqStatus === 'activated')
+			? \nova_ext_sim_central\PostWrite::moderatedStatus('activated', $authorsCsv)
+			: $reqStatus;
+
+		$actor = $this->_resolveActorOrFallback($user, $authorIds, (int) $existing->post_saved);
+
+		$fields = array(
+			'post_content'       => $content,
+			'post_authors'       => $authorsCsv,
+			'post_authors_users' => $usersCsv,
+			'post_status'        => $status,
+			'post_saved'         => $actor,
+			'post_last_update'   => now(),
+		);
+		if (array_key_exists('title', $input)) {
+			$t = trim((string) $input['title']);
+			if ($t === '') { $this->_emit(422, array('error' => 'title cannot be blank.')); }
+			$fields['post_title'] = $t;
+		}
+		if (array_key_exists('mission_id', $input)) {
+			$mid = (int) $input['mission_id'];
+			if ($mid <= 0 || ! $this->_missionExists($mid)) {
+				$this->_emit(422, array('error' => 'mission_id must reference an existing mission.'));
+			}
+			$fields['post_mission'] = $mid;
+		}
+		if (array_key_exists('location', $input)) { $fields['post_location'] = (string) $input['location']; }
+		if (array_key_exists('timeline', $input)) { $fields['post_timeline'] = (string) $input['timeline']; }
+		if (array_key_exists('tags', $input))     { $fields['post_tags']     = $this->_tagsCsv($input); }
+
+		// Publish date is set when a draft actually goes live.
+		$wasActivated = ($existing->post_status === 'activated');
+		if ($status === 'activated' && ! $wasActivated) {
+			$fields['post_date'] = now();
+		}
+
+		\nova_ext_sim_central\PostWrite::populateRequestInputs($input);
+
+		$this->posts->update_post($id, $fields);
+
+		if ($status === 'activated' && ! $wasActivated) {
+			\nova_ext_sim_central\PostWrite::afterActivate($id, $authorIds, $actor);
+		}
+
+		$row = $this->posts->get_post($id);
+		$this->_emit(200, $this->_projectPost($row));
+	}
+
+	private function _postDelete($token, $id)
+	{
+		$this->_requireTokenScope($token, 'posts:delete');
+		$user     = $this->_requireBoundUser($token);
+		$existing = $this->posts->get_post($id);
+		if ( ! $existing) {
+			$this->_emit(404, array('error' => 'Post not found.'));
+		}
+		$canAll = $this->_canUseAll($token, $user, 'delete');
+		if ( ! $canAll && ! $this->_userOnPost($existing, (int) $user->userid)) {
+			$this->_emit(403, array('error' => 'You can only delete posts you author.'));
+		}
+		$this->posts->delete_post($id);
+		$this->_emit(200, array('deleted' => true, 'id' => $id));
+	}
+
+	// ---------- post write helpers ----------
+
+	private function _requireTokenScope($token, $scope)
+	{
+		if ( ! $this->_tokenHasScope($token, $scope)) {
+			$this->_emit(403, array('error' => 'Token lacks required scope: '.$scope));
+		}
+	}
+
+	/**
+	 * Normalise + validate the `authors` field (array of charids or CSV) into a
+	 * list of existing character ids. Emits 422 on unknown ids.
+	 */
+	private function _resolveAuthorIds($input)
+	{
+		$raw = isset($input['authors']) ? $input['authors'] : null;
+		if (is_string($raw)) {
+			$raw = explode(',', $raw);
+		}
+		if ( ! is_array($raw)) {
+			return array();
+		}
+		$ids = array();
+		foreach ($raw as $v) {
+			$n = (int) $v;
+			if ($n > 0) { $ids[$n] = true; }
+		}
+		$ids = array_keys($ids);
+		if (empty($ids)) {
+			return array();
+		}
+		$found = $this->db->select('charid')->where_in('charid', $ids)->get('characters')->result();
+		$foundIds = array();
+		foreach ($found as $r) { $foundIds[] = (int) $r->charid; }
+		$missing = array_diff($ids, $foundIds);
+		if ( ! empty($missing)) {
+			$this->_emit(422, array(
+				'error'   => 'Unknown character id(s) in authors.',
+				'missing' => array_values($missing),
+			));
+		}
+		return $ids;
+	}
+
+	private function _missionExists($missionId)
+	{
+		return $this->db->where('mission_id', (int) $missionId)->count_all_results('missions') > 0;
+	}
+
+	/** Map request status synonyms to the stored enum ('saved' | 'activated'). */
+	private function _normalizeStatus($input)
+	{
+		$s = isset($input['status']) ? strtolower(trim((string) $input['status'])) : 'saved';
+		if (in_array($s, array('activated', 'activate', 'post', 'posted', 'publish', 'published'), true)) {
+			return 'activated';
+		}
+		if (in_array($s, array('', 'saved', 'save', 'draft'), true)) {
+			return 'saved';
+		}
+		$this->_emit(422, array('error' => 'status must be "saved" or "activated".'));
+	}
+
+	private function _tagsCsv($input)
+	{
+		$raw = isset($input['tags']) ? $input['tags'] : '';
+		if (is_array($raw)) {
+			$raw = implode(',', $raw);
+		}
+		$parts = array_filter(array_map('trim', explode(',', (string) $raw)), 'strlen');
+		return implode(',', $parts);
+	}
+
+	/**
+	 * Resolve the posting character, with a fallback chain for the write.all
+	 * case where none of the post's authors belong to the bound user.
+	 */
+	private function _resolveActorOrFallback($user, array $authorIds, $existingActor = 0)
+	{
+		$actor = \nova_ext_sim_central\PostWrite::resolveActor((int) $user->userid, $authorIds);
+		if ($actor > 0) {
+			return $actor;
+		}
+		if ($existingActor > 0) {
+			return $existingActor;
+		}
+		if ( ! empty($user->main_char)) {
+			return (int) $user->main_char;
+		}
+		return ! empty($authorIds) ? (int) $authorIds[0] : 0;
 	}
 
 	/**
@@ -211,6 +549,55 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			$data[] = $this->_projectMission($row);
 		}
 		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/me
+	 *
+	 * Identity of the bound user behind this token: the user, their characters
+	 * (split PC vs NPC), and the token's scopes. Drives a writing app's
+	 * "posting as..." screen. Requires a user-bound token (409 otherwise).
+	 */
+	public function me()
+	{
+		$this->_gate();
+		$this->_requireMethod('GET');
+		$token = $this->_authenticate(null);
+		$user  = $this->_requireBoundUser($token);
+
+		$mainChar = isset($user->main_char) ? (int) $user->main_char : 0;
+		$rows = $this->db
+			->select('characters.charid, characters.first_name, characters.last_name, characters.suffix, characters.display_name, characters.crew_type, characters.rank, ranks.rank_name, ranks.rank_order')
+			->from('characters')
+			->join('ranks', 'ranks.rank_id = characters.rank', 'left')
+			->where('characters.user', (int) $user->userid)
+			->order_by('ranks.rank_order', 'asc')
+			->order_by('characters.charid', 'asc')
+			->get()->result();
+
+		$pcs = array();
+		$npcs = array();
+		foreach ($rows as $r) {
+			$entry = array(
+				'id'         => (int) $r->charid,
+				'name'       => $this->_characterName($r),
+				'rank'       => $r->rank_name ?: null,
+				'rank_order' => isset($r->rank_order) ? (int) $r->rank_order : null,
+				'crew_type'  => $r->crew_type,
+				'is_main'    => ((int) $r->charid === $mainChar),
+			);
+			if ($r->crew_type === 'npc') { $npcs[] = $entry; } else { $pcs[] = $entry; }
+		}
+
+		$this->_emit(200, array(
+			'user' => array(
+				'id'          => (int) $user->userid,
+				'name'        => $user->name,
+				'is_sysadmin' => (isset($user->is_sysadmin) && $user->is_sysadmin === 'y'),
+			),
+			'characters' => array('pc' => $pcs, 'npc' => $npcs),
+			'scopes'     => $this->_tokenScopes($token),
+		));
 	}
 
 	/**
@@ -427,6 +814,87 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				'error' => 'Event Webhooks is enabled but its table is missing. Ask the sim admin to run "Setup database" on the Event Webhooks feature.',
 			));
 		}
+	}
+
+	/** Decoded scope list for an authenticated token row. */
+	private function _tokenScopes($token)
+	{
+		$scopes = isset($token->scopes) ? json_decode((string) $token->scopes, true) : null;
+		return is_array($scopes) ? $scopes : array();
+	}
+
+	private function _tokenHasScope($token, $scope)
+	{
+		return in_array($scope, $this->_tokenScopes($token), true);
+	}
+
+	/**
+	 * Resolve the Nova user a token is bound to. Write/own/delete endpoints
+	 * act AS this user. 409 when the token has no binding or the user is gone.
+	 */
+	private function _requireBoundUser($token)
+	{
+		$uid = isset($token->user_id) ? (int) $token->user_id : 0;
+		if ($uid <= 0) {
+			$this->_emit(409, array(
+				'error' => 'This token is not bound to a user. Assign a user to the token (ACP -> REST API -> Configure) to use endpoints that act as a user.',
+			));
+		}
+		$user = $this->db->get_where('users', array('userid' => $uid))->row();
+		if ( ! $user) {
+			$this->_emit(409, array('error' => 'The user this token is bound to no longer exists.'));
+		}
+		return $user;
+	}
+
+	/**
+	 * Whether the token may use a `.all` sysadmin bypass for the given family
+	 * ('read'|'write'|'delete'): needs BOTH the .all scope on the token AND the
+	 * bound user flagged sysadmin. The scope is the security boundary; the
+	 * sysadmin flag is the permission.
+	 */
+	private function _canUseAll($token, $user, $family)
+	{
+		return $this->_tokenHasScope($token, 'posts:'.$family.'.all')
+			&& isset($user->is_sysadmin) && $user->is_sysadmin === 'y';
+	}
+
+	/**
+	 * SQL fragment matching a user id inside the post_authors_users CSV column,
+	 * covering single / first / middle / last positions. $userId is cast to int
+	 * so it's safe to interpolate.
+	 */
+	private function _authorsUsersClause($userId)
+	{
+		$u = (int) $userId;
+		return "(post_authors_users = '{$u}'"
+			. " OR post_authors_users LIKE '{$u},%'"
+			. " OR post_authors_users LIKE '%,{$u}'"
+			. " OR post_authors_users LIKE '%,{$u},%')";
+	}
+
+	/** True if the given user authors the post (matches post_authors_users CSV). */
+	private function _userOnPost($post, $userId)
+	{
+		$csv = isset($post->post_authors_users) ? (string) $post->post_authors_users : '';
+		if ($csv === '') {
+			return false;
+		}
+		$ids = array_map('intval', array_filter(explode(',', $csv), 'strlen'));
+		return in_array((int) $userId, $ids, true);
+	}
+
+	/** Compose a character's display name (display_name override, else first/last/suffix). */
+	private function _characterName($r)
+	{
+		if ( ! empty($r->display_name)) {
+			return $r->display_name;
+		}
+		return trim(implode(' ', array_filter(array(
+			isset($r->first_name) ? $r->first_name : '',
+			isset($r->last_name)  ? $r->last_name  : '',
+			isset($r->suffix)     ? $r->suffix     : '',
+		))));
 	}
 
 	/** Current request method, uppercased. */

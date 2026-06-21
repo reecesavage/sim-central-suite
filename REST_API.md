@@ -48,7 +48,13 @@ Tokens carry an explicit scope list. Endpoints check for the scope they require 
 
 | Scope | Grants |
 |---|---|
-| `posts:read` | List posts, view a single post |
+| `posts:read` | List/view **public (activated)** posts |
+| `posts:read.own` | List/view the **bound user's** posts, including drafts |
+| `posts:write` | Create/update the bound user's posts (save or activate) |
+| `posts:delete` | Delete the bound user's posts |
+| `posts:read.all` | Read **any** post incl. others' drafts *(sysadmin only)* |
+| `posts:write.all` | Create/update **any** post, add a character to it *(sysadmin only)* |
+| `posts:delete.all` | Delete **any** post *(sysadmin only)* |
 | `characters:read` | List characters, view a single character |
 | `missions:read` | List missions, view a single mission |
 | `users:write` | Disable / reactivate users and their linked characters |
@@ -57,7 +63,13 @@ Tokens carry an explicit scope list. Endpoints check for the scope they require 
 
 A token with no relevant scope but a valid signature will still get `200` on `/ping`, since that endpoint is scope-free by design (it's the n8n "does this token work?" check).
 
-The `*:write` scopes mutate sim state — grant them sparingly. Webhook config includes destination URLs (returned in full by the webhook endpoints), so a `webhooks:read` token is sensitive too.
+The `*:write` / `*:delete` scopes mutate sim state — grant them sparingly. Webhook config includes destination URLs (returned in full by the webhook endpoints), so a `webhooks:read` token is sensitive too.
+
+### Token → user binding
+
+The `posts:read.own` / `posts:write` / `posts:delete` scopes act **as a specific Nova user**. Bind the user when you create the token (ACP → *REST API → Configure* → "Act as user"). These scopes are rejected at creation time if no user is selected, and return `409` at request time if the binding is missing. `GET /me` reports who a token is bound to.
+
+The `*.all` scopes are a **sysadmin bypass**: they widen what a token can see/target, but only when the token carries the `.all` scope **and** the bound user is a sysadmin. The scope is the security boundary; the sysadmin flag is the permission. `/me` still returns only the bound user's own characters.
 
 ---
 
@@ -141,6 +153,24 @@ Sanity check. Any valid token, no scope required. Use this from n8n's "Test step
 
 ---
 
+### `GET /me`
+
+Identity of the user this token is bound to. No specific scope (any valid token), but the token **must** be user-bound (`409` otherwise). Use it to populate a "posting as…" picker.
+
+**Response:**
+```json
+{
+  "user": { "id": 42, "name": "Reece", "is_sysadmin": false },
+  "characters": {
+    "pc":  [ { "id": 17, "name": "Tamblem Dravor", "rank": "Lieutenant JG", "rank_order": 22, "crew_type": "active", "is_main": true } ],
+    "npc": [ { "id": 88, "name": "Ensign Vex", "rank": "Ensign", "rank_order": 24, "crew_type": "npc", "is_main": false } ]
+  },
+  "scopes": ["posts:read.own", "posts:write"]
+}
+```
+
+---
+
 ### `GET /posts`
 
 List mission posts, most recent first. Scope: `posts:read`.
@@ -173,7 +203,54 @@ List mission posts, most recent first. Scope: `posts:read`.
 
 ### `GET /posts/{id}`
 
-Single post by id. Scope: `posts:read`. Returns `404` for non-activated posts (unlike `/posts?status=any`, the single endpoint is strictly public-only).
+Single post by id. Scope: `posts:read` (public, activated only). A user-bound `posts:read.own` token may also fetch its own drafts; `posts:read.all` (sysadmin) may fetch any post. Returns `404` when the tier doesn't permit the post.
+
+---
+
+### `POST /posts`
+
+Create a mission post. Scope: `posts:write` (user-bound). Body as JSON, form-encoded, or query.
+
+| Field | Required | Notes |
+|---|---|---|
+| `title` | ✓ | Post title |
+| `authors` | ✓ | Character ids (array or CSV). ≥1 must be one of the bound user's characters (unless `posts:write.all` + sysadmin) |
+| `mission_id` | ✓ | Must reference an existing mission |
+| `body` | | Post content |
+| `status` | | `saved` (default, draft) or `activated` (publish) |
+| `location` | | In-character location |
+| `timeline` | | Free-text timeline (when *Ordered Mission Posts* is **off**) |
+| `tags` | | Array or CSV |
+| `ordered_day` / `ordered_time` / `ordered_date` / `ordered_stardate` | | *Ordered Mission Posts* fields (when **on**); times accept `HH:MM` or `HHMM` |
+| `age_gated` | | *Content Filter*: gate this post behind the age notice |
+
+The **saving character** (`post_saved`, and the webhook `actor`) is derived: the bound user's main character if it's on the post, else their highest-ranked character on it. Activating (`status=activated`) fires the `post.posted` webhook, stamps `last_post`, sends the sim's crew email, and honours per-user moderation — a post by a moderated author lands as `pending`.
+
+```bash
+curl -X POST "$BASE/posts" \
+  -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"First Steps","authors":[17],"mission_id":16,"body":"...","status":"saved"}'
+```
+
+Returns `201` with the created post object. `422` on validation failure (missing title/authors/mission, unknown character id, bad status); `403` if no author belongs to you; `409` if the token isn't user-bound.
+
+### `PATCH /posts/{id}` (alias `PUT`)
+
+Update a post you author (or any post with `posts:write.all` + sysadmin). Scope: `posts:write`. **Partial** — only the fields you send change.
+
+- Same field set as create (all optional).
+- `body_mode`: `replace` (default) or **`append`** (appends to the existing body).
+- Changing `status` to `activated` on a draft publishes it (same activation side-effects as create).
+
+```bash
+curl -X PATCH "$BASE/posts/642" \
+  -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"body":"\n\nMore to add.","body_mode":"append"}'
+```
+
+### `DELETE /posts/{id}`
+
+Permanently delete a post you author (or any with `posts:delete.all` + sysadmin). Scope: `posts:delete`. Returns `{ "deleted": true, "id": 642 }`.
 
 ---
 

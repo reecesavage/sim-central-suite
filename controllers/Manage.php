@@ -135,6 +135,23 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['images']           = $this->_iconImages();
 		$data['api_base_url']     = site_url('extensions/nova_ext_sim_central/Api');
 
+		// Active users for the "bind token to user" dropdown, labelled with their
+		// main character so two users with the same name are distinguishable.
+		$data['users'] = $this->db
+			->select('users.userid, users.name, users.is_sysadmin, c.first_name, c.last_name, c.display_name')
+			->from('users')
+			->join('characters c', 'c.charid = users.main_char', 'left')
+			->where('users.status', 'active')
+			->order_by('users.name', 'asc')
+			->get()->result();
+
+		// id => display label for showing the bound user on existing token rows
+		// (includes inactive users so old tokens still resolve a name).
+		$data['user_names'] = array();
+		foreach ($this->db->select('userid, name')->get('users')->result() as $u) {
+			$data['user_names'][(int) $u->userid] = $u->name;
+		}
+
 		$this->_regions['title']  .= $f['name'];
 		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
 			->view('rest_api', $this->skin, 'admin', $data);
@@ -683,9 +700,16 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				'summary'     => 'Exposes a read-only HTTP API for external integrations (n8n, scripts, dashboards). Tokens are managed under Configure and authenticate via the X-API-Key header.',
 				'standalone'  => null,
 				'requires_tables' => array(
-					'sim_central_api_tokens' => "CREATE TABLE IF NOT EXISTS `{prefix}sim_central_api_tokens` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `token_hash` char(64) NOT NULL, `token_prefix` varchar(16) NOT NULL, `scopes` text NOT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_used_at` datetime DEFAULT NULL, `expires_at` datetime DEFAULT NULL, `revoked_at` datetime DEFAULT NULL, `rate_count` int(11) NOT NULL DEFAULT 0, `rate_window_at` datetime DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `token_hash` (`token_hash`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
+					'sim_central_api_tokens' => "CREATE TABLE IF NOT EXISTS `{prefix}sim_central_api_tokens` (`id` int(11) NOT NULL AUTO_INCREMENT, `label` varchar(120) NOT NULL, `token_hash` char(64) NOT NULL, `token_prefix` varchar(16) NOT NULL, `scopes` text NOT NULL, `user_id` int(11) DEFAULT NULL, `created_by` int(11) DEFAULT NULL, `created_at` datetime NOT NULL, `last_used_at` datetime DEFAULT NULL, `expires_at` datetime DEFAULT NULL, `revoked_at` datetime DEFAULT NULL, `rate_count` int(11) NOT NULL DEFAULT 0, `rate_window_at` datetime DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `token_hash` (`token_hash`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
 				),
-				'requires_db' => array(),
+				// user_id binds a token to a Nova user so write/own endpoints know
+				// "who" the token acts as. Added to existing installs via Setup
+				// database (the CREATE above already includes it for fresh installs).
+				'requires_db' => array(
+					'sim_central_api_tokens' => array(
+						'user_id' => "INT DEFAULT NULL",
+					),
+				),
 				'shims'       => array(),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/rest_api',
 			),
@@ -1516,12 +1540,18 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 	private function _apiAvailableScopes()
 	{
 		return array(
-			'posts:read'      => 'Read mission posts (list + view).',
-			'characters:read' => 'Read characters (list + view).',
-			'missions:read'   => 'Read missions (list + view).',
-			'users:write'     => 'Disable or reactivate users and their linked characters.',
-			'webhooks:read'   => 'List event webhooks and view their config.',
-			'webhooks:write'  => 'Create, update, and delete event webhooks.',
+			'posts:read'       => 'Read public (activated) mission posts (list + view).',
+			'posts:read.own'   => 'Read the bound user\'s own posts, including drafts. Requires a user-bound token.',
+			'posts:write'      => 'Create and update the bound user\'s posts (save or activate). Requires a user-bound token.',
+			'posts:delete'     => 'Delete the bound user\'s posts. Requires a user-bound token.',
+			'posts:read.all'   => 'Read ANY post including others\' drafts. Sysadmin bypass: also requires the bound user to be a sysadmin.',
+			'posts:write.all'  => 'Create/update ANY post (and add a character to it). Sysadmin bypass: also requires the bound user to be a sysadmin.',
+			'posts:delete.all' => 'Delete ANY post. Sysadmin bypass: also requires the bound user to be a sysadmin.',
+			'characters:read'  => 'Read characters (list + view).',
+			'missions:read'    => 'Read missions (list + view).',
+			'users:write'      => 'Disable or reactivate users and their linked characters.',
+			'webhooks:read'    => 'List event webhooks and view their config.',
+			'webhooks:write'   => 'Create, update, and delete event webhooks.',
 		);
 	}
 
@@ -1555,6 +1585,28 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			return array(array('error', 'Select at least one scope.'), null);
 		}
 
+		// Bind-to-user. Required whenever a scope that acts AS a user is granted
+		// (the post own/write/delete family). Public read scopes don't need one.
+		$boundUserId = isset($_POST['user_id']) && ctype_digit((string) $_POST['user_id'])
+			? (int) $_POST['user_id'] : 0;
+		// Every post scope except the public read one acts as a user, so it
+		// needs a binding (own/write/delete and the .all sysadmin variants).
+		$needsUser = false;
+		foreach ($scopes as $s) {
+			if (strpos($s, 'posts:') === 0 && $s !== 'posts:read') {
+				$needsUser = true;
+				break;
+			}
+		}
+		if ($boundUserId > 0) {
+			$exists = $this->db->where('userid', $boundUserId)->count_all_results('users') > 0;
+			if ( ! $exists) {
+				return array(array('error', 'Selected user does not exist.'), null);
+			}
+		} elseif ($needsUser) {
+			return array(array('error', 'Select a user to bind the token to - the post own/write/delete scopes act as a specific user.'), null);
+		}
+
 		$expiresAt = null;
 		if ( ! empty($_POST['expires_at'])) {
 			$ts = strtotime((string) $_POST['expires_at']);
@@ -1572,6 +1624,7 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			'token_hash'   => $token['hash'],
 			'token_prefix' => $token['prefix'],
 			'scopes'       => json_encode(array_values($scopes)),
+			'user_id'      => $boundUserId > 0 ? $boundUserId : null,
 			'created_by'   => $userId ?: null,
 			'created_at'   => date('Y-m-d H:i:s'),
 			'expires_at'   => $expiresAt,
