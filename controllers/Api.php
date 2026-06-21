@@ -297,6 +297,8 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 
 		if ($status === 'activated') {
 			\nova_ext_sim_central\PostWrite::afterActivate($newId, $authorIds, $actor);
+		} elseif ($status === 'saved') {
+			\nova_ext_sim_central\PostWrite::afterSave($newId, $actor);
 		}
 
 		$this->_emit(201, $this->_projectPost($row));
@@ -388,6 +390,8 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 
 		if ($status === 'activated' && ! $wasActivated) {
 			\nova_ext_sim_central\PostWrite::afterActivate($id, $authorIds, $actor);
+		} elseif ($status === 'saved') {
+			\nova_ext_sim_central\PostWrite::afterSave($id, $actor);
 		}
 
 		$row = $this->posts->get_post($id);

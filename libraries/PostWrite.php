@@ -182,6 +182,94 @@ class PostWrite
 	}
 
 	/**
+	 * Side effect for a SAVED draft: send Nova's "post saved" email to the
+	 * post's authors who opted into save notifications - the same email the
+	 * web Save button sends. Best-effort; never breaks the API write.
+	 */
+	public static function afterSave($postId, $actorCharId)
+	{
+		try {
+			self::sendSaveEmail((int) $postId, (int) $actorCharId);
+		} catch (\Throwable $e) {
+			// swallow - the draft is already saved and the webhook fired
+		}
+	}
+
+	/**
+	 * Faithful reuse of Nova's nova_write::_email('post_save') case: the
+	 * write_missionpost_saved template, recipients = post authors who have the
+	 * email_mission_posts_save preference on. Gated on the system_email setting.
+	 */
+	private static function sendSaveEmail($postId, $actorCharId)
+	{
+		$ci =& get_instance();
+
+		if (self::setting('system_email') !== 'on') {
+			return;
+		}
+
+		$ci->load->library('mail');
+		$ci->load->library('parser');
+		$ci->lang->load('email');
+		$ci->load->model('characters_model', 'char');
+		$ci->load->model('users_model', 'user');
+		$ci->load->model('posts_model', 'posts');
+
+		$post = $ci->posts->get_post($postId);
+		if ( ! $post) {
+			return;
+		}
+
+		$missionName = '';
+		if ( ! empty($post->post_mission)) {
+			$m = $ci->db->select('mission_title')->get_where('missions', array('mission_id' => (int) $post->post_mission))->row();
+			$missionName = $m ? $m->mission_title : '';
+		}
+
+		$authors  = lang('email_content_post_author')  .$ci->char->get_authors($post->post_authors, true);
+		$mission  = lang('email_content_post_mission') .$missionName;
+		$timeline = lang('email_content_post_timeline').$post->post_timeline;
+		$location = lang('email_content_post_location').$post->post_location;
+		$subject  = $missionName.' - '.$post->post_title.lang('email_subject_saved_post');
+		$fromName = $ci->char->get_character_name((int) $actorCharId, true, true);
+
+		$content = sprintf(
+			lang('email_content_mission_post_saved'),
+			$post->post_title,
+			site_url('login/index'),
+			$authors, $mission, $location, $timeline, $post->post_content
+		);
+		$emailData = array(
+			'email_content' => ($ci->mail->mailtype == 'html') ? nl2br($content) : $content,
+		);
+
+		$emLoc   = \Location::email('write_missionpost_saved', $ci->mail->mailtype);
+		$message = $ci->parser->parse_string($emLoc, $emailData, true);
+
+		// Recipients: the post's authors who opted into save notifications.
+		$emails = $ci->char->get_character_emails($post->post_authors);
+		if ( ! is_array($emails)) {
+			$emails = array();
+		}
+		foreach ($emails as $key => $value) {
+			if ($ci->user->get_pref('email_mission_posts_save', $key) != 'y') {
+				unset($emails[$key]);
+			}
+		}
+		$to = implode(',', $emails);
+		if ($to === '') {
+			return;
+		}
+
+		$prefix = (string) self::setting('email_subject');
+		$ci->mail->from(\Util::email_sender(), $fromName);
+		$ci->mail->to($to);
+		$ci->mail->subject(trim($prefix.' '.$subject));
+		$ci->mail->message($message);
+		$ci->mail->send();
+	}
+
+	/**
 	 * Faithful reuse of Nova's nova_write::_email('post') case using the same
 	 * primitives (Mail/Parser libraries, the write_missionpost email template,
 	 * get_crew_emails('email_mission_posts')). Gated on the system_email
