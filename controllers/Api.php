@@ -270,23 +270,35 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		);
 
 		$this->posts->create_mission_entry($fields);
-		$newId = (int) $this->db->insert_id();
 
-		if ($newId <= 0) {
-			$this->_emit(500, array(
-				'error'     => 'Post was created but its new id could not be determined.',
-				'insert_id' => $newId,
-			));
+		// Resolve the new post's id. insert_id() is unreliable here: the Ordered
+		// Mission Posts db.insert.prepare listener runs a nested mission lookup
+		// *during* the insert, which clobbers the driver's last-insert-id. If
+		// the id doesn't resolve, recover the row we just wrote (unique enough
+		// by title + saving character + exact post_date timestamp).
+		$newId = (int) $this->db->insert_id();
+		$row   = ($newId > 0) ? $this->posts->get_post($newId) : false;
+		if ( ! $row) {
+			$recovered = $this->db
+				->where('post_title', $title)
+				->where('post_saved', $actor)
+				->where('post_date', $fields['post_date'])
+				->order_by('post_id', 'desc')
+				->limit(1)
+				->get('posts')->row();
+			if ($recovered) {
+				$newId = (int) $recovered->post_id;
+				$row   = $this->posts->get_post($newId);
+			}
+		}
+		if ( ! $row) {
+			$this->_emit(500, array('error' => 'Post was created but could not be reloaded.'));
 		}
 
 		if ($status === 'activated') {
 			\nova_ext_sim_central\PostWrite::afterActivate($newId, $authorIds, $actor);
 		}
 
-		$row = $this->posts->get_post($newId);
-		if ( ! $row) {
-			$this->_emit(500, array('error' => 'Post was created but could not be reloaded.', 'id' => $newId));
-		}
 		$this->_emit(201, $this->_projectPost($row));
 	}
 
