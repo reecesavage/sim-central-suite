@@ -6,6 +6,8 @@
 	$dbReady         = isset($db_ready) ? (bool) $db_ready : true;
 	$users           = isset($users) && is_array($users) ? $users : array();
 	$userNames       = isset($user_names) && is_array($user_names) ? $user_names : array();
+	$csrf            = isset($csrf_exclusion) && is_array($csrf_exclusion) ? $csrf_exclusion : array();
+	$csrfStatus      = isset($csrf['status']) ? $csrf['status'] : 'present';
 ?>
 
 <?php echo text_output($title, 'h1', 'page-head');?>
@@ -15,6 +17,22 @@
 </p>
 
 <p><?php echo $feature['summary'];?></p>
+
+<?php if ($csrfStatus === 'added'): ?>
+	<div style="border: 1px solid #2a7; background: #f0fff4; padding: 10px; margin-bottom: 12px;">
+		<span class="fontSmall">&#10003; Added the REST API path to your CSRF allowlist in <code>application/config/config.php</code> &mdash; token-authenticated write requests (create post, create webhook, etc.) are now permitted.</span>
+	</div>
+<?php elseif (in_array($csrfStatus, array('manual', 'unreadable', 'missing'), true)): ?>
+	<div style="border: 2px solid #e6a700; background: #fffbe6; padding: 12px; margin-bottom: 12px;">
+		<?php echo text_output('Action needed: allow API writes through CSRF', 'h3', 'orange');?>
+		<p class="fontSmall">
+			Nova's CSRF protection blocks token-authenticated <code>POST</code> requests (creating posts, webhooks, disabling users). The suite tried to add an exclusion automatically but <strong><?php echo $csrfStatus === 'missing' ? 'could not find' : 'could not write to'; ?> <code><?php echo htmlspecialchars(isset($csrf['path']) ? $csrf['path'] : 'application/config/config.php', ENT_QUOTES);?></code></strong>.
+		</p>
+		<p class="fontSmall">Add this line to <code>application/config/config.php</code> by hand (anywhere after the opening <code>&lt;?php</code>):</p>
+		<code>$config['csrf_exclude_uris'][] = '<?php echo htmlspecialchars(isset($csrf['line']) ? $csrf['line'] : 'extensions/nova_ext_sim_central/Api/.*', ENT_QUOTES);?>';</code>
+		<p class="fontSmall gray">Read-only <code>GET</code> endpoints work without this; only write endpoints need it.</p>
+	</div>
+<?php endif; ?>
 
 <?php if ( ! $dbReady): ?>
 	<div style="border: 2px solid #c33; background: #fff0f0; padding: 12px;">

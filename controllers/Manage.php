@@ -118,10 +118,16 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			}
 		}
 
+		// Token-authenticated POSTs (create post/webhook, user disable/etc.)
+		// would otherwise be rejected by Nova's CSRF protection. Make sure the
+		// API path is on the CSRF allowlist; this self-heals on every visit.
+		$csrfExclusion = $this->_ensureApiCsrfExclusion();
+
 		$f               = $this->features['rest_api'];
 		$data            = array();
 		$data['title']   = 'Sim Central Suite - '.$f['name'];
 		$data['feature'] = $f;
+		$data['csrf_exclusion'] = $csrfExclusion;
 		$data['jsons']   = $this->_loadConfig($configPath = dirname(__FILE__).'/../config.json');
 		$data['db_ready']= $dbReady;
 		$data['tokens']  = $dbReady
@@ -1563,6 +1569,57 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 	 * can display it exactly once. A refresh of the page after creation
 	 * will lose it forever - that's the desired behaviour.
 	 */
+	/**
+	 * Ensure the REST API path is on Nova's CSRF allowlist.
+	 *
+	 * Nova's CSRF protection rejects every POST that lacks a session CSRF
+	 * token - which is every token-authenticated API write (create post,
+	 * create webhook, disable user, ...). The fix is CodeIgniter's
+	 * csrf_exclude_uris, which must be set in application/config/config.php:
+	 * that file is loaded at bootstrap BEFORE the CSRF check runs (unlike
+	 * application/config/nova.php, which is autoloaded later during controller
+	 * init), and it lives in application/ so a Nova upgrade won't overwrite it.
+	 *
+	 * Idempotent: detects an existing entry (ours or hand-added) and no-ops.
+	 * Returns a status the Configure page surfaces:
+	 *   present | added | manual (not writable) | unreadable | missing
+	 */
+	private function _ensureApiCsrfExclusion()
+	{
+		$path    = APPPATH.'config/config.php';
+		$marker  = 'extensions/nova_ext_sim_central/Api';
+		$line    = 'extensions/nova_ext_sim_central/Api/.*';
+
+		$result = array('status' => 'manual', 'path' => $path, 'line' => $line);
+
+		if ( ! is_file($path)) {
+			$result['status'] = 'missing';
+			return $result;
+		}
+		$contents = @file_get_contents($path);
+		if ($contents === false) {
+			$result['status'] = 'unreadable';
+			return $result;
+		}
+		if (strpos($contents, $marker) !== false) {
+			$result['status'] = 'present';
+			return $result;
+		}
+		if ( ! is_writable($path)) {
+			$result['status'] = 'manual';
+			return $result;
+		}
+
+		$block = "\n/* nova_ext_sim_central: let token-authenticated REST API POST requests"
+			."\n   bypass Nova's CSRF check (the API authenticates via the X-API-Key header,"
+			."\n   not session cookies). Safe to remove if you disable the REST API. */"
+			."\n\$config['csrf_exclude_uris'][] = '".$line."';\n";
+
+		$ok = @file_put_contents($path, $contents.$block, LOCK_EX);
+		$result['status'] = ($ok !== false) ? 'added' : 'manual';
+		return $result;
+	}
+
 	private function _createApiToken()
 	{
 		$label = isset($_POST['label']) ? trim((string) $_POST['label']) : '';

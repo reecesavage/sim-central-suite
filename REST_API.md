@@ -10,10 +10,20 @@ The suite's REST API exposes HTTP endpoints for external integrations: n8n workf
 
 1. *Sim Central Suite &rarr; REST API &rarr;* **Enable**.
 2. Click **Setup database**. This creates `<prefix>sim_central_api_tokens` (typically `nova_sim_central_api_tokens`).
-3. Click **Configure** &rarr; fill in a label, tick the scopes you want, optionally set an expiry &rarr; **Create Token**.
+3. Click **Configure** &rarr; fill in a label, tick the scopes you want, optionally bind a user and set an expiry &rarr; **Create Token**.
 4. **Copy the token immediately.** It is shown exactly once. Only its hash is stored.
 
 Tokens are managed entirely in the ACP. There is no self-service issuance &mdash; only sysadmins with access to `site/settings` can create or revoke them.
+
+### CSRF and write endpoints *(v1.15.1+)*
+
+Nova's CSRF protection rejects any `POST` that lacks a session token &mdash; which is every token-authenticated **write** request (`POST /posts`, `POST /webhooks`, `POST /users/disable`, …). The suite handles this automatically: visiting the **Configure** page adds the API path to CodeIgniter's CSRF allowlist in `application/config/config.php`:
+
+```php
+$config['csrf_exclude_uris'][] = 'extensions/nova_ext_sim_central/Api/.*';
+```
+
+This is written to `config.php` specifically because it's loaded at bootstrap **before** the CSRF check runs (and it lives in `application/`, so Nova upgrades don't overwrite it). If `config.php` isn't writable by the web server, the Configure page shows the exact line to paste in by hand. Read-only `GET` endpoints work without it; only write endpoints need it. `PATCH`/`PUT`/`DELETE` are unaffected by CSRF either way &mdash; only `POST` is.
 
 ## Interactive explorer + OpenAPI spec
 
