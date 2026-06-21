@@ -30,7 +30,11 @@ class UpdateCheck
 	const SETTING_KEY        = 'sim_central_update_check';
 	const SETTING_LABEL      = 'Sim Central Suite - update check cache (do not edit by hand)';
 	const CACHE_TTL_SECONDS  = 86400; // 24 hours
-	const RELEASES_API_URL   = 'https://api.github.com/repos/reecesavage/sim-central-suite/releases/latest';
+	// We query the releases LIST and pick the newest published release
+	// ourselves, rather than GitHub's computed /releases/latest endpoint -
+	// the latter intermittently 504s for this repo, which would make the
+	// updater silently fall back to its cache and never see new releases.
+	const RELEASES_API_URL   = 'https://api.github.com/repos/reecesavage/sim-central-suite/releases?per_page=30';
 	const RELEASES_HTML_URL  = 'https://github.com/reecesavage/sim-central-suite/releases';
 
 	/**
@@ -143,14 +147,34 @@ class UpdateCheck
 		}
 
 		$data = json_decode($body, true);
-		if ( ! is_array($data) || empty($data['tag_name'])) {
+		if ( ! is_array($data)) {
 			return null;
 		}
 
-		$version = ltrim((string) $data['tag_name'], 'vV');
-		$url     = ! empty($data['html_url']) ? (string) $data['html_url'] : self::RELEASES_HTML_URL;
+		// The list endpoint returns an array of releases (newest-created
+		// first). Pick the highest published version by semver, skipping
+		// drafts and pre-releases.
+		$bestVersion = null;
+		$bestUrl     = self::RELEASES_HTML_URL;
+		foreach ($data as $release) {
+			if ( ! is_array($release) || empty($release['tag_name'])) {
+				continue;
+			}
+			if ( ! empty($release['draft']) || ! empty($release['prerelease'])) {
+				continue;
+			}
+			$version = ltrim((string) $release['tag_name'], 'vV');
+			if ($bestVersion === null || version_compare($version, $bestVersion, '>')) {
+				$bestVersion = $version;
+				$bestUrl     = ! empty($release['html_url']) ? (string) $release['html_url'] : self::RELEASES_HTML_URL;
+			}
+		}
 
-		return array('version' => $version, 'url' => $url);
+		if ($bestVersion === null) {
+			return null;
+		}
+
+		return array('version' => $bestVersion, 'url' => $bestUrl);
 	}
 
 	private static function loadCache()
