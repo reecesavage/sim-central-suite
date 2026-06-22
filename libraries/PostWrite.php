@@ -254,10 +254,10 @@ class PostWrite
 
 		$ci->load->library('mail');
 		$ci->load->library('parser');
-		$ci->lang->load('email');
 		$ci->load->model('characters_model', 'char');
 		$ci->load->model('users_model', 'user');
 		$ci->load->model('posts_model', 'posts');
+		$L = self::emailLang();
 
 		$post = $ci->posts->get_post($postId);
 		if ( ! $post) {
@@ -270,15 +270,15 @@ class PostWrite
 			$missionName = $m ? $m->mission_title : '';
 		}
 
-		$authors  = lang('email_content_post_author')  .$ci->char->get_authors($post->post_authors, true);
-		$mission  = lang('email_content_post_mission') .$missionName;
-		$timeline = lang('email_content_post_timeline').$post->post_timeline;
-		$location = lang('email_content_post_location').$post->post_location;
-		$subject  = $missionName.' - '.$post->post_title.lang('email_subject_saved_post');
+		$authors  = self::ll($L, 'email_content_post_author')  .$ci->char->get_authors($post->post_authors, true);
+		$mission  = self::ll($L, 'email_content_post_mission') .$missionName;
+		$timeline = self::ll($L, 'email_content_post_timeline').$post->post_timeline;
+		$location = self::ll($L, 'email_content_post_location').$post->post_location;
+		$subject  = $missionName.' - '.$post->post_title.self::ll($L, 'email_subject_saved_post');
 		$fromName = $ci->char->get_character_name((int) $actorCharId, true, true);
 
 		$content = sprintf(
-			lang('email_content_mission_post_saved'),
+			self::ll($L, 'email_content_mission_post_saved'),
 			$post->post_title,
 			site_url('login/index'),
 			$authors, $mission, $location, $timeline, $post->post_content
@@ -329,10 +329,10 @@ class PostWrite
 
 		$ci->load->library('mail');
 		$ci->load->library('parser');
-		$ci->lang->load('email');
 		$ci->load->model('characters_model', 'char');
 		$ci->load->model('users_model', 'user');
 		$ci->load->model('posts_model', 'posts');
+		$L = self::emailLang();
 
 		$post = $ci->posts->get_post($postId);
 		if ( ! $post) {
@@ -345,15 +345,15 @@ class PostWrite
 			$missionName = $m ? $m->mission_title : '';
 		}
 
-		$authors  = lang('email_content_post_author')  .$ci->char->get_authors($post->post_authors, true);
-		$mission  = lang('email_content_post_mission') .$missionName;
-		$timeline = lang('email_content_post_timeline').$post->post_timeline;
-		$location = lang('email_content_post_location').$post->post_location;
+		$authors  = self::ll($L, 'email_content_post_author')  .$ci->char->get_authors($post->post_authors, true);
+		$mission  = self::ll($L, 'email_content_post_mission') .$missionName;
+		$timeline = self::ll($L, 'email_content_post_timeline').$post->post_timeline;
+		$location = self::ll($L, 'email_content_post_location').$post->post_location;
 		$subject  = $missionName.' - '.$post->post_title;
 		$fromName = $ci->char->get_character_name((int) $actorCharId, true, true);
 
 		$content = sprintf(
-			lang('email_content_mission_post'),
+			self::ll($L, 'email_content_mission_post'),
 			$authors, $mission, $location, $timeline, $post->post_content
 		);
 		$emailData = array(
@@ -387,5 +387,26 @@ class PostWrite
 	private static function has(array $body, $key)
 	{
 		return array_key_exists($key, $body) && $body[$key] !== null && $body[$key] !== '';
+	}
+
+	/**
+	 * Load Nova's email language lines. The keys (email_content_mission_post,
+	 * email_content_mission_post_saved, ...) live in the CORE MODULE's
+	 * email_lang.php - a plain lang('...') from an extension controller resolves
+	 * to CodeIgniter's own email_lang.php instead, which lacks them (you'd get
+	 * the raw key in the email). Loading with the module alt_path + return=TRUE
+	 * pulls the right file and sidesteps the is_loaded cache.
+	 */
+	private static function emailLang()
+	{
+		$ci =& get_instance();
+		$arr = $ci->lang->load('email', '', true, true, MODPATH.'core/');
+		return is_array($arr) ? $arr : array();
+	}
+
+	/** Read an email lang line from the fetched array, '' if absent. */
+	private static function ll(array $lang, $key)
+	{
+		return isset($lang[$key]) ? $lang[$key] : '';
 	}
 }

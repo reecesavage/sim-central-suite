@@ -487,7 +487,10 @@ class Webhooks
 			'post_location' => isset($row->post_location) ? $row->post_location : '',
 			'timeline'      => self::formatTimeline($row, $mission),
 			'authors'       => self::charactersFromCsv($row->post_authors),
-			'actor'         => self::loadActor( ! empty($row->post_saved) ? $row->post_saved : self::firstCsv($row->post_authors)),
+			'actor'         => self::loadActor(self::resolveActorChar(
+				! empty($row->post_saved) ? $row->post_saved : self::firstCsv($row->post_authors),
+				$row->post_authors
+			)),
 			'sim_name'      => self::simName(),
 			'url_public'    => $siteUrl.'/sim/viewpost/'.$row->post_id,
 			'url_admin'     => $siteUrl.'/write/missionpost/'.$row->post_id.'/view',
@@ -618,6 +621,60 @@ class Webhooks
 		$list = self::charactersFromCsv((string) $charId);
 		return ! empty($list) ? $list[0]
 			: array('id' => $charId, 'name' => '(unknown)', 'rank' => null, 'rank_name' => null, 'discord_id' => null, 'user_id' => null);
+	}
+
+	/**
+	 * Pick the character that should represent the saver on a post.
+	 *
+	 * post_saved holds whoever Nova/the API recorded as the saver - but Nova's
+	 * web save records the user's MAIN character even when it isn't one of the
+	 * post's authors, which then shows a non-author as "Saved by" on the
+	 * webhook. Normalise it: if the recorded character isn't on the post, swap
+	 * to that user's highest-ranked character that IS on the post (main char if
+	 * it's on the post, else lowest rank_order, tiebreak lowest charid). If the
+	 * saver has no character on the post at all (e.g. a GM saved it), keep the
+	 * recorded character. API saves already record an on-post character, so
+	 * they pass straight through.
+	 */
+	private static function resolveActorChar($savedCharId, $authorsCsv)
+	{
+		$ci =& get_instance();
+		$savedCharId = (int) $savedCharId;
+		$authorIds = array_values(array_filter(array_map('intval', explode(',', (string) $authorsCsv))));
+		if ($savedCharId <= 0 || empty($authorIds) || in_array($savedCharId, $authorIds, true)) {
+			return $savedCharId;
+		}
+
+		$saver = $ci->db->select('user')->get_where('characters', array('charid' => $savedCharId))->row();
+		if ( ! $saver || empty($saver->user)) {
+			return $savedCharId;
+		}
+		$userId = (int) $saver->user;
+
+		$rows = $ci->db->select('characters.charid, ranks.rank_order')
+			->from('characters')
+			->join('ranks', 'ranks.rank_id = characters.rank', 'left')
+			->where('characters.user', $userId)
+			->where_in('characters.charid', $authorIds)
+			->get()->result();
+		if (empty($rows)) {
+			return $savedCharId; // saver isn't an author on this post
+		}
+
+		$user = $ci->db->select('main_char')->get_where('users', array('userid' => $userId))->row();
+		$main = $user ? (int) $user->main_char : 0;
+		foreach ($rows as $r) {
+			if ((int) $r->charid === $main) {
+				return $main;
+			}
+		}
+		usort($rows, function ($a, $b) {
+			$ao = ($a->rank_order === null) ? PHP_INT_MAX : (int) $a->rank_order;
+			$bo = ($b->rank_order === null) ? PHP_INT_MAX : (int) $b->rank_order;
+			if ($ao !== $bo) { return $ao - $bo; }
+			return (int) $a->charid - (int) $b->charid;
+		});
+		return (int) $rows[0]->charid;
 	}
 
 	// ---------- template + formatting helpers ----------
