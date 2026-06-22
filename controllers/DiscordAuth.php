@@ -28,7 +28,7 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 	public function start()
 	{
 		$intent = $this->input->get('intent', true);
-		if ( ! in_array($intent, array('login', 'join', 'link'), true)) {
+		if ( ! in_array($intent, array('login', 'join', 'link', 'mobile'), true)) {
 			$intent = 'login';
 		}
 		if ($intent === 'link' && ! \Auth::is_logged_in()) {
