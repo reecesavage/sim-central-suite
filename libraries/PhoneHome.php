@@ -32,10 +32,9 @@ class PhoneHome
 	public static function maybeReport($force = false)
 	{
 		try {
-			if ( ! self::isEnabled() || ! Broker::isConfigured()) {
-				return;
-			}
-
+			// Always reports - no admin opt-in. This is anonymous adoption
+			// telemetry sent on the update-check cadence; the broker URL falls
+			// back to Broker::DEFAULT_URL and the endpoint needs no secret.
 			$cache = self::loadCache();
 			$now   = time();
 			$due   = empty($cache['reported_at'])
@@ -56,16 +55,6 @@ class PhoneHome
 		}
 	}
 
-	/** Default-on; admins can switch it off via the sim_central_report_enabled setting. */
-	public static function isEnabled()
-	{
-		$c = Config::load();
-		if (isset($c['setting']['sim_central_report_enabled'])) {
-			return (int) $c['setting']['sim_central_report_enabled'] === 1;
-		}
-		return true;
-	}
-
 	// ---------- payload ----------
 
 	private static function report()
@@ -80,6 +69,7 @@ class PhoneHome
 
 		return array(
 			'sim'            => SimCentralAccess::simIdentity(),
+			'nova_version'   => defined('APP_VERSION') ? APP_VERSION : null,
 			'features'       => $enabled,
 			'extensions'     => self::activeExtensions(),
 			'api_accessible' => ( ! empty($features['rest_api']) && ! empty($access['active'])),

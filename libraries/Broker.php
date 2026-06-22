@@ -28,14 +28,19 @@ class Broker
 {
 	const SECRET_HEADER = 'X-SC-Secret';
 
-	/** Base URL of the broker Worker, trailing slash stripped, or '' when unset. */
+	// The canonical broker. Used when the admin hasn't overridden the URL, so
+	// adoption telemetry (an open endpoint) reaches us with zero configuration.
+	// Registration to the same broker additionally needs the shared secret set.
+	const DEFAULT_URL = 'https://registry.simcentral.host';
+
+	/** Base URL of the broker Worker, trailing slash stripped. Falls back to DEFAULT_URL. */
 	public static function url()
 	{
 		$c = Config::load();
 		$v = isset($c['setting']['sim_central_broker_url'])
 			? trim((string) $c['setting']['sim_central_broker_url'])
 			: '';
-		return $v !== '' ? rtrim($v, '/') : '';
+		return $v !== '' ? rtrim($v, '/') : self::DEFAULT_URL;
 	}
 
 	/** Shared secret sent to the broker, or '' when unset. */

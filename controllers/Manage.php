@@ -1816,8 +1816,6 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				$json['setting']['sim_central_broker_secret'] = ($secret === ' ') ? '' : $secret;
 			}
 		}
-		$json['setting']['sim_central_report_enabled'] =
-			( ! empty($_POST['sim_central_report_enabled'])) ? 1 : 0;
 
 		$this->_saveConfig(dirname(__FILE__).'/../config.json', $json);
 		return array('success', 'Broker configuration saved.');

@@ -67,7 +67,6 @@
 	$settings      = isset($jsons['setting']) && is_array($jsons['setting']) ? $jsons['setting'] : array();
 	$brokerUrl     = isset($settings['sim_central_broker_url']) ? (string) $settings['sim_central_broker_url'] : '';
 	$brokerSecret  = isset($settings['sim_central_broker_secret']) ? (string) $settings['sim_central_broker_secret'] : '';
-	$reportOn      = ! isset($settings['sim_central_report_enabled']) || (int) $settings['sim_central_report_enabled'] === 1;
 	$scActive      = ! empty($sc['active']);
 	$scGranted     = ! empty($sc['granted']);
 ?>
@@ -111,13 +110,13 @@
 	<?php if ($scActive): ?>
 		<?php echo form_open('extensions/nova_ext_sim_central/Manage/rest_api/');?>
 			<input type="hidden" name="action" value="revoke_sim_central">
-			<input type="submit" class="button-secondary" value="Revoke Sim Central access"
+			<input type="submit" class="button-sec" value="Revoke Sim Central access"
 				onclick="return confirm('Revoke Sim Central access? The broker will be told to stop using this token.');">
 		<?php echo form_close();?>
 	<?php else: ?>
 		<?php echo form_open('extensions/nova_ext_sim_central/Manage/rest_api/');?>
 			<input type="hidden" name="action" value="grant_sim_central">
-			<input type="submit" class="button-primary" value="Grant Sim Central access">
+			<input type="submit" class="button-main" value="Grant Sim Central access">
 		<?php echo form_close();?>
 	<?php endif;?>
 
@@ -125,6 +124,10 @@
 
 	<?php echo form_open('extensions/nova_ext_sim_central/Manage/rest_api/');?>
 		<input type="hidden" name="action" value="save_broker_config">
+		<p class="fontSmall gray">
+			These settings are only needed to <strong>grant access</strong> above. Anonymous usage
+			stats are sent automatically on the suite's update check &mdash; no configuration required.
+		</p>
 		<p class="fontSmall">
 			<kbd>Broker URL</kbd>
 			<input type="text" name="sim_central_broker_url" size="40"
@@ -138,15 +141,7 @@
 				placeholder="<?php echo $brokerSecret !== '' ? '•••••••• (set — leave blank to keep)' : 'shared secret';?>">
 			<br><span class="fontSmall gray">Must match the Worker's <code>SC_SHARED_SECRET</code>. Leave blank to keep the current value.</span>
 		</p>
-		<p class="fontSmall">
-			<label>
-				<input type="hidden" name="sim_central_report_enabled" value="0">
-				<input type="checkbox" name="sim_central_report_enabled" value="1" <?php echo $reportOn ? 'checked' : '';?>>
-				Send periodic status to Sim Central
-			</label>
-			<br><span class="fontSmall gray">A daily heartbeat so Sim Central can keep a live picture of which sims run the suite.</span>
-		</p>
-		<input type="submit" class="button-secondary" value="Save broker configuration">
+		<input type="submit" class="button-sec" value="Save broker configuration">
 	<?php echo form_close();?>
 </div>
 
