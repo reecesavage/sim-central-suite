@@ -627,10 +627,14 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		}
 
 		$b .= '<script>(function(){'
-			// Mission timeline field visibility
+			// Mission timeline field visibility — also clears hidden inputs so their
+			// values are not submitted and don't trip the timeline scheme validation.
 			. 'var sel=document.getElementById("sc-mission");'
 			. 'function tl(){var c=(sel&&sel.options[sel.selectedIndex])?sel.options[sel.selectedIndex].getAttribute("data-config"):"";'
-			. 'var w=document.querySelectorAll("[data-tl]");for(var i=0;i<w.length;i++){w[i].style.display=(w[i].getAttribute("data-tl")===c)?"":"none";}}'
+			. 'var w=document.querySelectorAll("[data-tl]");for(var i=0;i<w.length;i++){'
+			. 'var show=(w[i].getAttribute("data-tl")===c);w[i].style.display=show?"":"none";'
+			. 'if(!show){var inp=w[i].querySelector("input");if(inp)inp.value="";}}'
+			. '}'
 			. 'if(sel){sel.addEventListener("change",tl);}tl();'
 			// Co-author search filter
 			. 'var s=document.getElementById("sc-author-search");if(s){s.addEventListener("input",function(){var q=this.value.toLowerCase();'
