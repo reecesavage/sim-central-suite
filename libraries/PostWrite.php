@@ -172,13 +172,20 @@ class PostWrite
 	{
 		// Ordered day/time are read from either the modern or the legacy
 		// (chronological) keys depending on the mission's config, so set both.
+		$cfg        = Config::load();
+		$legacyMode = ! empty($cfg['setting']['legacy_mode']);
+
 		if (self::has($body, 'ordered_day')) {
-			$_POST['nova_ext_ordered_post_day']            = (string) $body['ordered_day'];
-			$_POST['post_chronological_mission_post_day']  = (string) $body['ordered_day'];
+			$_POST['nova_ext_ordered_post_day'] = (string) $body['ordered_day'];
+			if ($legacyMode) {
+				$_POST['post_chronological_mission_post_day'] = (string) $body['ordered_day'];
+			}
 		}
 		if (self::has($body, 'ordered_time')) {
-			$_POST['nova_ext_ordered_post_time']           = (string) $body['ordered_time'];
-			$_POST['post_chronological_mission_post_time'] = (string) $body['ordered_time'];
+			$_POST['nova_ext_ordered_post_time'] = (string) $body['ordered_time'];
+			if ($legacyMode) {
+				$_POST['post_chronological_mission_post_time'] = (string) $body['ordered_time'];
+			}
 		}
 		if (self::has($body, 'ordered_date')) {
 			$_POST['nova_ext_ordered_post_date'] = (string) $body['ordered_date'];
