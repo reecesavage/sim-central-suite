@@ -377,6 +377,178 @@ class PostWrite
 		$ci->mail->send();
 	}
 
+	// ---------- post list helpers ----------
+
+	/**
+	 * Return activated (or any status) posts where any of the given character ids
+	 * appears in post_authors. Uses the same OR-LIKE pattern as get_saved_posts()
+	 * so middle-of-CSV authors are not missed (unlike get_user_posts which matches
+	 * post_authors_users and has a known middle-CSV bug in Nova core).
+	 */
+	public static function postsByChars(array $charIds, $status, $limit = 0)
+	{
+		$ci =& get_instance();
+		$charIds = array_values(array_unique(array_map('intval', $charIds)));
+		if (empty($charIds)) {
+			return array();
+		}
+		$parts = array();
+		foreach ($charIds as $id) {
+			$parts[] = "(post_authors LIKE '%,$id' OR post_authors LIKE '$id,%'"
+				. " OR post_authors LIKE '%,$id,%' OR post_authors = '$id')";
+		}
+		$ci->db->from('posts');
+		if ($status !== '') {
+			$ci->db->where('post_status', $status);
+		}
+		$ci->db->where('('.implode(' OR ', $parts).')', null);
+		$ci->db->order_by('post_date', 'desc');
+		if ($limit > 0) {
+			$ci->db->limit($limit);
+		}
+		return $ci->db->get()->result();
+	}
+
+	// ---------- post locking helpers ----------
+
+	const LOCK_STALE_SECS = 600; // 10 minutes — matches Nova's desktop write CP
+
+	/**
+	 * Returns array('state' => 'none'|'mine'|'held', 'owner' => string, 'age' => int minutes).
+	 * 'none'  — no active lock (free to edit).
+	 * 'mine'  — current user holds the lock.
+	 * 'held'  — another user holds a fresh lock; editing is blocked.
+	 */
+	public static function lockState($post, $uid)
+	{
+		$lockUser = (int) $post->post_lock_user;
+		$lockDate = (int) $post->post_lock_date;
+
+		if ($lockUser === 0 || $lockDate === 0) {
+			return array('state' => 'none', 'owner' => '', 'age' => 0);
+		}
+
+		$age = (int) floor((now() - $lockDate) / 60);
+
+		if ((now() - $lockDate) >= self::LOCK_STALE_SECS) {
+			return array('state' => 'none', 'owner' => '', 'age' => $age);
+		}
+
+		if ($lockUser === (int) $uid) {
+			return array('state' => 'mine', 'owner' => '', 'age' => $age);
+		}
+
+		return array('state' => 'held', 'owner' => self::lockOwnerName($lockUser), 'age' => $age);
+	}
+
+	public static function acquireLock($postId, $uid)
+	{
+		$ci =& get_instance();
+		$ci->load->model('posts_model', 'posts');
+		$ci->posts->update_post_lock((int) $postId, (int) $uid, true);
+	}
+
+	public static function releaseLock($postId)
+	{
+		$ci =& get_instance();
+		$ci->load->model('posts_model', 'posts');
+		$ci->posts->update_post_lock((int) $postId, 0, false);
+	}
+
+	private static function lockOwnerName($userId)
+	{
+		$ci =& get_instance();
+		$user = $ci->db->select('main_char')->get_where('users', array('userid' => (int) $userId))->row();
+		$mainChar = $user ? (int) $user->main_char : 0;
+
+		if ($mainChar > 0) {
+			$char = $ci->db->select('first_name, last_name, display_name')
+				->get_where('characters', array('charid' => $mainChar))->row();
+			if ($char) {
+				return ! empty($char->display_name) ? $char->display_name
+					: trim(($char->first_name ?? '').' '.($char->last_name ?? ''));
+			}
+		}
+
+		$char = $ci->db->select('first_name, last_name, display_name')
+			->where('user', (int) $userId)->where('crew_type', 'active')
+			->limit(1)->get('characters')->row();
+		if ($char) {
+			return ! empty($char->display_name) ? $char->display_name
+				: trim(($char->first_name ?? '').' '.($char->last_name ?? ''));
+		}
+
+		return 'another user';
+	}
+
+	// ---------- content round-trip helpers ----------
+
+	/**
+	 * Convert HTML from the mobile contenteditable editor to the format Nova
+	 * stores in post_content: plain text with \n line-breaks, plus <strong>,
+	 * <em>, and <u> for inline formatting.
+	 *
+	 * Rule: each visual line/block break → exactly one \n. Never stores literal
+	 * <br> or double \n\n, because Nova's display pipeline (nl2br → HTMLPurifier)
+	 * already expands each \n to a <br>.
+	 */
+	public static function editorHtmlToStored($html)
+	{
+		$html = (string) $html;
+
+		// Normalize common browser bold/italic variants
+		$html = str_ireplace(array('<b>', '</b>'), array('<strong>', '</strong>'), $html);
+		$html = str_ireplace(array('<i>', '</i>'), array('<em>', '</em>'), $html);
+
+		// Strip attributes from allowed tags (prevent onclick= etc.)
+		$html = preg_replace('/<(strong|em|u)\s[^>]*>/i', '<$1>', $html);
+
+		// Opening block elements → new line (closing tags are just discarded below)
+		$html = preg_replace('/<(div|p|h[1-6]|li|tr|blockquote)(\s[^>]*)?>/i', "\n", $html);
+
+		// <br> → new line
+		$html = preg_replace('/<br\s*\/?>/i', "\n", $html);
+
+		// Strip everything except the three allowed inline tags
+		$html = strip_tags($html, '<strong><em><u>');
+
+		// Decode HTML entities (browser encodes & < > " in contenteditable innerHTML)
+		$html = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+		// Collapse 3+ consecutive newlines to 2 (preserve intentional paragraph gap)
+		$html = preg_replace('/\n{3,}/', "\n\n", $html);
+
+		return trim($html);
+	}
+
+	/**
+	 * Convert stored post_content to HTML suitable for loading into the mobile
+	 * contenteditable editor: \n → <br>, text segments HTML-escaped, inline
+	 * formatting tags passed through unchanged.
+	 *
+	 * Also normalises legacy content from the desktop editor (strips to the
+	 * same inline-only allowlist so the mobile editor doesn't inject complex HTML).
+	 */
+	public static function storedToEditorHtml($content)
+	{
+		// Normalise first (handles legacy desktop-editor content: br tags, block
+		// elements, etc.) — output is clean text + \n + <strong>/<em>/<u> only.
+		$stored = self::editorHtmlToStored((string) $content);
+
+		// Split on inline tags so we can escape text but keep tags verbatim.
+		$parts = preg_split('/(<\/?(strong|em|u)>)/i', $stored, -1, PREG_SPLIT_DELIM_CAPTURE);
+		$out = '';
+		foreach ($parts as $seg) {
+			if (preg_match('/^<\/?(strong|em|u)>$/i', $seg)) {
+				$out .= $seg;
+			} else {
+				$out .= str_replace("\n", '<br>',
+					htmlspecialchars($seg, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
+			}
+		}
+		return $out;
+	}
+
 	private static function setting($key)
 	{
 		$ci =& get_instance();

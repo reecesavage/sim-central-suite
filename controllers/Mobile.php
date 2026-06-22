@@ -267,7 +267,16 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '.sc-switch input:checked + .sc-slider{background:#3b82f6}'
 			. '.sc-switch input:checked + .sc-slider:before{transform:translateX(20px)}'
 			. '.sc-btn-discord{display:flex;align-items:center;justify-content:center;gap:8px;background:#5865F2;color:#fff;width:100%;padding:12px 16px;border-radius:8px;text-decoration:none;font-weight:600}'
-			. '.sc-btn-discord svg{width:20px;height:20px;flex:0 0 auto}';
+			. '.sc-btn-discord svg{width:20px;height:20px;flex:0 0 auto}'
+			// Rich-text editor toolbar
+			. '.sc-toolbar{display:flex;gap:6px;margin-bottom:4px}'
+			. '.sc-toolbar-btn{background:#262b36;border:1px solid #2b3040;color:#e6e8eb;border-radius:6px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:15px;line-height:1.4;font-family:inherit}'
+			. '.sc-toolbar-btn:active{background:#3b82f6;color:#fff}'
+			. '.sc-editor{display:block;width:100%;min-height:240px;padding:11px 12px;border:1px solid #2b3040;border-radius:8px;background:#161a22;color:#e6e8eb;font:inherit;outline:none;overflow-y:auto;word-break:break-word;line-height:1.5;box-sizing:border-box}'
+			. '.sc-editor:focus{border-color:#3b82f6}'
+			// Read-only notice and post body display
+			. '.sc-notice{background:#0d2137;color:#7dc4f0;padding:10px 12px;border-radius:8px;margin:0 0 14px;font-size:14px}'
+			. '.sc-post-body{margin:16px 0;line-height:1.7;font-size:15px;border-top:1px solid #1c2029;padding-top:14px}';
 	}
 
 	// ---------- post list ----------
@@ -278,7 +287,7 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		$charIds = \nova_ext_sim_central\PostWrite::userCharacterIds($uid);
 
 		$drafts = ! empty($charIds) ? $this->posts->get_saved_posts($charIds)->result() : array();
-		$recent = $this->posts->get_user_posts($uid, 15, 'activated')->result();
+		$recent = ! empty($charIds) ? \nova_ext_sim_central\PostWrite::postsByChars($charIds, 'activated', 15) : array();
 
 		$body = '';
 		$flash = $this->session->flashdata('sc_mobile');
@@ -325,9 +334,12 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		$this->_gate();
 		$this->_requireLogin();
 
-		$uid = (int) $this->session->userdata('userid');
-		$id  = $this->uri->segment(5);
-		$id  = ($id !== null && ctype_digit((string) $id)) ? (int) $id : 0;
+		$uid      = (int) $this->session->userdata('userid');
+		$id       = $this->uri->segment(5);
+		$id       = ($id !== null && ctype_digit((string) $id)) ? (int) $id : 0;
+		$editFlag = ($this->uri->segment(6) === 'edit');
+
+		$isActivated = false;
 
 		if ($id > 0) {
 			$row = $this->posts->get_post($id);
@@ -339,12 +351,31 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 				$this->session->set_flashdata('sc_mobile', 'You can only edit posts you are an author on.');
 				redirect($this->_u());
 			}
+
+			$isPosted = in_array($row->post_status, array('activated', 'pending'), true);
+
+			// Non-edit access to a posted post → read-only view.
+			if ($isPosted && ! $editFlag) {
+				$this->_readonlyPost($row, $uid);
+				return;
+			}
+
+			// Check lock before entering edit mode.
+			$lock = \nova_ext_sim_central\PostWrite::lockState($row, $uid);
+			if ($lock['state'] === 'held') {
+				$this->_readonlyPost($row, $uid,
+					'Locked by '.$lock['owner'].', editing '.$lock['age'].' min ago.');
+				return;
+			}
+			\nova_ext_sim_central\PostWrite::acquireLock($id, $uid);
+
+			$isActivated = $isPosted;
 			$values = $this->_valuesFromPost($row);
 		} else {
 			$values = $this->_defaultValues($uid);
 		}
 
-		$this->_editor($id, $values, '');
+		$this->_editor($id, $values, '', $isActivated);
 	}
 
 	public function save()
@@ -357,10 +388,23 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		$publish = ($this->input->post('action') === 'post');
 		$values  = $this->_valuesFromInput();
 
+		// Fetch existing post early so we can pass $isActivated to _editor() on
+		// validation errors and have the correct button labels on redisplay.
+		$existing = null;
+		if ($postId > 0) {
+			$existing = $this->posts->get_post($postId);
+			if ( ! $existing || ! $this->_userOnPost($existing, $uid)) {
+				$this->session->set_flashdata('sc_mobile', 'You can only edit posts you are an author on.');
+				redirect($this->_u());
+			}
+		}
+		$isActivated = $existing
+			&& in_array($existing->post_status, array('activated', 'pending'), true);
+
 		// --- validate ---
 		$title = trim($values['title']);
 		if ($title === '') {
-			return $this->_editor($postId, $values, 'A title is required.');
+			return $this->_editor($postId, $values, 'A title is required.', $isActivated);
 		}
 
 		$authorIds = array();
@@ -370,31 +414,22 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		}
 		$authorIds = array_keys($authorIds);
 		if (empty($authorIds) || ! $this->_charactersExist($authorIds)) {
-			return $this->_editor($postId, $values, 'Pick at least one valid author.');
+			return $this->_editor($postId, $values, 'Pick at least one valid author.', $isActivated);
 		}
 
 		$userChars = \nova_ext_sim_central\PostWrite::userCharacterIds($uid);
 		if (empty(array_intersect($authorIds, $userChars))) {
-			return $this->_editor($postId, $values, 'At least one of your own characters must be on the post.');
+			return $this->_editor($postId, $values, 'At least one of your own characters must be on the post.', $isActivated);
 		}
 
 		$missionId = (int) $values['mission_id'];
 		if ($missionId <= 0 || $this->db->where('mission_id', $missionId)->count_all_results('missions') < 1) {
-			return $this->_editor($postId, $values, 'Choose a mission.');
+			return $this->_editor($postId, $values, 'Choose a mission.', $isActivated);
 		}
 
 		$tlErrors = \nova_ext_sim_central\PostWrite::timelineErrors($missionId, $values);
 		if ( ! empty($tlErrors)) {
-			return $this->_editor($postId, $values, $tlErrors[0]);
-		}
-
-		$existing = null;
-		if ($postId > 0) {
-			$existing = $this->posts->get_post($postId);
-			if ( ! $existing || ! $this->_userOnPost($existing, $uid)) {
-				$this->session->set_flashdata('sc_mobile', 'You can only edit posts you are an author on.');
-				redirect($this->_u());
-			}
+			return $this->_editor($postId, $values, $tlErrors[0], $isActivated);
 		}
 
 		// --- assemble ---
@@ -448,6 +483,10 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			}
 		}
 
+		if ($postId > 0) {
+			\nova_ext_sim_central\PostWrite::releaseLock($postId);
+		}
+
 		if ($status === 'activated' && ! $wasActivated) {
 			\nova_ext_sim_central\PostWrite::afterActivate($newId, $authorIds, $actor);
 		} elseif ($status === 'saved') {
@@ -471,14 +510,52 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			$this->session->set_flashdata('sc_mobile', 'You can only delete posts you are an author on.');
 			redirect($this->_u());
 		}
+		\nova_ext_sim_central\PostWrite::releaseLock($postId);
 		$this->posts->delete_post($postId);
 		$this->session->set_flashdata('sc_mobile', 'Post deleted.');
 		redirect($this->_u());
 	}
 
+	/** Return a posted/pending post to saved (draft) status without editing content. */
+	public function unpost()
+	{
+		$this->_gate();
+		$this->_requireLogin();
+
+		$uid    = (int) $this->session->userdata('userid');
+		$postId = (int) $this->input->post('post_id');
+		$row    = $postId > 0 ? $this->posts->get_post($postId) : false;
+		if ( ! $row || ! $this->_userOnPost($row, $uid)) {
+			$this->session->set_flashdata('sc_mobile', 'You can only update posts you are an author on.');
+			redirect($this->_u());
+		}
+		\nova_ext_sim_central\PostWrite::releaseLock($postId);
+		$this->posts->update_post($postId, array(
+			'post_status'      => 'saved',
+			'post_last_update' => now(),
+		));
+		$this->session->set_flashdata('sc_mobile', 'Post returned to draft.');
+		redirect($this->_u());
+	}
+
+	/** Release lock and return to the post view (no content changes). */
+	public function cancel()
+	{
+		$this->_gate();
+		$this->_requireLogin();
+
+		$uid    = (int) $this->session->userdata('userid');
+		$postId = (int) $this->input->post('post_id');
+		$row    = $postId > 0 ? $this->posts->get_post($postId) : false;
+		if ($row && $this->_userOnPost($row, $uid)) {
+			\nova_ext_sim_central\PostWrite::releaseLock($postId);
+		}
+		redirect($postId > 0 ? $this->_u('post/'.$postId) : $this->_u());
+	}
+
 	// ---------- editor helpers ----------
 
-	private function _editor($postId, $values, $error)
+	private function _editor($postId, $values, $error, $isActivated = false)
 	{
 		$uid       = (int) $this->session->userdata('userid');
 		$orderedOn = $this->_featureOn('ordered_mission_posts');
@@ -489,19 +566,27 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			$b .= '<div class="sc-error">'.$this->_esc($error).'</div>';
 		}
 
-		$b .= '<form method="post" action="'.$this->_esc($this->_u('save')).'">'.$this->_csrf()
+		$editorHtml = \nova_ext_sim_central\PostWrite::storedToEditorHtml($values['body']);
+
+		$b .= '<form method="post" action="'.$this->_esc($this->_u('save')).'" id="sc-post-form">'.$this->_csrf()
 			. '<input type="hidden" name="post_id" value="'.(int) $postId.'">'
 			. '<label>Title<input type="text" name="title" value="'.$this->_esc($values['title']).'" required></label>'
 			. '<label>Mission'.$this->_missionSelect((int) $values['mission_id']).'</label>'
 			. '<div class="sc-section">Authors</div>'
 			. '<p class="sc-meta">At least one of your characters is required; add co-authors as needed.</p>'
 			. $this->_authorChecks((array) $values['authors'], $uid)
-			. '<label>Post<textarea name="body">'.$this->_esc($values['body']).'</textarea></label>'
+			. '<label>Post'
+			. '<div class="sc-toolbar" role="toolbar" aria-label="Formatting">'
+			. '<button type="button" class="sc-toolbar-btn" data-cmd="bold" title="Bold"><b>B</b></button>'
+			. '<button type="button" class="sc-toolbar-btn" data-cmd="italic" title="Italic"><i>I</i></button>'
+			. '<button type="button" class="sc-toolbar-btn" data-cmd="underline" title="Underline"><u>U</u></button>'
+			. '</div>'
+			. '<div class="sc-editor" id="sc-editor" contenteditable="true">'.$editorHtml.'</div>'
+			. '<input type="hidden" name="body" id="sc-body-hidden">'
+			. '</label>'
 			. '<label>Location<input type="text" name="location" value="'.$this->_esc($values['location']).'"></label>';
 
 		if ($orderedOn) {
-			// Only the field the selected mission uses is shown (toggled by the
-			// script below from the mission's data-config); time applies to all.
 			$b .= '<div class="sc-section">Timeline</div>'
 				. '<label>Time<input type="time" name="ordered_time" value="'.$this->_esc($values['ordered_time']).'"></label>'
 				. '<div data-tl="day_time"><label>Mission day<input type="number" name="ordered_day" value="'.$this->_esc($values['ordered_day']).'"></label></div>'
@@ -511,31 +596,107 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			$b .= '<label>Timeline<input type="text" name="timeline" value="'.$this->_esc($values['timeline']).'"></label>';
 		}
 
-		$b .= '<label>Tags<input type="text" name="tags" value="'.$this->_esc($values['tags']).'" placeholder="comma, separated"></label>'
-			. '<div class="sc-actions">'
-			. '<button class="sc-btn sc-btn-sec" name="action" value="save" type="submit">Save draft</button>'
-			. '<button class="sc-btn sc-btn-main" name="action" value="post" type="submit">Post</button>'
-			. '</div></form>';
+		$b .= '<label>Tags<input type="text" name="tags" value="'.$this->_esc($values['tags']).'" placeholder="comma, separated"></label>';
+
+		if ($isActivated) {
+			// Editing an already-posted post: save keeps it active, or demote to draft.
+			$b .= '<div class="sc-actions">'
+				. '<button class="sc-btn sc-btn-sec" name="action" value="save" type="submit">Return to draft</button>'
+				. '<button class="sc-btn sc-btn-main" name="action" value="post" type="submit">Save changes</button>'
+				. '</div>';
+		} else {
+			$b .= '<div class="sc-actions">'
+				. '<button class="sc-btn sc-btn-sec" name="action" value="save" type="submit">Save draft</button>'
+				. '<button class="sc-btn sc-btn-main" name="action" value="post" type="submit">Post</button>'
+				. '</div>';
+		}
+
+		$b .= '</form>';
 
 		if ($isEdit) {
-			$b .= '<form method="post" action="'.$this->_esc($this->_u('delete')).'" onsubmit="return confirm(\'Delete this post? This cannot be undone.\');">'
+			$b .= '<form method="post" action="'.$this->_esc($this->_u('cancel')).'" style="margin-top:8px">'
+				. $this->_csrf()
+				. '<input type="hidden" name="post_id" value="'.(int) $postId.'">'
+				. '<div class="sc-actions"><button class="sc-btn sc-btn-sec" type="submit">Cancel editing</button></div>'
+				. '</form>'
+				. '<form method="post" action="'.$this->_esc($this->_u('delete')).'" onsubmit="return confirm(\'Delete this post? This cannot be undone.\');">'
 				. $this->_csrf()
 				. '<input type="hidden" name="post_id" value="'.(int) $postId.'">'
 				. '<div class="sc-actions"><button class="sc-btn sc-btn-danger" type="submit">Delete</button></div>'
 				. '</form>';
 		}
 
-		// Show only the selected mission's timeline field; filter co-authors.
 		$b .= '<script>(function(){'
+			// Mission timeline field visibility
 			. 'var sel=document.getElementById("sc-mission");'
 			. 'function tl(){var c=(sel&&sel.options[sel.selectedIndex])?sel.options[sel.selectedIndex].getAttribute("data-config"):"";'
 			. 'var w=document.querySelectorAll("[data-tl]");for(var i=0;i<w.length;i++){w[i].style.display=(w[i].getAttribute("data-tl")===c)?"":"none";}}'
 			. 'if(sel){sel.addEventListener("change",tl);}tl();'
+			// Co-author search filter
 			. 'var s=document.getElementById("sc-author-search");if(s){s.addEventListener("input",function(){var q=this.value.toLowerCase();'
 			. 'var r=document.querySelectorAll("#sc-coauthors .sc-toggle");for(var j=0;j<r.length;j++){var n=r[j].getAttribute("data-name")||"";r[j].style.display=(n.indexOf(q)!==-1)?"":"none";}});}'
+			// Formatting toolbar: B / I / U
+			. 'document.querySelectorAll(".sc-toolbar-btn").forEach(function(b){b.addEventListener("mousedown",function(e){'
+			. 'e.preventDefault();document.execCommand(this.getAttribute("data-cmd"),false,null);});});'
+			// Serialize contenteditable → hidden field on submit
+			. 'var form=document.getElementById("sc-post-form");'
+			. 'var ed=document.getElementById("sc-editor");'
+			. 'var hid=document.getElementById("sc-body-hidden");'
+			. 'if(form&&ed&&hid){form.addEventListener("submit",function(){hid.value=ed.innerHTML;});}'
 			. '})();</script>';
 
 		$this->_layout($isEdit ? 'Edit post' : 'New post', $b);
+	}
+
+	/** Render the read-only view for an activated/pending post. */
+	private function _readonlyPost($row, $uid, $lockMsg = '')
+	{
+		$postId   = (int) $row->post_id;
+		$title    = ($row->post_title !== '' && $row->post_title !== null) ? $row->post_title : '(untitled)';
+		$isLocked = ($lockMsg !== '');
+		$status   = (string) $row->post_status;
+
+		$b  = '<h1>'.$this->_esc($title).'</h1>';
+		$b .= '<p class="sc-meta">'
+			.($status === 'pending' ? 'Pending moderation' : 'Posted')
+			.(! empty($row->post_date) ? ' &middot; '.date('M j, Y', (int) $row->post_date) : '')
+			.'</p>';
+
+		if ($isLocked) {
+			$b .= '<div class="sc-error">'.$this->_esc($lockMsg).'</div>';
+		} else {
+			$b .= '<div class="sc-notice">This post is already posted.</div>';
+		}
+
+		// Post body: display via Nova's own pipeline (nl2br + HTMLPurifier).
+		$bodyHtml = function_exists('text_output')
+			? text_output((string) $row->post_content, '')
+			: nl2br(\nova_ext_sim_central\PostWrite::storedToEditorHtml((string) $row->post_content));
+		$b .= '<div class="sc-post-body">'.$bodyHtml.'</div>';
+
+		if ( ! empty($row->post_location)) {
+			$b .= '<p class="sc-meta"><strong>Location:</strong> '.$this->_esc($row->post_location).'</p>';
+		}
+		if ( ! empty($row->post_timeline)) {
+			$b .= '<p class="sc-meta"><strong>Timeline:</strong> '.$this->_esc($row->post_timeline).'</p>';
+		}
+		if ( ! empty($row->post_tags)) {
+			$b .= '<p class="sc-meta"><strong>Tags:</strong> '.$this->_esc($row->post_tags).'</p>';
+		}
+
+		if ( ! $isLocked) {
+			$editUrl = $this->_esc($this->_u('post/'.$postId.'/edit'));
+			$b .= '<div class="sc-actions" style="margin-top:16px">'
+				. '<a class="sc-btn sc-btn-sec" href="'.$editUrl.'">Edit post</a>'
+				. '</div>'
+				. '<form method="post" action="'.$this->_esc($this->_u('unpost')).'" style="margin-top:8px">'
+				. $this->_csrf()
+				. '<input type="hidden" name="post_id" value="'.$postId.'">'
+				. '<button class="sc-btn sc-btn-danger" type="submit">Return to draft</button>'
+				. '</form>';
+		}
+
+		$this->_layout($title, $b);
 	}
 
 	private function _missionSelect($selected)
@@ -618,7 +779,7 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		$authors = $this->input->post('authors');
 		return array(
 			'title'            => (string) $this->input->post('title'),
-			'body'             => (string) $this->input->post('body'),
+			'body'             => \nova_ext_sim_central\PostWrite::editorHtmlToStored((string) $this->input->post('body')),
 			'mission_id'       => (int) $this->input->post('mission_id'),
 			'authors'          => is_array($authors) ? $authors : array(),
 			'location'         => (string) $this->input->post('location'),
