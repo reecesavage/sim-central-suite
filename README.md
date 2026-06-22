@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.16.2"><img src="https://img.shields.io/badge/Version-v1.16.2-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.17.0"><img src="https://img.shields.io/badge/Version-v1.17.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -19,6 +19,7 @@ This release rolls up:
 - **Content Filter** &mdash; age-gates mission post bodies on the public site and in the RSS feed for sims that permit adult language, violence, or sexual content; configurable default for the per-post toggle; writer attests at submit time
 - **Discord Sign-In** &mdash; "Sign in with Discord" / "Sign up with Discord" via the [Sim Central Broker](https://github.com/reecesavage/sim-central-broker); one Discord app serves any number of sims (no per-sim redirect URI registration); link/unlink controls on User Account; optional site-wide enforcement that requires every user to keep Discord linked; optional Discord-only sign-in mode with a sysadmin email + password escape hatch; optional gate by Discord server membership (any-of / all-of); Discord-branded buttons everywhere
 - **REST API** *(v1.9.1+)* &mdash; HTTP API for external integrations (n8n flows, scripts, dashboards, mobile apps); admin-issued bearer tokens with per-scope grants (`posts:read`, `characters:read`, `missions:read`, plus write scopes `users:write`, `webhooks:read`, `webhooks:write` *(v1.14.0+)* and post-authoring scopes `posts:read.own` / `posts:write` / `posts:delete` + `*.all` sysadmin variants *(v1.15.0+)*, and `tokens:read` / `tokens:write` *(v1.16.0+)*); read endpoints for posts/characters/missions, `GET /me` identity, **post authoring** (create/update/delete, save or activate) for user-bound tokens, **API token management** (list/create/revoke/delete, sysadmin-bound) *(v1.16.0+)*, plus write endpoints to disable/reactivate users + their characters and manage event webhooks; per-token rate limiting; one-time-display token reveal; surface suite-feature fields (summary, ordered post day/time, display name, etc.) in the JSON when those features are on
+- **Mobile Site** *(v1.17.0+)* &mdash; a lightweight, phone-friendly site at `/mobile` where members log in and write, save, post, edit, or delete their own mission posts without fighting Nova's desktop views on a phone. Honours Discord Sign-In settings on login (Discord-only sims show the Discord button, not a password form), enforces Nova's permissions, and reuses the suite's post engine so webhooks/emails/ordered-timelines/moderation behave identically to the desktop site.
 - **Event Webhooks** *(v1.11.0+)* &mdash; fire HTTP webhooks when posts are saved or activated. Discord-formatted (rich embed with @mentions of linked authors via stored Discord IDs) or generic JSON (for n8n etc.). Multiple webhooks per event, per-webhook event subscriptions, customisable Discord embed templates for `post.posted`, `log.posted`, and `news.posted` *(v1.13.0+)*, an optional per-event Discord role ping *(v1.13.0+)*, **Test** button for each webhook, fire-and-forget delivery with status visibility (last_status + last_error per webhook).
 
 ## Requirements
@@ -197,6 +198,16 @@ UI additions when enabled (all using Discord-branded buttons in Discord Blurple 
 The suite does not auto-create user accounts from Discord sign-ins &mdash; every new user goes through Nova's normal join flow (including character approval). Discord auth is identity attachment, not a join bypass.
 
 For complete self-hosting instructions, broker architecture, and the security model, see <https://github.com/reecesavage/sim-central-broker>.
+
+### Mobile Site *(v1.17.0+)*
+
+Nova's front-end isn't responsive, so the sim is rough on a phone. The Mobile Site is a separate, deliberately minimal interface (its own mobile-first HTML/CSS, not a restyle of the desktop skin) at **`/mobile`** where members manage their mission posts on the go.
+
+- **Login** uses Nova's own auth and **honours the Discord Sign-In feature**: if the sim enforces Discord-only login, the mobile login shows only the "Sign in with Discord" button (no password form); otherwise it shows both. Discord sign-ins run through the existing broker flow (guild checks and required-link enforcement included) and return to `/mobile`.
+- **Posts**: members see their drafts and recent posts, then create / edit / **save** (draft) / **post** (activate) / delete — limited to posts they author, exactly like the desktop site. Co-authors can be added; at least one of the member's own characters is required.
+- **Shared engine**: all writes go through the same `PostWrite` path as the REST API, so the `post.saved` / `post.posted` webhooks, save/post emails, ordered-mission-post timelines (validated against each mission's scheme), and per-user moderation all behave identically.
+- **The clean `/mobile` URL** is served by a tiny `pre_system` hook (auto-registered in `application/config/hooks.php` when you configure the feature, with a manual fallback shown if that file isn't writable). The full URL `/extensions/nova_ext_sim_central/Mobile` always works too.
+- **Off by default**; enable under *Sim Central Suite &rarr; Mobile Site*. Phase 1 is mission posts; personal logs and news may follow.
 
 ### REST API *(v1.9.1+)*
 

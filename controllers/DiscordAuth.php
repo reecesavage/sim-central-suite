@@ -87,7 +87,8 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 			if ($loginStatus !== 'ok') {
 				return $this->_renderError($this->_friendlyError('login_'.$loginCode));
 			}
-			redirect(site_url(''));
+			// intent=mobile sends Discord sign-ins to the suite's mobile site.
+			redirect($intent === 'mobile' ? site_url('mobile') : site_url(''));
 			return;
 		}
 

@@ -166,6 +166,37 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		Template::render();
 	}
 
+	public function mobile()
+	{
+		Auth::check_access('site/settings');
+
+		if ( ! isset($this->features['mobile'])) {
+			show_404();
+			return;
+		}
+
+		// Register the pre_system hook that serves the clean /mobile URL.
+		// Self-heals on every visit (idempotent); falls back to a manual
+		// snippet if application/config/hooks.php isn't writable.
+		$routeStatus = $this->_ensureMobileRoute();
+
+		$f               = $this->features['mobile'];
+		$data            = array();
+		$data['title']   = 'Sim Central Suite - '.$f['name'];
+		$data['feature'] = $f;
+		$data['route']   = $routeStatus;
+		$data['mobile_url'] = site_url('mobile');
+		$data['ext_url']    = site_url('extensions/nova_ext_sim_central/Mobile');
+		$data['images']     = $this->_iconImages();
+
+		$this->_regions['title']  .= $f['name'];
+		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
+			->view('mobile', $this->skin, 'admin', $data);
+
+		Template::assign($this->_regions);
+		Template::render();
+	}
+
 	public function webhooks()
 	{
 		Auth::check_access('site/settings');
@@ -792,6 +823,14 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 					),
 				),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/webhooks',
+			),
+			'mobile' => array(
+				'name'        => 'Mobile Site',
+				'summary'     => 'A lightweight, mobile-friendly site at /mobile where members log in and write, save, post, edit, or delete their mission posts - without fighting Nova\'s desktop views on a phone.',
+				'standalone'  => null,
+				'requires_db' => array(),
+				'shims'       => array(),
+				'config_route' => 'extensions/nova_ext_sim_central/Manage/mobile',
 			),
 			'ordered_mission_posts' => array(
 				'name'        => 'Ordered Mission Posts',
@@ -1601,6 +1640,54 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			."\n   bypass Nova's CSRF check (the API authenticates via the X-API-Key header,"
 			."\n   not session cookies). Safe to remove if you disable the REST API. */"
 			."\n\$config['csrf_exclude_uris'][] = '".$line."';\n";
+
+		$ok = @file_put_contents($path, $contents.$block, LOCK_EX);
+		$result['status'] = ($ok !== false) ? 'added' : 'manual';
+		return $result;
+	}
+
+	/**
+	 * Register the pre_system hook that serves the mobile site at /mobile.
+	 *
+	 * Nova's extension dispatch can't be reached via a normal route alias
+	 * (it reads the raw URI segments), so we add a pre_system hook that
+	 * rewrites /mobile -> the extension path before CI parses the URI. The
+	 * registration lives in application/config/hooks.php (site file, loaded at
+	 * bootstrap, upgrade-safe). Idempotent; status mirrors the CSRF helper:
+	 *   present | added | manual (not writable) | missing
+	 */
+	private function _ensureMobileRoute()
+	{
+		$path   = APPPATH.'config/hooks.php';
+		$marker = 'sim_central_mobile_route';
+		$result = array('status' => 'manual', 'path' => $path);
+
+		if ( ! is_file($path)) {
+			$result['status'] = 'missing';
+			return $result;
+		}
+		$contents = @file_get_contents($path);
+		if ($contents === false) {
+			$result['status'] = 'unreadable';
+			return $result;
+		}
+		if (strpos($contents, $marker) !== false) {
+			$result['status'] = 'present';
+			return $result;
+		}
+		if ( ! is_writable($path)) {
+			$result['status'] = 'manual';
+			return $result;
+		}
+
+		$block = "\n/* nova_ext_sim_central: serve the mobile site at a clean /mobile URL"
+			."\n   (pre_system URI rewrite - safe to remove if you disable Mobile Site). */"
+			."\n\$hook['pre_system'][] = array("
+			."\n\t'class'    => '',"
+			."\n\t'function' => 'sim_central_mobile_route',"
+			."\n\t'filename' => 'mobile_route_hook.php',"
+			."\n\t'filepath' => 'extensions/nova_ext_sim_central/hooks',"
+			."\n);\n";
 
 		$ok = @file_put_contents($path, $contents.$block, LOCK_EX);
 		$result['status'] = ($ok !== false) ? 'added' : 'manual';

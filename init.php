@@ -145,7 +145,11 @@ if ( ! empty($simCentralFeatures['rest_api'])) {
 	// ApiEndpoints is consumed by Api::openapi() and Manage::api_explorer().
 	// Loading it alongside ApiAuth keeps the on-demand work in the same place.
 	require_once dirname(__FILE__).'/libraries/ApiEndpoints.php';
-	// PostWrite backs the Api post create/update/delete endpoints.
+}
+
+// PostWrite backs both the REST API post endpoints and the mobile site's
+// post create/update/delete, so load it whenever either feature is on.
+if ( ! empty($simCentralFeatures['rest_api']) || ! empty($simCentralFeatures['mobile'])) {
 	require_once dirname(__FILE__).'/libraries/PostWrite.php';
 }
 
