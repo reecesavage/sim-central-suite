@@ -236,6 +236,11 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			$this->_emit(422, array('error' => 'mission_id is required and must reference an existing mission.'));
 		}
 
+		$tlErrors = \nova_ext_sim_central\PostWrite::timelineErrors($missionId, $input);
+		if ( ! empty($tlErrors)) {
+			$this->_emit(422, array('error' => $tlErrors[0], 'details' => $tlErrors));
+		}
+
 		// Authorization: at least one author must be one of the user's own
 		// characters, unless this is a sysadmin write.all token.
 		$canAll = $this->_canUseAll($token, $user, 'write');
@@ -374,6 +379,16 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			}
 			$fields['post_mission'] = $mid;
 		}
+
+		// Validate ordered-timeline fields against the post's effective mission
+		// (the new one if changing missions, else the existing one).
+		$effectiveMission = array_key_exists('mission_id', $input)
+			? (int) $input['mission_id'] : (int) $existing->post_mission;
+		$tlErrors = \nova_ext_sim_central\PostWrite::timelineErrors($effectiveMission, $input);
+		if ( ! empty($tlErrors)) {
+			$this->_emit(422, array('error' => $tlErrors[0], 'details' => $tlErrors));
+		}
+
 		if (array_key_exists('location', $input)) { $fields['post_location'] = (string) $input['location']; }
 		if (array_key_exists('timeline', $input)) { $fields['post_timeline'] = (string) $input['timeline']; }
 		if (array_key_exists('tags', $input))     { $fields['post_tags']     = $this->_tagsCsv($input); }

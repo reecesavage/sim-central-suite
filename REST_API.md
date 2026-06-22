@@ -233,8 +233,18 @@ Create a mission post. Scope: `posts:write` (user-bound). Body as JSON, form-enc
 | `location` | | In-character location |
 | `timeline` | | Free-text timeline (when *Ordered Mission Posts* is **off**) |
 | `tags` | | Array or CSV |
-| `ordered_day` / `ordered_time` / `ordered_date` / `ordered_stardate` | | *Ordered Mission Posts* fields (when **on**); times accept `HH:MM` or `HHMM` |
+| `ordered_day` / `ordered_time` / `ordered_date` / `ordered_stardate` | | *Ordered Mission Posts* timeline fields (when **on**); times accept `HH:MM` or `HHMM`. **Must match the mission's scheme** — see below. |
 | `age_gated` | | *Content Filter*: gate this post behind the age notice |
+
+**Timeline fields are mission-config-aware** *(v1.16.1+)*. Each mission using Ordered Mission Posts has one scheme, exposed as `ordered.config` on [`GET /missions/{id}`](#get-missions):
+
+| Mission `config` | Send | (`ordered_time` always applies) |
+|---|---|---|
+| `day_time` | `ordered_day` | ✓ |
+| `date_time` | `ordered_date` | ✓ |
+| `stardate` | `ordered_stardate` | ✓ |
+
+Sending a field that doesn't match the mission's scheme returns **`422`** (e.g. `ordered_day` to a `date_time` mission) — read the mission's `config` first and send the matching field. Omitting the timeline is fine; the mission's defaults apply. (The legacy "chronological" day/time variant is handled automatically — you still send `ordered_day` / `ordered_time`.)
 
 The **saving character** (`post_saved`, and the webhook `actor`) is derived: the bound user's main character if it's on the post, else their highest-ranked character on it. Activating (`status=activated`) fires the `post.posted` webhook, stamps `last_post`, sends the sim's crew email, and honours per-user moderation — a post by a moderated author lands as `pending`.
 

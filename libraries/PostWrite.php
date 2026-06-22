@@ -116,6 +116,50 @@ class PostWrite
 	}
 
 	/**
+	 * Validate the request's ordered-timeline fields against the mission's
+	 * configuration. Ordered Mission Posts supports three per-mission schemes -
+	 * day_time, date_time, stardate - and only the matching field is meaningful;
+	 * sending the wrong one would otherwise be silently stored and ignored.
+	 *
+	 * Returns an array of error strings (empty = OK). Enforced only when the
+	 * Ordered Mission Posts feature is on and the mission has a known config.
+	 * `ordered_time` is valid for every scheme; a missing timeline is allowed
+	 * (drafts fill it in later, defaults apply) - we only reject a field that
+	 * doesn't match the mission's scheme.
+	 */
+	public static function timelineErrors($missionId, array $body)
+	{
+		$features = Config::features();
+		if (empty($features['ordered_mission_posts'])) {
+			return array();
+		}
+
+		$ci =& get_instance();
+		$m = $ci->db->select('mission_ext_ordered_config_setting')
+			->get_where('missions', array('mission_id' => (int) $missionId))->row();
+		$config = $m && isset($m->mission_ext_ordered_config_setting)
+			? (string) $m->mission_ext_ordered_config_setting : '';
+
+		$expected = array(
+			'day_time'  => 'ordered_day',
+			'date_time' => 'ordered_date',
+			'stardate'  => 'ordered_stardate',
+		);
+		if ( ! isset($expected[$config])) {
+			return array(); // mission not ordered-configured; nothing to enforce
+		}
+		$want = $expected[$config];
+
+		$errors = array();
+		foreach (array('ordered_day', 'ordered_date', 'ordered_stardate') as $field) {
+			if (self::has($body, $field) && $field !== $want) {
+				$errors[] = "This mission uses the '".$config."' timeline scheme; send '".$want."' (not '".$field."').";
+			}
+		}
+		return $errors;
+	}
+
+	/**
 	 * Seed $_POST with the keys Nova's `db.*.prepare.posts` listeners read, so
 	 * Ordered Mission Posts and Content Filter columns are written by their own
 	 * existing code instead of being duplicated here. Only sets keys the caller
