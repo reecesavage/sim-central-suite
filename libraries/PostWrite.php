@@ -462,7 +462,40 @@ class PostWrite
 		$ci->posts->update_post_lock((int) $postId, 0, false);
 	}
 
-	private static function lockOwnerName($userId)
+	/**
+	 * Build a serialisable lock-status structure for a post row.
+	 * locked=false when free or stale; locked=true with detail when held.
+	 */
+	public static function lockProjection($post)
+	{
+		$lockUser = (int) $post->post_lock_user;
+		$lockDate = (int) $post->post_lock_date;
+
+		if ($lockUser === 0 || $lockDate === 0) {
+			return array('locked' => false, 'post_id' => (int) $post->post_id);
+		}
+
+		$ageSecs = now() - $lockDate;
+		if ($ageSecs >= self::LOCK_STALE_SECS) {
+			return array('locked' => false, 'post_id' => (int) $post->post_id);
+		}
+
+		$ageMinutes    = (int) floor($ageSecs / 60);
+		$expireMinutes = (int) ceil((self::LOCK_STALE_SECS - $ageSecs) / 60);
+
+		return array(
+			'locked'  => true,
+			'post_id' => (int) $post->post_id,
+			'lock'    => array(
+				'user_id'            => $lockUser,
+				'owner'              => self::lockOwnerName($lockUser),
+				'age_minutes'        => $ageMinutes,
+				'expires_in_minutes' => $expireMinutes,
+			),
+		);
+	}
+
+	public static function lockOwnerName($userId)
 	{
 		$ci =& get_instance();
 		$user = $ci->db->select('main_char')->get_where('users', array('userid' => (int) $userId))->row();

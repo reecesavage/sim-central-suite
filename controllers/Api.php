@@ -103,6 +103,13 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$this->load->model('posts_model', 'posts');
 
 		$method = $this->_method();
+
+		// Sub-resource: GET|POST|PUT|DELETE /posts/{id}/lock
+		if ($this->uri->segment(6) === 'lock') {
+			$this->_postsLock($method);
+			return;
+		}
+
 		if ($method !== 'GET') {
 			$this->_postsWrite($method);
 			return;
@@ -323,6 +330,19 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			$this->_emit(403, array('error' => 'You can only edit posts you author.'));
 		}
 
+		// Respect post locking: another user's active lock blocks the update.
+		$lockInfo = \nova_ext_sim_central\PostWrite::lockProjection($existing);
+		if ($lockInfo['locked'] && (int) $existing->post_lock_user !== (int) $user->userid) {
+			$l = $lockInfo['lock'];
+			$this->_emit(423, array_merge(
+				array('error' => 'Post is locked by '.$l['owner']
+					.' ('.$l['age_minutes'].' min ago).'
+					.' Use POST /posts/'.$id.'/lock to acquire the lock,'
+					.' or wait '.$l['expires_in_minutes'].' min for it to expire.'),
+				$lockInfo
+			));
+		}
+
 		$input = $this->_readInput();
 
 		// Author set: keep existing unless the request supplies a new one.
@@ -409,6 +429,11 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			\nova_ext_sim_central\PostWrite::afterSave($id, $actor);
 		}
 
+		// Auto-release the caller's lock now that the write is committed.
+		if ((int) $existing->post_lock_user === (int) $user->userid) {
+			\nova_ext_sim_central\PostWrite::releaseLock($id);
+		}
+
 		$row = $this->posts->get_post($id);
 		$this->_emit(200, $this->_projectPost($row));
 	}
@@ -427,6 +452,116 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		}
 		$this->posts->delete_post($id);
 		$this->_emit(200, array('deleted' => true, 'id' => $id));
+	}
+
+	// ---------- post lock sub-resource ----------
+
+	/**
+	 * Handles GET|POST|PUT|DELETE /posts/{id}/lock.
+	 *
+	 * GET    — return current lock state.
+	 * POST   — acquire (or re-acquire own / stale) lock. 409 if held by another.
+	 * PUT    — heartbeat: renew expiry. 409 if you don't own the lock.
+	 * DELETE — release. posts:write.all sysadmin tokens may force-release any lock.
+	 *
+	 * All verbs require posts:write scope + a bound user.
+	 * PATCH /posts/{id} honours the lock (423 if another user holds it) and
+	 * auto-releases your lock on a successful save.
+	 */
+	private function _postsLock($method)
+	{
+		$token = $this->_authenticate(null);
+		$this->_requireTokenScope($token, 'posts:write');
+		$user = $this->_requireBoundUser($token);
+		$uid  = (int) $user->userid;
+
+		$seg = $this->uri->segment(5);
+		if ($seg === null || ! ctype_digit((string) $seg)) {
+			$this->_emit(400, array('error' => 'Post id required in path before /lock.'));
+		}
+		$id = (int) $seg;
+
+		$row = $this->posts->get_post($id);
+		if ( ! $row) {
+			$this->_emit(404, array('error' => 'Post not found.'));
+		}
+
+		$canAll = $this->_canUseAll($token, $user, 'write');
+		if ( ! $canAll && ! $this->_userOnPost($row, $uid)) {
+			$this->_emit(403, array('error' => 'You can only manage locks on posts you author.'));
+		}
+
+		$info = \nova_ext_sim_central\PostWrite::lockProjection($row);
+		$stale = (int) ceil(\nova_ext_sim_central\PostWrite::LOCK_STALE_SECS / 60);
+
+		switch ($method) {
+
+			case 'GET':
+				$info['yours'] = ($info['locked'] && (int) $row->post_lock_user === $uid);
+				$this->_emit(200, $info);
+				break;
+
+			case 'POST':
+				// Block only if another user holds a fresh lock.
+				if ($info['locked'] && (int) $row->post_lock_user !== $uid) {
+					$l = $info['lock'];
+					$this->_emit(409, array_merge(
+						array('error' => 'Post is locked by '.$l['owner']
+							.' ('.$l['age_minutes'].' min ago).'
+							.' Expires in '.$l['expires_in_minutes'].' min.'),
+						$info
+					));
+				}
+				\nova_ext_sim_central\PostWrite::acquireLock($id, $uid);
+				$this->_emit(200, array(
+					'locked'             => true,
+					'acquired'           => true,
+					'yours'              => true,
+					'post_id'            => $id,
+					'expires_in_minutes' => $stale,
+				));
+				break;
+
+			case 'PUT':
+				// Heartbeat: renew expiry. Must own the lock (active or stale-but-unclaimed).
+				if ((int) $row->post_lock_user !== $uid) {
+					$this->_emit(409, array_merge(
+						array('error' => 'You do not hold the lock on this post. Acquire it first via POST /posts/'.$id.'/lock.'),
+						$info
+					));
+				}
+				\nova_ext_sim_central\PostWrite::acquireLock($id, $uid);
+				$this->_emit(200, array(
+					'locked'             => true,
+					'renewed'            => true,
+					'yours'              => true,
+					'post_id'            => $id,
+					'expires_in_minutes' => $stale,
+				));
+				break;
+
+			case 'DELETE':
+				$lockUser = (int) $row->post_lock_user;
+				if ($lockUser !== 0 && $lockUser !== $uid && ! $canAll) {
+					$this->_emit(403, array_merge(
+						array('error' => 'You do not hold the lock on this post.'),
+						$info
+					));
+				}
+				\nova_ext_sim_central\PostWrite::releaseLock($id);
+				$this->_emit(200, array(
+					'locked'   => false,
+					'released' => true,
+					'post_id'  => $id,
+				));
+				break;
+
+			default:
+				$this->_emit(405, array(
+					'error'   => 'Method not allowed on /posts/{id}/lock.',
+					'allowed' => array('GET', 'POST', 'PUT', 'DELETE'),
+				));
+		}
 	}
 
 	// ---------- post write helpers ----------
