@@ -12,6 +12,10 @@
 		: array();
 	$guildMode  = isset($settings['discord_auth_required_guild_mode']) ? (string) $settings['discord_auth_required_guild_mode'] : 'any';
 	$guildHelp  = isset($settings['discord_auth_required_guild_help']) ? (string) $settings['discord_auth_required_guild_help'] : '';
+
+	$excludeUserIds = isset($settings['discord_auth_required_exclude_user_ids']) && is_array($settings['discord_auth_required_exclude_user_ids'])
+		? $settings['discord_auth_required_exclude_user_ids']
+		: array();
 ?>
 
 <?php echo text_output($title, 'h1', 'page-head');?>
@@ -142,6 +146,21 @@
 	<p class="fontSmall gray italic">
 		Turning this on also turns on <em>Require all users to keep Discord linked</em> (implicit
 		dependency) &mdash; users must have Discord linked to sign in via Discord.
+	</p>
+
+	<p>
+		<kbd>Exempt user IDs</kbd>
+		<br>
+		<textarea name="discord_auth_required_exclude_user_ids" rows="3" cols="40"
+			style="font-family: monospace;"
+			placeholder="One Nova user ID per line, e.g.&#10;1&#10;42"><?php echo htmlspecialchars(implode("\n", $excludeUserIds), ENT_QUOTES);?></textarea>
+	</p>
+	<p class="fontSmall gray italic">
+		Nova user IDs listed here are never redirected to the forced-link / Discord-only page, even
+		when the enforcement above is on. Use for service accounts or members who legitimately can't
+		link Discord. These are <strong>Nova user IDs</strong> (not Discord IDs), and there is no
+		automatic sysadmin exemption from the link requirement &mdash; list any sysadmins you want
+		exempt here too.
 	</p>
 
 	<br>

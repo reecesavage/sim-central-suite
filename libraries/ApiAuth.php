@@ -55,6 +55,7 @@ class ApiAuth
 			'webhooks:write'   => 'Create, update, and delete event webhooks.',
 			'tokens:read'      => 'List API tokens and view their metadata. Requires a sysadmin-bound token.',
 			'tokens:write'     => 'Create, revoke, and delete API tokens. Requires a sysadmin-bound token.',
+			'suite:update'     => 'Trigger a Sim Central Suite upgrade (GET /suite, POST /suite/update). Requires a sysadmin-bound token.',
 		);
 	}
 

@@ -1,5 +1,5 @@
 {
-	"version": "1.20.0",
+	"version": "1.21.0",
 	"features": {
 		"display_name": false,
 		"anti_spam": false,
@@ -112,6 +112,10 @@
 		"discord_auth_required_guild_ids": [],
 		"discord_auth_required_guild_mode": "any",
 		"discord_auth_required_guild_help": "",
-		"rest_api_rate_limit_per_minute": 60
+		"discord_auth_required_exclude_user_ids": [],
+		"rest_api_rate_limit_per_minute": 60,
+		"sim_central_broker_url": "https://registry.simcentral.host",
+		"sim_central_broker_secret": "",
+		"sim_central_report_enabled": 1
 	}
 }

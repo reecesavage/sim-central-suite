@@ -31,6 +31,14 @@ require_once dirname(__FILE__).'/libraries/UpdateCheck.php';
 // invoked from the Manage controller's do_update action.
 require_once dirname(__FILE__).'/libraries/Updater.php';
 
+// Broker / SimCentralAccess / PhoneHome back the Sim Central access button
+// and the periodic status report. Loaded unconditionally and cheap: nothing
+// here touches the DB or network until something explicitly calls it
+// (SimCentralAccess from the REST API page, PhoneHome from UpdateCheck).
+require_once dirname(__FILE__).'/libraries/Broker.php';
+require_once dirname(__FILE__).'/libraries/SimCentralAccess.php';
+require_once dirname(__FILE__).'/libraries/PhoneHome.php';
+
 // TimelineFormat is consumed by Feed.php (loaded for summary OR ordered)
 // and by ordered_mission_posts events; load unconditionally so both
 // gates get it without duplication.

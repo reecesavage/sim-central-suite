@@ -1048,6 +1048,11 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				$this->db->where('id', $id)->update('sim_central_api_tokens', array(
 					'revoked_at' => $revoke ? date('Y-m-d H:i:s') : null,
 				));
+				// If this is the Sim Central access token, tell the broker it's
+				// been revoked so Sim Central stops using a dead credential.
+				if ($revoke) {
+					\nova_ext_sim_central\SimCentralAccess::onTokenRevoked($id);
+				}
 				$row = $this->db->get_where('sim_central_api_tokens', array('id' => $id))->row();
 				$this->_emit(200, $this->_projectToken($row));
 				break;
@@ -1057,6 +1062,9 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				if ( ! $hasId) { $this->_emit(400, array('error' => 'Token id required in path.')); }
 				$existing = $this->db->get_where('sim_central_api_tokens', array('id' => $id))->row();
 				if ( ! $existing) { $this->_emit(404, array('error' => 'Token not found.')); }
+				// Notify the broker before the row vanishes if this is the
+				// Sim Central access token.
+				\nova_ext_sim_central\SimCentralAccess::onTokenDeleted($id);
 				$this->db->where('id', $id)->delete('sim_central_api_tokens');
 				$this->_emit(200, array('deleted' => true, 'id' => $id));
 				break;
@@ -1064,6 +1072,90 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			default:
 				$this->_emit(405, array('error' => 'Method not allowed. Use GET, POST, PATCH, PUT, or DELETE.'));
 		}
+	}
+
+	/**
+	 * Suite self-management.
+	 *
+	 *   GET  /Api/suite          - installed version, latest available, whether
+	 *                              an update is pending. Any valid token.
+	 *   POST /Api/suite/update   - run the one-click updater to a target version
+	 *                              (body `version`, default = latest release).
+	 *                              Requires a sysadmin-bound token with suite:update.
+	 *
+	 * Lets Sim Central see what each sim is running and push an upgrade without
+	 * an admin logging into the ACP. The update swaps the extension on disk, so
+	 * the response is the LAST thing the old code does - the caller should re-
+	 * read GET /suite afterwards to confirm the new version.
+	 */
+	public function suite()
+	{
+		$this->_gate();
+
+		$method = $this->_method();
+		$action = $this->uri->segment(5);
+
+		// GET /suite - status (any valid token).
+		if ($method === 'GET' && ($action === null || $action === '')) {
+			$this->_authenticate(null);
+			$update  = \nova_ext_sim_central\UpdateCheck::latest();
+			$current = \nova_ext_sim_central\Config::version();
+			$latest  = isset($update['latest_version']) ? $update['latest_version'] : null;
+			$this->_emit(200, array(
+				'version'          => $current,
+				'latest_version'   => $latest,
+				'update_available' => \nova_ext_sim_central\UpdateCheck::isNewer($latest, $current),
+				'checked_at'       => ( ! empty($update['checked_at'])) ? date('c', (int) $update['checked_at']) : null,
+				'release_url'      => isset($update['release_url']) ? $update['release_url'] : null,
+			));
+		}
+
+		// POST /suite/update - run the updater (sysadmin-bound suite:update token).
+		if ($method === 'POST' && $action === 'update') {
+			$token = $this->_authenticate(null);
+			$this->_requireSysadminToken($token, 'suite:update');
+
+			$input   = $this->_readInput();
+			$version = isset($input['version']) ? trim((string) $input['version']) : '';
+			if ($version === '') {
+				// Default to the newest published release; force a fresh check so
+				// we don't act on a stale 24h cache.
+				$update  = \nova_ext_sim_central\UpdateCheck::latest(true);
+				$version = isset($update['latest_version']) ? (string) $update['latest_version'] : '';
+			}
+			if ($version === '') {
+				$this->_emit(422, array('error' => 'No target version given and the latest release could not be determined.'));
+			}
+
+			$current = \nova_ext_sim_central\Config::version();
+			if (ltrim($version, 'vV') === ltrim($current, 'vV') && ! $this->_boolParam($input, 'force', false)) {
+				$this->_emit(200, array(
+					'status'  => 'noop',
+					'message' => 'Already on '.$current.'. Pass "force": true to reinstall.',
+					'version' => $current,
+				));
+			}
+
+			$result  = \nova_ext_sim_central\Updater::update($version);
+			$status  = $result[0];
+			$message = $result[1];
+			$context = isset($result[2]) ? $result[2] : array();
+
+			if ($status === 'success') {
+				$this->_emit(200, array(
+					'status'  => 'success',
+					'message' => $message,
+					'version' => isset($context['version']) ? $context['version'] : $version,
+					'backup'  => isset($context['backup']) ? $context['backup'] : null,
+				));
+			}
+			$this->_emit(500, array('status' => 'error', 'error' => $message));
+		}
+
+		$this->_emit(405, array(
+			'error'   => 'Use GET /suite for status or POST /suite/update to upgrade.',
+			'allowed' => array('GET /suite', 'POST /suite/update'),
+		));
 	}
 
 	// ---------- internals ----------

@@ -60,6 +60,7 @@ class UpdateCheck
 			// so we don't retry on every page load until the TTL elapses.
 			$cache['checked_at'] = $now;
 			self::saveCache($cache);
+			self::afterRefresh($force);
 			return self::shape($cache);
 		}
 
@@ -69,6 +70,7 @@ class UpdateCheck
 			'release_url'    => $fresh['url'],
 		);
 		self::saveCache($cache);
+		self::afterRefresh($force);
 		return self::shape($cache);
 	}
 
@@ -110,6 +112,20 @@ class UpdateCheck
 	}
 
 	// ---------- internals ----------
+
+	/**
+	 * Runs once per refresh pass (i.e. at most once per TTL window, or on a
+	 * forced recheck). Lets PhoneHome send its periodic status report on the
+	 * same cadence as the GitHub check, so the suite makes at most one set of
+	 * outbound calls per day from the same trigger points. Best-effort and
+	 * silent - PhoneHome swallows its own errors.
+	 */
+	private static function afterRefresh($force)
+	{
+		if (class_exists('\nova_ext_sim_central\PhoneHome')) {
+			\nova_ext_sim_central\PhoneHome::maybeReport((bool) $force);
+		}
+	}
 
 	private static function shape(array $cache)
 	{

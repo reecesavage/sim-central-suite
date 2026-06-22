@@ -101,6 +101,12 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$action      = isset($_POST['action']) ? $_POST['action'] : '';
 		$newTokenRaw = null;
 
+		// Broker URL + secret live in the suite settings row, not the tokens
+		// table, so this save works even before "Setup database" has run.
+		if ($action === 'save_broker_config') {
+			$this->_flash($this->_saveBrokerConfig());
+		}
+
 		// Defensive: the tokens table is created by the feature's *Setup
 		// database* step. If the admin enabled the feature toggle but hasn't
 		// run setup_database yet, every query below would 500. Detect that
@@ -115,6 +121,11 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				$this->_flash($this->_revokeApiToken());
 			} elseif ($action === 'delete_token') {
 				$this->_flash($this->_deleteApiToken());
+			} elseif ($action === 'grant_sim_central') {
+				list($result, $newTokenRaw) = \nova_ext_sim_central\SimCentralAccess::grant();
+				$this->_flash($result);
+			} elseif ($action === 'revoke_sim_central') {
+				$this->_flash(\nova_ext_sim_central\SimCentralAccess::revoke());
 			}
 		}
 
@@ -140,6 +151,11 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['new_token_raw']    = $newTokenRaw;
 		$data['images']           = $this->_iconImages();
 		$data['api_base_url']     = site_url('extensions/nova_ext_sim_central/Api');
+
+		// Sim Central access state for the "Grant access" card + broker config.
+		$data['sim_central']        = \nova_ext_sim_central\SimCentralAccess::status();
+		$data['sim_central_scopes'] = \nova_ext_sim_central\SimCentralAccess::scopes();
+		$data['broker_configured']  = \nova_ext_sim_central\Broker::isConfigured();
 
 		// Active users for the "bind token to user" dropdown, labelled with their
 		// main character so two users with the same name are distinguishable.
@@ -1355,6 +1371,22 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			$json['setting']['discord_auth_required_guild_help'] = (string) $_POST['discord_auth_required_guild_help'];
 		}
 
+		// Nova user IDs exempt from the link-required / Discord-only
+		// enforcement. Same newline/comma split as the guild-ids field,
+		// filtered to positive integers and de-duplicated.
+		if (isset($_POST['discord_auth_required_exclude_user_ids'])) {
+			$raw   = (string) $_POST['discord_auth_required_exclude_user_ids'];
+			$lines = preg_split('/\r\n|\r|\n|,/', $raw);
+			$ids   = array();
+			foreach ($lines as $line) {
+				$clean = (int) preg_replace('/[^0-9]/', '', (string) $line);
+				if ($clean > 0 && ! in_array($clean, $ids, true)) {
+					$ids[] = $clean;
+				}
+			}
+			$json['setting']['discord_auth_required_exclude_user_ids'] = $ids;
+		}
+
 		// Migrate any leftover discord_auth_mode key from v1.3.0 - no
 		// behavioural meaning in v1.3.1+.
 		if (isset($json['setting']['discord_auth_mode'])) {
@@ -1742,6 +1774,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$this->db->where('id', $id)->update('sim_central_api_tokens', array(
 			'revoked_at' => date('Y-m-d H:i:s'),
 		));
+		// If this is the Sim Central access token, tell the broker.
+		\nova_ext_sim_central\SimCentralAccess::onTokenRevoked($id);
 		return array('success', 'Token revoked.');
 	}
 
@@ -1751,8 +1785,42 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		if ($id <= 0) {
 			return array('error', 'Invalid token id.');
 		}
+		// Notify the broker before the row vanishes if this is the Sim
+		// Central access token.
+		\nova_ext_sim_central\SimCentralAccess::onTokenDeleted($id);
 		$this->db->where('id', $id)->delete('sim_central_api_tokens');
 		return array('success', 'Token deleted.');
+	}
+
+	/**
+	 * Persist the Sim Central broker URL + shared secret (and the periodic
+	 * status-report toggle) into the suite settings row. The secret is left
+	 * unchanged when the field is submitted blank, so an admin re-saving the
+	 * URL doesn't have to re-enter it.
+	 */
+	private function _saveBrokerConfig()
+	{
+		$json = $this->_loadConfig(dirname(__FILE__).'/../config.json');
+		if ( ! isset($json['setting']) || ! is_array($json['setting'])) {
+			$json['setting'] = array();
+		}
+
+		if (isset($_POST['sim_central_broker_url'])) {
+			$json['setting']['sim_central_broker_url'] = trim((string) $_POST['sim_central_broker_url']);
+		}
+		// Blank secret field = keep the stored secret (avoids clobbering it on
+		// an unrelated save). Send a single space to deliberately clear it.
+		if (isset($_POST['sim_central_broker_secret'])) {
+			$secret = (string) $_POST['sim_central_broker_secret'];
+			if (trim($secret) !== '') {
+				$json['setting']['sim_central_broker_secret'] = ($secret === ' ') ? '' : $secret;
+			}
+		}
+		$json['setting']['sim_central_report_enabled'] =
+			( ! empty($_POST['sim_central_report_enabled'])) ? 1 : 0;
+
+		$this->_saveConfig(dirname(__FILE__).'/../config.json', $json);
+		return array('success', 'Broker configuration saved.');
 	}
 
 	// ---------- webhooks helpers ----------

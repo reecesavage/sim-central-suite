@@ -60,6 +60,96 @@
 	&nbsp;<span class="fontSmall gray">&mdash; interactive try-it page for every endpoint, plus a link to the OpenAPI 3.0 spec.</span>
 </p>
 
+<?php
+	$sc            = isset($sim_central) && is_array($sim_central) ? $sim_central : array();
+	$scScopes      = isset($sim_central_scopes) && is_array($sim_central_scopes) ? $sim_central_scopes : array();
+	$brokerOk      = ! empty($broker_configured);
+	$settings      = isset($jsons['setting']) && is_array($jsons['setting']) ? $jsons['setting'] : array();
+	$brokerUrl     = isset($settings['sim_central_broker_url']) ? (string) $settings['sim_central_broker_url'] : '';
+	$brokerSecret  = isset($settings['sim_central_broker_secret']) ? (string) $settings['sim_central_broker_secret'] : '';
+	$reportOn      = ! isset($settings['sim_central_report_enabled']) || (int) $settings['sim_central_report_enabled'] === 1;
+	$scActive      = ! empty($sc['active']);
+	$scGranted     = ! empty($sc['granted']);
+?>
+
+<br>
+<div style="border: 2px solid #2a6db0; background: #eef5fc; padding: 12px; margin-bottom: 14px;">
+	<?php echo text_output('Sim Central access', 'h3', 'page-subhead');?>
+	<p class="fontSmall">
+		Grant the Sim Central service a single pre-scoped token so it can reach this sim's API,
+		manage webhooks, activate/deactivate members, and push suite upgrades. The token is registered
+		with your broker automatically; revoking it tells the broker to stop using it.
+	</p>
+
+	<p class="fontSmall">
+		<strong>Status:</strong>
+		<?php if ($scActive): ?>
+			<span style="color: #2a7;">&#10003; Granted &amp; active</span>
+			<?php if ( ! empty($sc['token_prefix'])): ?>
+				&mdash; <code><?php echo htmlspecialchars($sc['token_prefix'], ENT_QUOTES);?>&hellip;</code>
+			<?php endif;?>
+		<?php elseif ($scGranted): ?>
+			<span style="color: #c33;">Revoked / inactive</span> &mdash; re-grant to issue a fresh token.
+		<?php else: ?>
+			<span class="gray">Not granted yet.</span>
+		<?php endif;?>
+		<?php if ( ! empty($sc['last_registered_at'])): ?>
+			<br><span class="gray">Last broker sync: <?php echo htmlspecialchars($sc['last_registered_at'], ENT_QUOTES);?>
+			(<?php echo htmlspecialchars(isset($sc['broker_status']) ? (string) $sc['broker_status'] : 'unknown', ENT_QUOTES);?><?php
+				echo ( ! empty($sc['last_broker_error'])) ? ': '.htmlspecialchars($sc['last_broker_error'], ENT_QUOTES) : ''; ?>)</span>
+		<?php endif;?>
+	</p>
+
+	<p class="fontSmall gray">
+		Scopes granted: <?php echo htmlspecialchars(implode(', ', $scScopes), ENT_QUOTES);?>
+	</p>
+
+	<?php if ( ! $brokerOk): ?>
+		<p class="fontSmall" style="color: #b36b00;">Set a <strong>Broker URL</strong> below first so the token can be delivered to Sim Central automatically.</p>
+	<?php endif;?>
+
+	<?php if ($scActive): ?>
+		<?php echo form_open('extensions/nova_ext_sim_central/Manage/rest_api/');?>
+			<input type="hidden" name="action" value="revoke_sim_central">
+			<input type="submit" class="button-secondary" value="Revoke Sim Central access"
+				onclick="return confirm('Revoke Sim Central access? The broker will be told to stop using this token.');">
+		<?php echo form_close();?>
+	<?php else: ?>
+		<?php echo form_open('extensions/nova_ext_sim_central/Manage/rest_api/');?>
+			<input type="hidden" name="action" value="grant_sim_central">
+			<input type="submit" class="button-primary" value="Grant Sim Central access">
+		<?php echo form_close();?>
+	<?php endif;?>
+
+	<hr style="margin: 12px 0; border: none; border-top: 1px solid #cdd;">
+
+	<?php echo form_open('extensions/nova_ext_sim_central/Manage/rest_api/');?>
+		<input type="hidden" name="action" value="save_broker_config">
+		<p class="fontSmall">
+			<kbd>Broker URL</kbd>
+			<input type="text" name="sim_central_broker_url" size="40"
+				value="<?php echo htmlspecialchars($brokerUrl, ENT_QUOTES);?>"
+				placeholder="https://registry.simcentral.host">
+			<br><span class="fontSmall gray">Base URL of your Sim Central broker Worker.</span>
+		</p>
+		<p class="fontSmall">
+			<kbd>Broker secret</kbd>
+			<input type="password" name="sim_central_broker_secret" size="40" autocomplete="new-password"
+				placeholder="<?php echo $brokerSecret !== '' ? '•••••••• (set — leave blank to keep)' : 'shared secret';?>">
+			<br><span class="fontSmall gray">Must match the Worker's <code>SC_SHARED_SECRET</code>. Leave blank to keep the current value.</span>
+		</p>
+		<p class="fontSmall">
+			<label>
+				<input type="hidden" name="sim_central_report_enabled" value="0">
+				<input type="checkbox" name="sim_central_report_enabled" value="1" <?php echo $reportOn ? 'checked' : '';?>>
+				Send periodic status to Sim Central
+			</label>
+			<br><span class="fontSmall gray">A daily heartbeat so Sim Central can keep a live picture of which sims run the suite.</span>
+		</p>
+		<input type="submit" class="button-secondary" value="Save broker configuration">
+	<?php echo form_close();?>
+</div>
+
 <?php if ($newTokenRaw !== null): ?>
 	<br>
 	<div style="border: 2px solid #c80; background: #fff8e1; padding: 12px;">

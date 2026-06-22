@@ -72,6 +72,7 @@ Tokens carry an explicit scope list. Endpoints check for the scope they require 
 | `webhooks:write` | Create, update, and delete event webhooks |
 | `tokens:read` | List API tokens and view their metadata *(sysadmin-bound token only)* |
 | `tokens:write` | Create, revoke, and delete API tokens *(sysadmin-bound token only)* |
+| `suite:update` | View suite version status and trigger a suite upgrade *(sysadmin-bound token only)* |
 
 A token with no relevant scope but a valid signature will still get `200` on `/ping`, since that endpoint is scope-free by design (it's the n8n "does this token work?" check).
 
@@ -510,6 +511,37 @@ Revoke or un-revoke a token. Scope: `tokens:write`. Body `{"revoked": true}` (de
 ### `DELETE /tokens/{id}`
 
 Permanently delete a token. Scope: `tokens:write`. Returns `{ "deleted": true, "id": 7 }`. (Prefer `PATCH` revoke when you want to keep the audit trail.)
+
+---
+
+## Suite management *(v1.21.0+)*
+
+Inspect what version of the suite a sim is running and push an upgrade remotely &mdash; the same one-click updater the ACP dashboard uses, driven over the API.
+
+### `GET /suite`
+
+Version status. Any valid token. Reuses the suite's 24h update-check cache.
+
+```json
+{
+  "version": "1.21.0",
+  "latest_version": "1.22.0",
+  "update_available": true,
+  "checked_at": "2026-06-22T09:00:00+00:00",
+  "release_url": "https://github.com/reecesavage/sim-central-suite/releases/tag/v1.22.0"
+}
+```
+
+### `POST /suite/update`
+
+Run the updater. Scope: `suite:update` **and** a sysadmin-bound token (same gate as the token endpoints).
+
+| Field | Default | Notes |
+|---|---|---|
+| `version` | latest published release | Target version, e.g. `1.22.0`. Omit to upgrade to the newest release (forces a fresh release check). |
+| `force` | `false` | Reinstall even when `version` equals the installed version. |
+
+On success returns `{ "status": "success", "version": "1.22.0", "backup": "nova_ext_sim_central.backup-..." }`. When already on the target version (and not `force`) returns `{ "status": "noop", ... }`. The update swaps the extension on disk, so this response is the **last** thing the old code returns &mdash; re-read `GET /suite` afterwards to confirm. Updater preflight failures (no `cURL`/`ZipArchive`, unwritable extension dir, an update already in progress) come back as `500` with the reason in `error`.
 
 ---
 

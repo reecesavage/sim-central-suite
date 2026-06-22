@@ -150,6 +150,11 @@ class DiscordAuth
 			return false;
 		}
 
+		// Admin-listed exempt users (e.g. service accounts) bypass enforcement.
+		if (self::isLinkExcluded($userid)) {
+			return false;
+		}
+
 		// Session marker set on Discord-flow login OR Discord link
 		// (linking proves ownership, equivalent to a fresh sign-in).
 		if ($ci->session->userdata('discord_auth_signed_in')) {
@@ -232,6 +237,38 @@ class DiscordAuth
 		return isset($c['setting']['discord_auth_required_guild_help'])
 			? (string) $c['setting']['discord_auth_required_guild_help']
 			: '';
+	}
+
+	/**
+	 * Nova user IDs exempt from the link-required / Discord-only enforcement.
+	 * Stored under `discord_auth_required_exclude_user_ids` as a JSON array of
+	 * integers. Empty = nobody is exempt. Unlike the Discord-only flow there is
+	 * NO automatic sysadmin exemption for the link requirement - exemptions are
+	 * exactly the IDs the admin lists here.
+	 */
+	public static function excludedLinkUserIds()
+	{
+		$c = Config::load();
+		$v = isset($c['setting']['discord_auth_required_exclude_user_ids'])
+			? $c['setting']['discord_auth_required_exclude_user_ids'] : array();
+		if ( ! is_array($v)) {
+			return array();
+		}
+		$out = array();
+		foreach ($v as $id) {
+			$id = (int) preg_replace('/[^0-9]/', '', (string) $id);
+			if ($id > 0 && ! in_array($id, $out, true)) {
+				$out[] = $id;
+			}
+		}
+		return $out;
+	}
+
+	/** True if the given Nova user id is exempt from the link enforcement. */
+	public static function isLinkExcluded($userid)
+	{
+		$userid = (int) $userid;
+		return $userid > 0 && in_array($userid, self::excludedLinkUserIds(), true);
 	}
 
 	/**
@@ -320,6 +357,11 @@ class DiscordAuth
 		if ($userid <= 0) {
 			return false;
 		}
+		// Admin-listed exempt users (e.g. service accounts) bypass enforcement.
+		if (self::isLinkExcluded($userid)) {
+			return false;
+		}
+
 		$ci->load->model('users_model', 'user');
 		$row = $ci->user->get_user($userid);
 		if ( ! $row) {
