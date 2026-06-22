@@ -576,7 +576,7 @@ class PostWrite
 		$stored = self::editorHtmlToStored((string) $content);
 
 		// Split on inline tags so we can escape text but keep tags verbatim.
-		$parts = preg_split('/(<\/?(strong|em|u)>)/i', $stored, -1, PREG_SPLIT_DELIM_CAPTURE);
+		$parts = preg_split('/(<\/?(?:strong|em|u)>)/i', $stored, -1, PREG_SPLIT_DELIM_CAPTURE);
 		$out = '';
 		foreach ($parts as $seg) {
 			if (preg_match('/^<\/?(strong|em|u)>$/i', $seg)) {
