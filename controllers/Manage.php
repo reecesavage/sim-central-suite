@@ -186,7 +186,7 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['feature'] = $f;
 		$data['route']   = $routeStatus;
 		$data['mobile_url'] = site_url('mobile');
-		$data['ext_url']    = site_url('extensions/nova_ext_sim_central/Mobile');
+		$data['ext_url']    = site_url('extensions/nova_ext_sim_central/Mobile/index');
 		$data['images']     = $this->_iconImages();
 
 		$this->_regions['title']  .= $f['name'];

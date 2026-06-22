@@ -49,6 +49,11 @@ if ( ! function_exists('sim_central_mobile_route')) {
 		// capital-M extension path, or any other path that contains "mobile".
 		if (preg_match('#^/mobile(/.*)?$#', $rel, $m)) {
 			$rest = isset($m[1]) ? $m[1] : '';
+			// Nova's extension dispatch needs an explicit method segment (it
+			// doesn't default to index), so bare /mobile -> Mobile/index.
+			if ($rest === '' || $rest === '/') {
+				$rest = '/index';
+			}
 			$_SERVER['REQUEST_URI'] = $base.'/'.$target.$rest.$query;
 			if (isset($_SERVER['PATH_INFO'])) {
 				$_SERVER['PATH_INFO'] = '/'.$target.$rest;

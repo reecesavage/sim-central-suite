@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.17.1"><img src="https://img.shields.io/badge/Version-v1.17.1-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.17.2"><img src="https://img.shields.io/badge/Version-v1.17.2-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -206,7 +206,7 @@ Nova's front-end isn't responsive, so the sim is rough on a phone. The Mobile Si
 - **Login** uses Nova's own auth and **honours the Discord Sign-In feature**: if the sim enforces Discord-only login, the mobile login shows only the "Sign in with Discord" button (no password form); otherwise it shows both. Discord sign-ins run through the existing broker flow (guild checks and required-link enforcement included) and return to `/mobile`.
 - **Posts**: members see their drafts and recent posts, then create / edit / **save** (draft) / **post** (activate) / delete — limited to posts they author, exactly like the desktop site. Co-authors can be added; at least one of the member's own characters is required.
 - **Shared engine**: all writes go through the same `PostWrite` path as the REST API, so the `post.saved` / `post.posted` webhooks, save/post emails, ordered-mission-post timelines (validated against each mission's scheme), and per-user moderation all behave identically.
-- **The clean `/mobile` URL** is served by a tiny `pre_system` hook (auto-registered in `application/config/hooks.php` when you configure the feature, with a manual fallback shown if that file isn't writable). The full URL `/extensions/nova_ext_sim_central/Mobile` always works too.
+- **The clean `/mobile` URL** is served by a tiny `pre_system` hook (auto-registered in `application/config/hooks.php` when you configure the feature, with a manual fallback shown if that file isn't writable). The full URL `/extensions/nova_ext_sim_central/Mobile/index` always works too.
 - **Off by default**; enable under *Sim Central Suite &rarr; Mobile Site*. Phase 1 is mission posts; personal logs and news may follow.
 
 ### REST API *(v1.9.1+)*
