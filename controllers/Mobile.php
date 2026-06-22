@@ -84,10 +84,14 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 
 		$discordBtn = '';
 		if ($discordOn) {
+			// Our own compact button (Nova's brandedButtonHtml ships an unsized
+			// SVG that fills the screen in this minimal layout). intent=mobile
+			// makes the Discord login return to /mobile after sign-in.
 			$url = site_url('extensions/nova_ext_sim_central/DiscordAuth/start').'?intent=mobile';
-			$discordBtn = method_exists('nova_ext_sim_central\\DiscordAuth', 'brandedButtonHtml')
-				? \nova_ext_sim_central\DiscordAuth::brandedButtonHtml('Sign in with Discord', $url)
-				: '<a class="sc-btn sc-btn-discord" href="'.$this->_esc($url).'">Sign in with Discord</a>';
+			$icon = '<svg viewBox="0 0 71 55" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+				. '<path fill="currentColor" d="M60.10 4.90A58.55 58.55 0 0 0 45.65.42a.23.23 0 0 0-.23.11 40.78 40.78 0 0 0-1.8 3.7 54.05 54.05 0 0 0-16.23 0 37.4 37.4 0 0 0-1.83-3.7.24.24 0 0 0-.23-.11A58.39 58.39 0 0 0 10.88 4.9a.21.21 0 0 0-.1.08C1.58 18.73-.94 32.14.29 45.39a.24.24 0 0 0 .09.16 58.86 58.86 0 0 0 17.72 8.96.23.23 0 0 0 .25-.08 41.9 41.9 0 0 0 3.61-5.88.23.23 0 0 0-.12-.32 38.77 38.77 0 0 1-5.54-2.64.23.23 0 0 1-.02-.38c.37-.28.75-.57 1.1-.86a.22.22 0 0 1 .23-.03c11.62 5.3 24.2 5.3 35.68 0a.22.22 0 0 1 .24.03c.36.29.73.58 1.1.86a.23.23 0 0 1-.02.38 36.4 36.4 0 0 1-5.54 2.63.23.23 0 0 0-.12.33 47.07 47.07 0 0 0 3.6 5.87.23.23 0 0 0 .26.09 58.66 58.66 0 0 0 17.74-8.96.23.23 0 0 0 .1-.16c1.48-15.32-2.48-28.62-10.5-40.41a.18.18 0 0 0-.09-.09ZM23.73 37.33c-3.5 0-6.38-3.21-6.38-7.16 0-3.94 2.83-7.16 6.38-7.16 3.58 0 6.43 3.24 6.38 7.16 0 3.95-2.83 7.16-6.38 7.16Zm23.59 0c-3.5 0-6.38-3.21-6.38-7.16 0-3.94 2.83-7.16 6.38-7.16 3.58 0 6.43 3.24 6.38 7.16 0 3.95-2.8 7.16-6.38 7.16Z"/>'
+				. '</svg>';
+			$discordBtn = '<a class="sc-btn-discord" href="'.$this->_esc($url).'">'.$icon.'<span>Sign in with Discord</span></a>';
 		}
 
 		$body  = '<h1>'.$this->_esc($this->_simName()).'</h1>';
@@ -251,8 +255,19 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '.sc-row{display:flex;gap:10px}.sc-row>*{flex:1}'
 			. '.sc-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.sc-actions>form{flex:1}.sc-actions .sc-btn{width:100%}'
 			. '.sc-authors{margin:0 0 12px}'
-			. '.sc-check{display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:15px;color:#e6e8eb}'
-			. '.sc-check input{width:auto;margin:0}';
+			. '.sc-search{margin:6px 0 10px}'
+			. '.sc-colist{max-height:280px;overflow:auto;border:1px solid #232733;border-radius:8px;padding:4px 10px}'
+			. '.sc-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid #1c2029}'
+			. '.sc-toggle:last-child{border-bottom:0}'
+			. '.sc-toggle-label{font-size:15px;color:#e6e8eb}'
+			. '.sc-switch{position:relative;display:inline-block;width:46px;height:26px;flex:0 0 auto}'
+			. '.sc-switch input{opacity:0;width:0;height:0;position:absolute;margin:0}'
+			. '.sc-slider{position:absolute;inset:0;background:#2b3040;border-radius:26px;transition:.15s;cursor:pointer}'
+			. '.sc-slider:before{content:"";position:absolute;height:20px;width:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.15s}'
+			. '.sc-switch input:checked + .sc-slider{background:#3b82f6}'
+			. '.sc-switch input:checked + .sc-slider:before{transform:translateX(20px)}'
+			. '.sc-btn-discord{display:flex;align-items:center;justify-content:center;gap:8px;background:#5865F2;color:#fff;width:100%;padding:12px 16px;border-radius:8px;text-decoration:none;font-weight:600}'
+			. '.sc-btn-discord svg{width:20px;height:20px;flex:0 0 auto}';
 	}
 
 	// ---------- post list ----------
@@ -485,15 +500,13 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '<label>Location<input type="text" name="location" value="'.$this->_esc($values['location']).'"></label>';
 
 		if ($orderedOn) {
+			// Only the field the selected mission uses is shown (toggled by the
+			// script below from the mission's data-config); time applies to all.
 			$b .= '<div class="sc-section">Timeline</div>'
-				. '<p class="sc-meta">Fill the field your mission uses (Day, Date, or Stardate). Time applies to all.</p>'
-				. '<div class="sc-row">'
 				. '<label>Time<input type="time" name="ordered_time" value="'.$this->_esc($values['ordered_time']).'"></label>'
-				. '<label>Day<input type="number" name="ordered_day" value="'.$this->_esc($values['ordered_day']).'"></label>'
-				. '</div><div class="sc-row">'
-				. '<label>Date<input type="date" name="ordered_date" value="'.$this->_esc($values['ordered_date']).'"></label>'
-				. '<label>Stardate<input type="text" name="ordered_stardate" value="'.$this->_esc($values['ordered_stardate']).'"></label>'
-				. '</div>';
+				. '<div data-tl="day_time"><label>Mission day<input type="number" name="ordered_day" value="'.$this->_esc($values['ordered_day']).'"></label></div>'
+				. '<div data-tl="date_time"><label>Date<input type="date" name="ordered_date" value="'.$this->_esc($values['ordered_date']).'"></label></div>'
+				. '<div data-tl="stardate"><label>Stardate<input type="text" name="ordered_stardate" value="'.$this->_esc($values['ordered_stardate']).'"></label></div>';
 		} else {
 			$b .= '<label>Timeline<input type="text" name="timeline" value="'.$this->_esc($values['timeline']).'"></label>';
 		}
@@ -512,19 +525,30 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 				. '</form>';
 		}
 
+		// Show only the selected mission's timeline field; filter co-authors.
+		$b .= '<script>(function(){'
+			. 'var sel=document.getElementById("sc-mission");'
+			. 'function tl(){var c=(sel&&sel.options[sel.selectedIndex])?sel.options[sel.selectedIndex].getAttribute("data-config"):"";'
+			. 'var w=document.querySelectorAll("[data-tl]");for(var i=0;i<w.length;i++){w[i].style.display=(w[i].getAttribute("data-tl")===c)?"":"none";}}'
+			. 'if(sel){sel.addEventListener("change",tl);}tl();'
+			. 'var s=document.getElementById("sc-author-search");if(s){s.addEventListener("input",function(){var q=this.value.toLowerCase();'
+			. 'var r=document.querySelectorAll("#sc-coauthors .sc-toggle");for(var j=0;j<r.length;j++){var n=r[j].getAttribute("data-name")||"";r[j].style.display=(n.indexOf(q)!==-1)?"":"none";}});}'
+			. '})();</script>';
+
 		$this->_layout($isEdit ? 'Edit post' : 'New post', $b);
 	}
 
 	private function _missionSelect($selected)
 	{
 		$rows = $this->missions->get_all_missions('current')->result();
-		$out  = '<select name="mission_id">';
+		$out  = '<select name="mission_id" id="sc-mission">';
 		if (empty($rows)) {
 			$out .= '<option value="">(no current missions)</option>';
 		}
 		foreach ($rows as $m) {
 			$sel = ((int) $m->mission_id === (int) $selected) ? ' selected' : '';
-			$out .= '<option value="'.(int) $m->mission_id.'"'.$sel.'>'.$this->_esc($m->mission_title).'</option>';
+			$cfg = isset($m->mission_ext_ordered_config_setting) ? (string) $m->mission_ext_ordered_config_setting : '';
+			$out .= '<option value="'.(int) $m->mission_id.'" data-config="'.$this->_esc($cfg).'"'.$sel.'>'.$this->_esc($m->mission_title).'</option>';
 		}
 		return $out.'</select>';
 	}
@@ -546,16 +570,22 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		foreach ($rows as $c) {
 			$name = ! empty($c->display_name) ? $c->display_name
 				: trim(($c->first_name ?? '').' '.($c->last_name ?? '').(empty($c->suffix) ? '' : ' '.$c->suffix));
-			$label = ($c->rank_name ? $this->_esc($c->rank_name).' ' : '').$this->_esc($name);
+			$label   = ($c->rank_name ? $this->_esc($c->rank_name).' ' : '').$this->_esc($name);
 			$checked = in_array((int) $c->charid, $selectedIds, true) ? ' checked' : '';
-			$row = '<label class="sc-check"><input type="checkbox" name="authors[]" value="'.(int) $c->charid.'"'.$checked.'> '.$label.'</label>';
-			if ((int) $c->user === $uid) { $mine .= $row; } else { $others .= $row; }
+			$toggle  = '<label class="sc-toggle" data-name="'.$this->_esc(strtolower($name)).'">'
+				. '<span class="sc-toggle-label">'.$label.'</span>'
+				. '<span class="sc-switch"><input type="checkbox" name="authors[]" value="'.(int) $c->charid.'"'.$checked.'><span class="sc-slider"></span></span>'
+				. '</label>';
+			if ((int) $c->user === $uid) { $mine .= $toggle; } else { $others .= $toggle; }
 		}
 
 		$html = '<div class="sc-authors">';
-		$html .= '<div class="sc-section">Your characters</div>'.($mine !== '' ? $mine : '<p class="sc-meta">You have no characters.</p>');
+		$html .= '<div class="sc-section">Your characters</div>'
+			. ($mine !== '' ? $mine : '<p class="sc-meta">You have no characters.</p>');
 		if ($others !== '') {
-			$html .= '<div class="sc-section">Co-authors</div>'.$others;
+			$html .= '<div class="sc-section">Co-authors</div>'
+				. '<input type="search" id="sc-author-search" class="sc-search" placeholder="Search characters…" autocomplete="off">'
+				. '<div class="sc-colist" id="sc-coauthors">'.$others.'</div>';
 		}
 		return $html.'</div>';
 	}
