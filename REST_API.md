@@ -532,9 +532,9 @@ Version status. Any valid token. Reuses the suite's 24h update-check cache.
 }
 ```
 
-### `POST /suite/update`
+### `POST /suite`
 
-Run the updater. Scope: `suite:update` **and** a sysadmin-bound token (same gate as the token endpoints).
+Run the updater. Scope: `suite:update` **and** a sysadmin-bound token (same gate as the token endpoints). Routing is by HTTP method, so any `POST` to `/suite` triggers the updater; the legacy `POST /suite/update` still works but `POST /suite` is preferred — the word "update" in a URL trips some hosts' mod_security rules and gets blocked at the web server.
 
 | Field | Default | Notes |
 |---|---|---|

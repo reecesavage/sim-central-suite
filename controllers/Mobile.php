@@ -773,7 +773,7 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '.sc-toolbar{display:flex;gap:6px;margin-bottom:4px}'
 			. '.sc-toolbar-btn{background:var(--sc-bg4);border:1px solid var(--sc-brd2);color:var(--sc-fg);border-radius:6px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:15px;line-height:1.4;font-family:inherit}'
 			. '.sc-toolbar-btn:active,.sc-toolbar-btn.sc-active{background:var(--sc-bl);color:#fff;border-color:var(--sc-bl)}'
-			. '.sc-editor{display:block;width:100%;min-height:240px;padding:11px 12px;border:1px solid var(--sc-brd2);border-radius:8px;background:var(--sc-bg3);color:var(--sc-fg);font:inherit;outline:none;overflow-y:auto;word-break:break-word;line-height:1.5;box-sizing:border-box}'
+			. '.sc-editor{display:block;width:100%;min-height:240px;margin:0 0 12px;padding:11px 12px;border:1px solid var(--sc-brd2);border-radius:8px;background:var(--sc-bg3);color:var(--sc-fg);font:inherit;outline:none;overflow-y:auto;word-break:break-word;line-height:1.5;box-sizing:border-box}'
 			. '.sc-editor:focus{border-color:var(--sc-bl)}'
 			// Post / log body display
 			. '.sc-post-body{margin:16px 0;line-height:1.7;font-size:15px;border-top:1px solid var(--sc-brd3);padding-top:14px}'
@@ -867,11 +867,14 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '<div class="sc-section">Authors</div>'
 			. '<p class="sc-meta">At least one of your characters is required; add co-authors as needed.</p>'
 			. $this->_authorChecks((array) $values['authors'], $uid)
-			. '<label>Post'
+			// NB: the editor must NOT be wrapped in a <label>. A label forwards
+			// clicks to its first labelable descendant (here the Bold toolbar
+			// button), which steals focus from the contenteditable and bounces
+			// the caret out. Use a plain section heading like the Authors block.
+			. '<div class="sc-section">Post</div>'
 			. $this->_toolbar()
 			. '<div class="sc-editor" id="sc-editor" contenteditable="true">'.$editorHtml.'</div>'
 			. '<input type="hidden" name="body" id="sc-body-hidden">'
-			. '</label>'
 			. '<label>Location<input type="text" name="location" value="'.$this->_esc($values['location']).'"></label>';
 
 		if ($orderedOn) {
@@ -1257,11 +1260,13 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '<input type="hidden" name="log_id" value="'.(int) $logId.'">'
 			. '<label>Title<input type="text" name="log_title" value="'.$this->_esc($values['title']).'" required></label>'
 			. '<label>Author'.$this->_logCharSelect((int) $values['author_id'], $uid).'</label>'
-			. '<label>Log'
+			// See the post editor: the contenteditable must not sit inside a
+			// <label> or clicks get forwarded to the Bold button and focus
+			// bounces out. Plain section heading instead.
+			. '<div class="sc-section">Log</div>'
 			. $this->_toolbar()
 			. '<div class="sc-editor" id="sc-log-editor" contenteditable="true">'.$editorHtml.'</div>'
 			. '<input type="hidden" name="body" id="sc-log-body-hidden">'
-			. '</label>'
 			. '<label>Tags<input type="text" name="tags" value="'.$this->_esc($values['tags']).'" placeholder="comma, separated"></label>';
 
 		if ($isActivated) {

@@ -1077,11 +1077,18 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	/**
 	 * Suite self-management.
 	 *
-	 *   GET  /Api/suite          - installed version, latest available, whether
-	 *                              an update is pending. Any valid token.
-	 *   POST /Api/suite/update   - run the one-click updater to a target version
-	 *                              (body `version`, default = latest release).
-	 *                              Requires a sysadmin-bound token with suite:update.
+	 *   GET  /Api/suite   - installed version, latest available, whether an
+	 *                       update is pending. Any valid token.
+	 *   POST /Api/suite   - run the one-click updater to a target version
+	 *                       (body `version`, default = latest release).
+	 *                       Requires a sysadmin-bound token with suite:update.
+	 *
+	 * Routing is by HTTP method only - it does NOT depend on a path segment, so
+	 * it behaves the same regardless of how a host rewrites URLs. The legacy
+	 * POST /Api/suite/update path still works (any POST to /suite triggers the
+	 * updater), but POST /Api/suite is preferred: the literal word "update" in a
+	 * URL trips some hosts' mod_security SQL-injection rules and gets the request
+	 * blocked at the web server before it ever reaches the app.
 	 *
 	 * Lets Sim Central see what each sim is running and push an upgrade without
 	 * an admin logging into the ACP. The update swaps the extension on disk, so
@@ -1093,10 +1100,9 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$this->_gate();
 
 		$method = $this->_method();
-		$action = $this->uri->segment(5);
 
 		// GET /suite - status (any valid token).
-		if ($method === 'GET' && ($action === null || $action === '')) {
+		if ($method === 'GET') {
 			$this->_authenticate(null);
 			$update  = \nova_ext_sim_central\UpdateCheck::latest();
 			$current = \nova_ext_sim_central\Config::version();
@@ -1110,8 +1116,9 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			));
 		}
 
-		// POST /suite/update - run the updater (sysadmin-bound suite:update token).
-		if ($method === 'POST' && $action === 'update') {
+		// POST /suite (or the legacy /suite/update) - run the updater
+		// (sysadmin-bound suite:update token).
+		if ($method === 'POST') {
 			$token = $this->_authenticate(null);
 			$this->_requireSysadminToken($token, 'suite:update');
 
@@ -1153,8 +1160,8 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		}
 
 		$this->_emit(405, array(
-			'error'   => 'Use GET /suite for status or POST /suite/update to upgrade.',
-			'allowed' => array('GET /suite', 'POST /suite/update'),
+			'error'   => 'Use GET /suite for status or POST /suite to upgrade.',
+			'allowed' => array('GET /suite', 'POST /suite'),
 		));
 	}
 
