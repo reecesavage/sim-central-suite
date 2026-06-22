@@ -1,5 +1,7 @@
 <?php if ( ! defined('BASEPATH')) exit('No direct script access allowed');
 
+require_once MODPATH.'core/libraries/Nova_controller_main.php';
+
 /**
  * Sim Central Suite - Mobile site.
  *

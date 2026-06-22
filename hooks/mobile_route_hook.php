@@ -31,10 +31,24 @@ if ( ! function_exists('sim_central_mobile_route')) {
 		$path  = $parts[0];
 		$query = isset($parts[1]) ? '?'.$parts[1] : '';
 
-		// (install base dir)/mobile  -OR-  .../mobile/<rest>
-		if (preg_match('#^(.*?)/mobile(/.*)?$#', $path, $m)) {
-			$base = $m[1];
-			$rest = isset($m[2]) ? $m[2] : '';
+		// App base dir, so subdirectory installs work (dirname of index.php).
+		$base = '';
+		if ( ! empty($_SERVER['SCRIPT_NAME'])) {
+			$base = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'])), '/');
+		}
+
+		// Path relative to the app root (strip the base and any /index.php).
+		$rel = $path;
+		if ($base !== '' && strpos($rel, $base) === 0) {
+			$rel = substr($rel, strlen($base));
+		}
+		$rel = preg_replace('#^/index\.php#', '', $rel);
+		$rel = '/'.ltrim($rel, '/');
+
+		// ONLY the app-root "mobile" segment - never /Manage/mobile, the
+		// capital-M extension path, or any other path that contains "mobile".
+		if (preg_match('#^/mobile(/.*)?$#', $rel, $m)) {
+			$rest = isset($m[1]) ? $m[1] : '';
 			$_SERVER['REQUEST_URI'] = $base.'/'.$target.$rest.$query;
 			if (isset($_SERVER['PATH_INFO'])) {
 				$_SERVER['PATH_INFO'] = '/'.$target.$rest;
