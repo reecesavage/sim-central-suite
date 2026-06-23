@@ -264,6 +264,7 @@ Update a post you author (or any post with `posts:write.all` + sysadmin). Scope:
 - Same field set as create (all optional).
 - `body_mode`: `replace` (default) or **`append`** (appends to the existing body).
 - Changing `status` to `activated` on a draft publishes it (same activation side-effects as create).
+- **Respects edit locks:** returns **`423`** if another user holds a fresh lock (see [Post edit locking](#post-edit-locking)); on a successful save your own lock is auto-released.
 
 ```bash
 curl -X PATCH "$BASE/posts/642" \
@@ -274,6 +275,40 @@ curl -X PATCH "$BASE/posts/642" \
 ### `DELETE /posts/{id}`
 
 Permanently delete a post you author (or any with `posts:delete.all` + sysadmin). Scope: `posts:delete`. Returns `{ "deleted": true, "id": 642 }`.
+
+---
+
+## Post edit locking
+
+Collaborative edit locks stop two writers clobbering the same post. All four verbs share the path `/posts/{id}/lock`, require `posts:write` **and a bound user**, and act as that user. Locks expire after **10 minutes**; `PATCH /posts/{id}` honours them (see above).
+
+| Verb | Does |
+|---|---|
+| `GET` | Check lock state — safe pre-flight before acquiring. |
+| `POST` | Acquire. Idempotent for your own / a stale lock (refreshes expiry). **`409`** with owner name + expiry if another user holds a fresh lock. |
+| `PUT` | Heartbeat — resets the 10-min expiry on a lock you hold. Call every ~5 min during long edits. **`409`** if you don't hold it. |
+| `DELETE` | Release. No-op if already free. A `posts:write.all` (sysadmin) token may force-release another user's lock. |
+
+**Lock state object** (shape varies by verb; `acquired`/`renewed`/`released` flag the action):
+
+| Field | Type | Notes |
+|---|---|---|
+| `locked` | bool | |
+| `post_id` | int | |
+| `yours` | bool | True when your bound user holds it. |
+| `expires_in_minutes` | int \| null | |
+| `lock` | object \| null | When held: `user_id`, `owner` (name), `age_minutes`, `expires_in_minutes`. |
+
+**Recommended flow:**
+
+```bash
+curl -X POST   "$BASE/posts/642/lock" -H "X-API-Key: $TOKEN"   # acquire (409 = someone else editing)
+# ...edit locally; every ~5 min:
+curl -X PUT    "$BASE/posts/642/lock" -H "X-API-Key: $TOKEN"   # heartbeat
+curl -X PATCH  "$BASE/posts/642" -H "X-API-Key: $TOKEN" -H "Content-Type: application/json" -d '{"body":"..."}'  # save (auto-releases your lock)
+# or, to cancel without saving:
+curl -X DELETE "$BASE/posts/642/lock" -H "X-API-Key: $TOKEN"   # release
+```
 
 ---
 
