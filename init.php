@@ -127,7 +127,9 @@ if ( ! empty($simCentralFeatures['discord_auth'])) {
 	// only adds the post-Nova-auth bounce; the no-Discord case is
 	// already handled by the first hook.
 	$ci =& get_instance();
-	if ($ci->session) {
+	// isset() (not a bare $ci->session) - some controllers (e.g. Feed) don't
+	// load the session library, and a plain property access warns under PHP 8.
+	if (isset($ci->session) && $ci->session) {
 		$uri = $ci->uri->uri_string();
 		if (\nova_ext_sim_central\DiscordAuth::shouldEnforceLink($uri)) {
 			$ci->session->set_flashdata('discord_auth_message',

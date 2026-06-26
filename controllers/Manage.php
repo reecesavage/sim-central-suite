@@ -159,8 +159,16 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 		// Active users for the "bind token to user" dropdown, labelled with their
 		// main character so two users with the same name are distinguishable.
+		// characters.display_name only exists once the Display Name feature has
+		// run its Setup database, so include it only when present - otherwise the
+		// whole query errors and the Configure page 500s on fresh sites.
+		$charFields  = $this->db->list_fields($this->db->dbprefix.'characters');
+		$userSelect  = 'users.userid, users.name, users.is_sysadmin, c.first_name, c.last_name';
+		if (in_array('display_name', $charFields, true)) {
+			$userSelect .= ', c.display_name';
+		}
 		$data['users'] = $this->db
-			->select('users.userid, users.name, users.is_sysadmin, c.first_name, c.last_name, c.display_name')
+			->select($userSelect)
 			->from('users')
 			->join('characters c', 'c.charid = users.main_char', 'left')
 			->where('users.status', 'active')

@@ -195,7 +195,8 @@
 			<option value="">&mdash; none (read-only / public token) &mdash;</option>
 			<?php foreach ($users as $u): ?>
 				<?php
-					$mainName = trim(($u->display_name ?: trim(($u->first_name ?? '').' '.($u->last_name ?? ''))));
+					$displayName = isset($u->display_name) ? $u->display_name : '';
+					$mainName = trim($displayName ?: trim(($u->first_name ?? '').' '.($u->last_name ?? '')));
 					$label    = $u->name.($mainName !== '' ? ' ('.$mainName.')' : '').($u->is_sysadmin === 'y' ? ' [sysadmin]' : '');
 				?>
 				<option value="<?php echo (int) $u->userid;?>"><?php echo htmlspecialchars($label, ENT_QUOTES);?></option>

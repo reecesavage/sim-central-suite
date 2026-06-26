@@ -6,6 +6,9 @@
 // forced-link page).
 
 $this->event->listen(['template', 'render', 'data'], function($event){
-	$event['data']['javascript'] .=
+	// Some render contexts don't pre-set a 'javascript' key; appending to a
+	// missing key warns under PHP 8, so coalesce first.
+	$existing = isset($event['data']['javascript']) ? $event['data']['javascript'] : '';
+	$event['data']['javascript'] = $existing .
 		$this->extension['nova_ext_sim_central']->inline_css('discord_auth_button', 'admin');
 });
