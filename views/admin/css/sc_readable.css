@@ -46,3 +46,34 @@
 .sc-readable select { color: #24292f; background-color: #fff; border: 1px solid #b7bcc2; }
 .sc-readable input::placeholder,
 .sc-readable textarea::placeholder { color: #8a9099; }
+/* Tables: some skins (e.g. Titan) paint table rows/cells a dark colour
+   (tr.alt td / tr.light_gray -> #4b4d52), leaving the cell text dark-on-dark
+   inside the light panel. Neutralise the cell backgrounds so they sit on the
+   panel, and keep a subtle light zebra stripe. !important because skin table
+   rules vary and this scoped override must win regardless of their specificity. */
+.sc-readable table,
+.sc-readable thead,
+.sc-readable tbody,
+.sc-readable tr,
+.sc-readable th,
+.sc-readable td { background-color: transparent !important; }
+.sc-readable tr.alt td,
+.sc-readable tr.alt th,
+.sc-readable tr.light_gray td,
+.sc-readable .zebra tr:nth-child(2n) td { background-color: #f3f5f8 !important; }
+.sc-readable table td,
+.sc-readable table th { border-color: #e1e4e8; }
+/* Cell text: skins colour cells via table.zebra td (specificity 0,1,2) which
+   out-ranks .sc-readable td. Match it with .zebra/.table100-scoped rules
+   (0,2,1) so the cell text is dark on the now-light rows. No !important, so
+   inline colours (e.g. the green "active" status span) still win. */
+.sc-readable .zebra td,
+.sc-readable .zebra th,
+.sc-readable .table100 td,
+.sc-readable .table100 th,
+.sc-readable table td,
+.sc-readable table th { color: #24292f; }
+.sc-readable .zebra td.gray,
+.sc-readable .zebra td .gray,
+.sc-readable .table100 td.gray,
+.sc-readable .table100 td .gray { color: #57606a; }
