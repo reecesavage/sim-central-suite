@@ -1,13 +1,23 @@
-/* Shared readability baseline for the suite's own admin pages.
+/* Readability panel for the suite's own admin pages.
  *
- * Several installed skins set a light body-text colour and/or dark form-control
- * colours. The suite's admin pages use light-background info boxes and native
- * inputs, so under those skins text goes light-on-light and becomes unreadable
- * (the "hard to read on the Titan skin" reports). Pinning a high-contrast
- * baseline scoped to .sc-readable keeps suite pages legible under any skin
- * without touching Nova's own pages. Inline colours (e.g. dark response panes,
- * coloured method badges) still win, so those are intentionally untouched. */
-.sc-readable { color: #24292f; }
+ * Dark skins (e.g. Titan) render the admin content area on a dark background
+ * with light text. The suite's pages mix light-background info boxes with text
+ * (titles, intros, labels) that sits directly on that background. An earlier
+ * version of this file only forced the text dark, which fixed the light boxes
+ * but turned all the on-background text dark-on-dark and invisible.
+ *
+ * Instead, give the whole suite content its OWN light panel: a light background
+ * plus dark text. Then every bit of suite text - boxed or not - sits on a light
+ * surface and reads cleanly under ANY skin, light or dark, without touching
+ * Nova's own pages. Inline colours in the page (dark response panes, coloured
+ * method badges) still win, so those are intentionally untouched. */
+.sc-readable {
+	background: #ffffff;
+	color: #24292f;
+	padding: 16px 20px;
+	border: 1px solid #d0d7de;
+	border-radius: 6px;
+}
 .sc-readable p,
 .sc-readable td,
 .sc-readable th,
@@ -19,7 +29,9 @@
 .sc-readable h1,
 .sc-readable h2,
 .sc-readable h3,
-.sc-readable h4 { color: #24292f; }
+.sc-readable h4,
+.sc-readable .page-head,
+.sc-readable .page-subhead { color: #24292f; }
 .sc-readable .gray,
 .sc-readable span.gray { color: #57606a; }
 .sc-readable code { color: #24292f; background: #eef1f4; padding: 1px 4px; border-radius: 3px; }

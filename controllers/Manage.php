@@ -423,8 +423,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['legacy_available'] = in_array('post_chronological_mission_post_day', $postFields, true);
 
 		$this->_regions['title']  .= $f['name'];
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view('ordered_mission_posts', $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('ordered_mission_posts', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -453,8 +453,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['jsons']   = $this->_loadConfig($configPath);
 
 		$this->_regions['title']  .= $f['name'];
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view('summary', $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('summary', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -478,8 +478,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 		$this->_regions['title']     .= 'URL Parser';
 		$this->_regions['javascript'] .= $this->extension['nova_ext_sim_central']->inline_js('url_parser', 'admin', $data);
-		$this->_regions['content']    = $this->extension['nova_ext_sim_central']
-			->view('url_parser', $this->skin, 'admin', $data);
+		$this->_regions['content']    = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('url_parser', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -505,8 +505,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['title'] = 'Sim Central Suite - Add Tag';
 
 		$this->_regions['title']  .= 'Add Tag';
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view('url_parser_create', $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('url_parser_create', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -537,8 +537,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['model'] = ($query->num_rows() > 0) ? $query->row() : false;
 
 		$this->_regions['title']  .= 'Edit Tag';
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view('url_parser_edit', $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('url_parser_edit', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -566,8 +566,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 		$this->_regions['title']     .= 'Anti Spam Questions';
 		$this->_regions['javascript'] .= $this->extension['nova_ext_sim_central']->inline_js('anti_spam', 'admin', $data);
-		$this->_regions['content']    = $this->extension['nova_ext_sim_central']
-			->view('anti_spam', $this->skin, 'admin', $data);
+		$this->_regions['content']    = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('anti_spam', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -595,8 +595,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 		$this->_regions['title']     .= 'Add Question';
 		$this->_regions['javascript'] .= $this->extension['nova_ext_sim_central']->inline_js('anti_spam', 'admin', $data);
-		$this->_regions['content']    = $this->extension['nova_ext_sim_central']
-			->view('anti_spam_create', $this->skin, 'admin', $data);
+		$this->_regions['content']    = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('anti_spam_create', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -626,8 +626,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 
 		$this->_regions['title']     .= 'Edit Question';
 		$this->_regions['javascript'] .= $this->extension['nova_ext_sim_central']->inline_js('anti_spam', 'admin', $data);
-		$this->_regions['content']    = $this->extension['nova_ext_sim_central']
-			->view('anti_spam_edit', $this->skin, 'admin', $data);
+		$this->_regions['content']    = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('anti_spam_edit', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -1006,8 +1006,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['jsons']    = $this->_loadConfig($configPath);
 
 		$this->_regions['title']  .= $f['name'];
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view($key, $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view($key, $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
