@@ -1,8 +1,8 @@
 # Sim Central Suite — REST API Reference
 
-The suite's REST API exposes HTTP endpoints for external integrations: n8n workflows, scripts, dashboards, anything that needs to read mission posts, characters, or missions — or to manage user activation status and event webhooks — without scraping HTML.
+The suite's REST API exposes HTTP endpoints for external integrations: n8n workflows, scripts, dashboards, anything that needs to read mission posts, characters, missions, or open positions — or to manage user activation status and event webhooks — without scraping HTML.
 
-> **Status:** read endpoints for posts/characters/missions, plus write endpoints for user activation status (disable/reactivate) and event-webhook management (create/update/delete). Write endpoints are gated behind their own `*:write` scopes — issue those only to trusted automation.
+> **Status:** read endpoints for posts/characters/missions/positions, plus write endpoints for user activation status (disable/reactivate) and event-webhook management (create/update/delete). Write endpoints are gated behind their own `*:write` scopes — issue those only to trusted automation.
 
 ---
 
@@ -67,6 +67,7 @@ Tokens carry an explicit scope list. Endpoints check for the scope they require 
 | `posts:delete.all` | Delete **any** post *(sysadmin only)* |
 | `characters:read` | List characters, view a single character |
 | `missions:read` | List missions, view a single mission |
+| `positions:read` | List open crew positions (with a top-open filter) |
 | `users:write` | Disable / reactivate users and their linked characters |
 | `webhooks:read` | List event webhooks and view their config |
 | `webhooks:write` | Create, update, and delete event webhooks |
@@ -372,6 +373,39 @@ List missions, most recent start first. Scope: `missions:read`.
 ### `GET /missions/{id}`
 
 Single mission by id. Scope: `missions:read`.
+
+### `GET /positions` *(v1.22.0+)*
+
+List a sim's **open crew positions** (positions with one or more unfilled slots). Scope: `positions:read`. Ordered by department, then roster order. Reuses Nova's own open-positions query, so results match what the site shows on the join page.
+
+**Query params:**
+
+| Param | Default | Notes |
+|---|---|---|
+| `top` | `false` | `1` / `true` / `yes` &rarr; only **top open** positions (`pos_top_open = y`): the headline billets flagged in the roster admin |
+| `display` | `y` | `pos_display` filter: `y` for listed positions, `n` for hidden ones |
+| `page` | `1` | |
+| `per_page` | `25` | Capped at `100` |
+
+**Position object:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | `positions.pos_id` |
+| `name` | string \| null | |
+| `description` | string \| null | |
+| `department_id` | int \| null | `pos_dept` |
+| `department` | string \| null | Resolved department name |
+| `open` | int | Number of unfilled slots (`pos_open`) |
+| `type` | string \| null | `pos_type` |
+| `order` | int \| null | Roster sort order (`pos_order`) |
+| `top_open` | bool | Flagged as a top open position (`pos_top_open = y`) |
+
+**Example — the sim's top open positions:**
+
+```
+GET /extensions/nova_ext_sim_central/Api/positions?top=1
+```
 
 ---
 

@@ -20,6 +20,7 @@
  *   GET  characters/{id}   - single character. Scope: characters:read.
  *   GET  missions          - list missions. Scope: missions:read.
  *   GET  missions/{id}     - single mission. Scope: missions:read.
+ *   GET  positions         - list open positions (?top=1 for top open). Scope: positions:read.
  *
  * List endpoints accept ?page=N&per_page=M (per_page capped at 100) and
  * resource-specific filters documented on each method below. Responses are
@@ -734,6 +735,46 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$data = array();
 		foreach ($rows as $row) {
 			$data[] = $this->_projectMission($row);
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/positions   - list open crew positions.
+	 *
+	 * "Open" means the position has one or more unfilled slots (pos_open > 0).
+	 * Filters:
+	 *   ?top=1        - only positions flagged "top open" in the roster admin
+	 *                   (pos_top_open = y): the sim's headline open billets.
+	 *   ?display=y|n  - include hidden positions (pos_display). Defaults to y.
+	 *   ?page=, ?per_page=
+	 *
+	 * Reuses Nova's positions_model::get_open_positions() so the open / top-open
+	 * semantics match what the site shows on the join page.
+	 */
+	public function positions()
+	{
+		$this->_gate();
+		$this->_authenticate('positions:read');
+		$this->load->model('positions_model', 'pos');
+		$this->load->model('depts_model', 'dept');
+
+		$topParam = $this->input->get('top', true);
+		$top      = ($topParam === '1' || $topParam === 'true' || $topParam === 'yes');
+
+		$display = $this->input->get('display', true);
+		if ($display !== 'y' && $display !== 'n') { $display = 'y'; }
+
+		$rows = $this->pos->get_open_positions($display, $top)->result();
+
+		list($page, $perPage, $offset) = $this->_paging();
+		$total = count($rows);
+		$slice = array_slice($rows, $offset, $perPage);
+
+		$deptNames = array();
+		$data      = array();
+		foreach ($slice as $row) {
+			$data[] = $this->_projectPosition($row, $deptNames);
 		}
 		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
 	}
@@ -1667,6 +1708,31 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		}
 
 		return $out;
+	}
+
+	/**
+	 * Shape a positions row for the API. $deptNames is a caller-owned cache so a
+	 * list doesn't re-query the departments table once per row.
+	 */
+	private function _projectPosition($row, array &$deptNames = array())
+	{
+		$deptId = isset($row->pos_dept) ? (int) $row->pos_dept : 0;
+		if ($deptId > 0 && ! array_key_exists($deptId, $deptNames)) {
+			$name = $this->dept->get_dept($deptId, 'dept_name');
+			$deptNames[$deptId] = ($name !== false) ? (string) $name : '';
+		}
+
+		return array(
+			'id'            => (int) $row->pos_id,
+			'name'          => isset($row->pos_name) ? $row->pos_name : null,
+			'description'   => isset($row->pos_desc) ? $row->pos_desc : null,
+			'department_id' => ($deptId > 0) ? $deptId : null,
+			'department'    => ($deptId > 0 && ! empty($deptNames[$deptId])) ? $deptNames[$deptId] : null,
+			'open'          => isset($row->pos_open) ? (int) $row->pos_open : 0,
+			'type'          => isset($row->pos_type) ? $row->pos_type : null,
+			'order'         => isset($row->pos_order) ? (int) $row->pos_order : null,
+			'top_open'      => (isset($row->pos_top_open) && $row->pos_top_open === 'y'),
+		);
 	}
 
 	/**
