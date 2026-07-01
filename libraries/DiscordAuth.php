@@ -39,15 +39,6 @@ class DiscordAuth
 {
 	const DEFAULT_BROKER_URL = 'https://auth.simcentral.host';
 
-	/**
-	 * Request-scoped hand-off of the Discord claims stamped onto a new user
-	 * row during the join flow. Set by events/discord_auth_db.php when it
-	 * stamps the columns; read by events/discord_auth_email_join.php so the
-	 * GM notification email can show the linked Discord identity (by then the
-	 * session stash has already been cleared).
-	 */
-	public static $joinClaims = null;
-
 	// ---------- config accessors ----------
 
 	public static function brokerUrl()

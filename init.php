@@ -87,6 +87,16 @@ if ( ! empty($simCentralFeatures['summary'])
 	require_once dirname(__FILE__).'/libraries/Feed.php';
 }
 
+// Email::filter (the Write controller's _email shim delegate) mutates post /
+// log / news notification emails for Summary, URL Parser, AND Ordered Mission
+// Posts. Load it when any of them is on; each transform inside is feature-gated
+// and uses libraries loaded by its own feature block (UrlParser / PostNumber).
+if ( ! empty($simCentralFeatures['summary'])
+	|| ! empty($simCentralFeatures['url_parser'])
+	|| ! empty($simCentralFeatures['ordered_mission_posts'])) {
+	require_once dirname(__FILE__).'/libraries/Email.php';
+}
+
 // ---------- Content Filter ----------
 if ( ! empty($simCentralFeatures['content_filter'])) {
 	require_once dirname(__FILE__).'/events/content_filter_db.php';
@@ -108,7 +118,6 @@ if ( ! empty($simCentralFeatures['discord_auth'])) {
 	require_once dirname(__FILE__).'/events/discord_auth_location_login_index.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_main_join_1.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_admin_user_account.php';
-	require_once dirname(__FILE__).'/events/discord_auth_email_join.php';
 
 	// Enforcement hooks run here (post_controller_constructor time,
 	// before the action method) so redirects actually short-circuit
@@ -189,7 +198,6 @@ if ( ! empty($simCentralFeatures['summary'])) {
 	require_once dirname(__FILE__).'/events/summary_location_admin_manage_posts_edit.php';
 	require_once dirname(__FILE__).'/events/summary_location_admin_write_missionpost.php';
 	require_once dirname(__FILE__).'/events/summary_location_main_sim_viewpost.php';
-	require_once dirname(__FILE__).'/events/summary_parser_parse_string_nova_missionpost.php';
 }
 
 // ---------- URL Parser ----------
@@ -201,13 +209,11 @@ if ( ! empty($simCentralFeatures['url_parser'])) {
 }
 
 // ---------- Ordered Mission Posts ----------
-// Feed.php shim is shared with summary when both are enabled; that's already
-// handled above via the summary OR ordered_mission_posts gate. The PostNumber
-// + Email libraries are exclusive to this feature.
+// Feed.php + Email.php are shared with the Summary / URL Parser features and
+// loaded above. PostNumber / PostWordCount are exclusive to this feature.
 if ( ! empty($simCentralFeatures['ordered_mission_posts'])) {
 	require_once dirname(__FILE__).'/libraries/PostNumber.php';
 	require_once dirname(__FILE__).'/libraries/PostWordCount.php';
-	require_once dirname(__FILE__).'/libraries/Email.php';
 
 	require_once dirname(__FILE__).'/events/ordered_template_render.php';
 	require_once dirname(__FILE__).'/events/ordered_db.php';

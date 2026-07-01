@@ -48,10 +48,6 @@ $this->event->listen(['db', 'insert', 'prepare', 'users'], function($event){
 		$event['data'][$key] = $value;
 	}
 
-	// Hand the identity to the join email listener (same request) - the GM
-	// notification is built after this point, once the session stash is gone.
-	\nova_ext_sim_central\DiscordAuth::$joinClaims = $claims;
-
 	$this->session->unset_userdata('discord_auth_pending_join');
 	$this->session->unset_userdata('discord_auth_pending_join_jwt');
 });

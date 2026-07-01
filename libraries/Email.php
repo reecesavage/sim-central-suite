@@ -5,64 +5,121 @@ namespace nova_ext_sim_central;
 defined('BASEPATH') OR exit('No direct script access allowed');
 
 /**
- * Logic the Write controller's _email shim delegates to.
+ * Logic the Write controller's _email shim delegates to. Everything here runs
+ * before parent::_email so we can change the template variables Nova will
+ * substitute into the email body. Each block is gated on its owning feature,
+ * because this filter now runs for the Summary, URL Parser, AND Ordered
+ * Mission Posts features (the write.txt shim is shared between them):
  *
- * Two responsibilities, both running before parent::_email so we can change
- * the template variables Nova will substitute into the email body:
+ *   1. URL Parser  - expand [tag|title|display] shortcodes into links in the
+ *                    body ($data['content']) for post/post_save/log/news.
+ *   2. Summary     - append the per-post summary after the location line for
+ *                    post/post_save announcements + draft-saved emails.
+ *   3. Ordered     - replace $data['timeline'] with the configured ordered
+ *                    string, and prefix "Post N -" to the title for `post`.
  *
- *   1. Prefix "Post N -" to $data['title'] for `post` announcements when the
- *      mission has post numbering enabled.
- *   2. Replace $data['timeline'] with the configured ordered timeline string
- *      (e.g. "Mission Day 2 at 2300") for `post` and `post_save` emails so
- *      both the announcement and the draft-saved email match what the
- *      website shows.
- *
- * Timeline used to be rewritten by a parser_events listener that ran on the
- * parsed email HTML; doing it here means the suite no longer depends on the
- * parser_events Nova mod.
+ * These used to be done by parser_events listeners that ran on the parsed
+ * email HTML; doing them here means the suite depends on no parse_string
+ * events at all, so the third-party parser_events mod (MY_Parser.php) is not
+ * required for any of these features.
  */
 class Email
 {
 	public static function filter($type, $data)
 	{
-		$ci =& get_instance();
-		$missionId = $ci->input->post('mission', true);
+		$ci       = get_instance();
+		$features = Config::features();
 
+		// --- URL Parser ---------------------------------------------------
+		// Expand [tag|title|display] shortcodes in the body. Runs before the
+		// mission early-return so it also covers logs/news (no mission). Reuses
+		// UrlParser - the same expander the on-site display uses - so the email
+		// matches the website exactly.
+		if ( ! empty($features['url_parser'])
+			&& isset($data['content']) && $data['content'] !== ''
+			&& in_array($type, array('post', 'post_save', 'log', 'news'), true)) {
+			$parser = new UrlParser();
+			$data['content'] = $parser->urlparser($data['content']);
+		}
+
+		$missionId = $ci->input->post('mission', true);
 		if (empty($missionId)) {
 			return $data;
 		}
 
-		if (in_array($type, array('post', 'post_save'), true)) {
-			$timeline = self::orderedTimeline($missionId);
-			if ($timeline !== null) {
-				$data['timeline'] = $timeline;
+		// --- Mission Post Summary ----------------------------------------
+		// Append the per-post summary right after the location line (matches
+		// the old parser_events output).
+		if ( ! empty($features['summary'])
+			&& in_array($type, array('post', 'post_save'), true)) {
+			$summaryLine = self::postSummaryLine();
+			if ($summaryLine !== null) {
+				$location = isset($data['location']) ? $data['location'] : '';
+				$data['location'] = ($location !== '' ? $location."\n" : '').$summaryLine;
 			}
 		}
 
-		if ($type === 'post') {
-			// The post has been inserted by the time _email runs; the most
-			// recent activated post for this mission is the one being
-			// announced. Look it up by post_id so the chronological number
-			// matches the website even when the new post sorts ahead of
-			// existing ones.
-			$latestQuery = $ci->db
-				->select('post_id')
-				->where('post_mission', $missionId)
-				->where('post_status', 'activated')
-				->order_by('post_date', 'desc')
-				->limit(1)
-				->get('posts');
-			$latest = ($latestQuery->num_rows() > 0) ? $latestQuery->row() : false;
+		// --- Ordered Mission Posts ---------------------------------------
+		if ( ! empty($features['ordered_mission_posts'])) {
+			if (in_array($type, array('post', 'post_save'), true)) {
+				$timeline = self::orderedTimeline($missionId);
+				if ($timeline !== null) {
+					$data['timeline'] = $timeline;
+				}
+			}
 
-			if ( ! empty($latest)) {
-				$number = PostNumber::forPost($latest->post_id, $missionId);
-				if ($number !== null) {
-					$data['title'] = 'Post '.$number.' - '.$data['title'];
+			if ($type === 'post') {
+				// The post has been inserted by the time _email runs; the most
+				// recent activated post for this mission is the one being
+				// announced. Look it up by post_id so the chronological number
+				// matches the website even when the new post sorts ahead of
+				// existing ones.
+				$latestQuery = $ci->db
+					->select('post_id')
+					->where('post_mission', $missionId)
+					->where('post_status', 'activated')
+					->order_by('post_date', 'desc')
+					->limit(1)
+					->get('posts');
+				$latest = ($latestQuery->num_rows() > 0) ? $latestQuery->row() : false;
+
+				if ( ! empty($latest)) {
+					$number = PostNumber::forPost($latest->post_id, $missionId);
+					if ($number !== null) {
+						$data['title'] = 'Post '.$number.' - '.$data['title'];
+					}
 				}
 			}
 		}
 
 		return $data;
+	}
+
+	/**
+	 * The "Summary: ..." line to append to a mission-post email, or NULL when
+	 * the summary mode is off or no summary was submitted. Ported from the old
+	 * summary_parser_parse_string listener so the output matches: it reads the
+	 * label from config and the value from the submitted post.
+	 */
+	private static function postSummaryLine()
+	{
+		$ci   = get_instance();
+		$json = Config::load();
+
+		if ( ! isset($json['setting']['summary_mode']) || (int) $json['setting']['summary_mode'] !== 1) {
+			return null;
+		}
+
+		$value = $ci->input->post('nova_ext_mission_post_summary');
+		if (empty($value)) {
+			return null;
+		}
+
+		$label = isset($json['nova_ext_mission_post_summary']['nova_ext_mission_post_summary']['value'])
+			? $json['nova_ext_mission_post_summary']['nova_ext_mission_post_summary']['value']
+			: 'Summary';
+
+		return $label.': '.$value;
 	}
 
 	/**

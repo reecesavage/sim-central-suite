@@ -700,6 +700,19 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 					),
 				),
 				'shims' => array(
+					// Shared with Ordered Mission Posts + URL Parser: the Write
+					// controller's _email shim delegates to Email::filter, which
+					// injects the summary line into post emails. No standalone_marker
+					// here - Ordered owns the take-over of the parser_events
+					// predecessor; the refcount keys on file+tag so it stays
+					// installed while any of the three features is on.
+					'email' => array(
+						'file'   => APPPATH.'controllers/Write.php',
+						'txt'    => dirname(__FILE__).'/../write.txt',
+						'tag'    => 'email',
+						'method' => '_email',
+						'label'  => 'Post email code',
+					),
 					'feed' => array(
 						'file'                  => APPPATH.'controllers/Feed.php',
 						'txt'                   => dirname(__FILE__).'/../feed.txt',
@@ -720,7 +733,19 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 					'tag' => "CREATE TABLE IF NOT EXISTS `{prefix}tag` (`id` int(11) NOT NULL AUTO_INCREMENT, `title` varchar(255) DEFAULT NULL, `url` text DEFAULT NULL, `post_url` varchar(255) DEFAULT NULL, `is_new_tab` int(11) DEFAULT 0, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci",
 				),
 				'requires_db' => array(),
-				'shims'       => array(),
+				'shims'       => array(
+					// Shared with Ordered Mission Posts + Summary: Email::filter
+					// (via the Write controller's _email shim) expands [tag|...]
+					// shortcodes into links in post/log/news emails. See the
+					// summary feature's 'email' shim note above.
+					'email' => array(
+						'file'   => APPPATH.'controllers/Write.php',
+						'txt'    => dirname(__FILE__).'/../write.txt',
+						'tag'    => 'email',
+						'method' => '_email',
+						'label'  => 'Post email code',
+					),
+				),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/url_parser',
 			),
 			'discord_auth' => array(
