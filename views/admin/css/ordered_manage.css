@@ -15,3 +15,20 @@ input[type="date"][name^="nova_ext_ordered_"],
 input[type="date"][name^="mission_ext_ordered_"] {
 	min-width: 170px;
 }
+
+/* Some installed skins style form controls with light text and/or dark
+   backgrounds, which leaves the suite's injected day / time / date / stardate
+   inputs unreadable (light-on-light, or a barely-visible native date picker).
+   Pin them to a high-contrast baseline so they stay legible under any skin.
+   Scoped by name prefix so only the suite's own fields are affected. */
+input[name^="nova_ext_ordered_"],
+input[name^="mission_ext_ordered_"] {
+	color: #24292f;
+	background-color: #fff;
+	border: 1px solid #b7bcc2;
+}
+input[name^="nova_ext_ordered_"]::-webkit-calendar-picker-indicator,
+input[name^="mission_ext_ordered_"]::-webkit-calendar-picker-indicator {
+	opacity: 1;
+	filter: none;
+}

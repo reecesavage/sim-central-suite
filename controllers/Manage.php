@@ -183,8 +183,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		}
 
 		$this->_regions['title']  .= $f['name'];
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view('rest_api', $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('rest_api', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -214,8 +214,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['images']     = $this->_iconImages();
 
 		$this->_regions['title']  .= $f['name'];
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view('mobile', $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('mobile', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -283,8 +283,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		}
 
 		$this->_regions['title']  .= $f['name'];
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view('webhooks', $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('webhooks', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -324,8 +324,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			->result();
 
 		$this->_regions['title']  .= 'API Explorer';
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view('api_explorer', $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('api_explorer', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -357,8 +357,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['callback_url'] = \nova_ext_sim_central\DiscordAuth::callbackUrl();
 
 		$this->_regions['title']  .= $f['name'];
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view('discord_auth', $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('discord_auth', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -388,8 +388,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		$data['active']  = \nova_ext_sim_central\ContentFilter::isActive();
 
 		$this->_regions['title']  .= $f['name'];
-		$this->_regions['content'] = $this->extension['nova_ext_sim_central']
-			->view('content_filter', $this->skin, 'admin', $data);
+		$this->_regions['content'] = $this->_readable($this->extension['nova_ext_sim_central']
+			->view('content_filter', $this->skin, 'admin', $data));
 
 		Template::assign($this->_regions);
 		Template::render();
@@ -1012,6 +1012,19 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			'message' => text_output($result[1]),
 		);
 		$this->_regions['flash_message'] = Location::view('flash', $this->skin, 'admin', $flash);
+	}
+
+	/**
+	 * Wrap a suite admin page's rendered HTML in the readability baseline:
+	 * prepend the shared sc_readable.css and scope it with a .sc-readable
+	 * container so the page's light-background boxes and native inputs stay
+	 * legible under skins that use light body text / dark controls (e.g. Titan).
+	 * Nova's own pages are untouched because the rules are scoped to the class.
+	 */
+	private function _readable($html)
+	{
+		return $this->extension['nova_ext_sim_central']->inline_css('sc_readable', 'admin')
+			.'<div class="sc-readable">'.$html.'</div>';
 	}
 
 	private function _iconImages()

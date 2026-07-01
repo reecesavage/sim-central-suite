@@ -28,6 +28,10 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		$this->load->model('personallogs_model','logs');
 		$this->load->model('characters_model',  'characters');
 		$this->load->model('tour_model',        'tour');
+		// text_output() (the display renderer used by _richBody) lives in the
+		// language helper. Load it here so read-only views always render stored
+		// content as HTML instead of falling back to an escaper.
+		$this->load->helper('language');
 	}
 
 	// ========== PUBLIC ROUTES — AUTH ==========
@@ -601,6 +605,33 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 	}
 
+	/**
+	 * Render stored post/log/mission content as display HTML, the same way the
+	 * desktop site does: through text_output() (nl2br + HTMLPurifier), which
+	 * keeps valid HTML (links, images, formatting) rather than escaping it.
+	 *
+	 * Do NOT use PostWrite::storedToEditorHtml() for display - it escapes
+	 * everything except <strong>/<em>/<u> because it targets the mobile
+	 * contenteditable editor, which is what produced the "literal <a href>
+	 * tags" bug on read-only views.
+	 */
+	private function _richBody($content)
+	{
+		$content = (string) $content;
+
+		if ( ! function_exists('text_output')) {
+			$this->load->helper('language');
+		}
+
+		if (function_exists('text_output')) {
+			return text_output($content, '');
+		}
+
+		// Last-resort fallback: render as HTML (matches the desktop site's raw
+		// output) instead of escaping it.
+		return nl2br($content);
+	}
+
 	private function _simName()
 	{
 		return isset($this->options['sim_name']) && $this->options['sim_name'] !== ''
@@ -941,9 +972,7 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			$b .= '<div class="sc-notice">This post is already posted.</div>';
 		}
 
-		$bodyHtml = function_exists('text_output')
-			? text_output((string) $row->post_content, '')
-			: nl2br(\nova_ext_sim_central\PostWrite::storedToEditorHtml((string) $row->post_content));
+		$bodyHtml = $this->_richBody($row->post_content);
 		$b .= '<div class="sc-post-body">'.$bodyHtml.'</div>';
 
 		if ( ! empty($row->post_location)) {
@@ -1002,9 +1031,7 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		$b .= (! empty($row->post_date) ? ' &middot; '.date('M j, Y', (int) $row->post_date) : '');
 		$b .= '</p>';
 
-		$bodyHtml = function_exists('text_output')
-			? text_output((string) $row->post_content, '')
-			: nl2br(\nova_ext_sim_central\PostWrite::storedToEditorHtml((string) $row->post_content));
+		$bodyHtml = $this->_richBody($row->post_content);
 		$b .= '<div class="sc-post-body">'.$bodyHtml.'</div>';
 
 		if ( ! empty($row->post_location)) {
@@ -1312,9 +1339,7 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			.'</p>';
 		$b .= '<div class="sc-notice">This log is already posted.</div>';
 
-		$bodyHtml = function_exists('text_output')
-			? text_output((string) $row->log_content, '')
-			: nl2br(\nova_ext_sim_central\PostWrite::storedToEditorHtml((string) $row->log_content));
+		$bodyHtml = $this->_richBody($row->log_content);
 		$b .= '<div class="sc-post-body">'.$bodyHtml.'</div>';
 
 		if ( ! empty($row->log_tags)) {
@@ -1563,11 +1588,11 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 
 		// Description
 		if ( ! empty($m->mission_desc)) {
-			$b .= '<div class="sc-mission-body">'.nl2br($this->_esc($m->mission_desc)).'</div>';
+			$b .= '<div class="sc-mission-body">'.$this->_richBody($m->mission_desc).'</div>';
 		}
 		if ( ! empty($m->mission_summary)) {
 			$b .= '<p class="sc-section">Summary</p>';
-			$b .= '<div class="sc-mission-body">'.nl2br($this->_esc($m->mission_summary)).'</div>';
+			$b .= '<div class="sc-mission-body">'.$this->_richBody($m->mission_summary).'</div>';
 		}
 
 		// Posts

@@ -1,0 +1,36 @@
+/* Shared readability baseline for the suite's own admin pages.
+ *
+ * Several installed skins set a light body-text colour and/or dark form-control
+ * colours. The suite's admin pages use light-background info boxes and native
+ * inputs, so under those skins text goes light-on-light and becomes unreadable
+ * (the "hard to read on the Titan skin" reports). Pinning a high-contrast
+ * baseline scoped to .sc-readable keeps suite pages legible under any skin
+ * without touching Nova's own pages. Inline colours (e.g. dark response panes,
+ * coloured method badges) still win, so those are intentionally untouched. */
+.sc-readable { color: #24292f; }
+.sc-readable p,
+.sc-readable td,
+.sc-readable th,
+.sc-readable li,
+.sc-readable dt,
+.sc-readable dd,
+.sc-readable strong,
+.sc-readable label,
+.sc-readable h1,
+.sc-readable h2,
+.sc-readable h3,
+.sc-readable h4 { color: #24292f; }
+.sc-readable .gray,
+.sc-readable span.gray { color: #57606a; }
+.sc-readable code { color: #24292f; background: #eef1f4; padding: 1px 4px; border-radius: 3px; }
+.sc-readable a:not(.image):not(.button-main):not(.button-sec) { color: #0969da; }
+.sc-readable input[type="text"],
+.sc-readable input[type="url"],
+.sc-readable input[type="number"],
+.sc-readable input[type="date"],
+.sc-readable input[type="time"],
+.sc-readable input:not([type]),
+.sc-readable textarea,
+.sc-readable select { color: #24292f; background-color: #fff; border: 1px solid #b7bcc2; }
+.sc-readable input::placeholder,
+.sc-readable textarea::placeholder { color: #8a9099; }
