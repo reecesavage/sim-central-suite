@@ -122,6 +122,13 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 		// user row using these claims.
 		if ($intent === 'join') {
 			$this->session->set_userdata('discord_auth_pending_join', json_encode($claims));
+			// Also stash the raw signed JWT. The join form embeds it as a
+			// hidden field so the Discord identity rides along with the form
+			// submit itself - that survives even if the session doesn't
+			// persist across the OAuth round-trip. The db-stamp event and the
+			// join enforcement gate re-verify it from POST (tamper-proof),
+			// and fall back to the session claims when it has since expired.
+			$this->session->set_userdata('discord_auth_pending_join_jwt', $token);
 			$this->session->set_flashdata('discord_auth_message', 'Discord linked. Fill in the join form to finish signing up.');
 			redirect(site_url('main/join'));
 			return;

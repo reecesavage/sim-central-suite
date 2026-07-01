@@ -8,16 +8,21 @@
 //                                   JS guard that blocks the form submit
 //                                   until linking is done.
 //   - Pending link in session     - shows the linked Discord identity
-//                                   ("Linked: @username") and hides the
-//                                   button. The db.insert.prepare.users
-//                                   event will stamp the Discord columns
-//                                   onto the new user row at submit time.
+//                                   ("Linked: @username"), hides the button,
+//                                   and embeds the signed JWT as a hidden
+//                                   form field. The db.insert.prepare.users
+//                                   event re-verifies that field (falling back
+//                                   to the session claims) and stamps the
+//                                   Discord columns onto the new user row at
+//                                   submit time - so it works even if the
+//                                   session was lost across the OAuth hop.
 
 $this->event->listen(['location', 'view', 'output', 'main', 'main_join_1'], function($event){
 
 	$pending = $this->session->userdata('discord_auth_pending_join');
 	$claims  = is_string($pending) ? json_decode($pending, true) : null;
 	$linked  = is_array($claims) && ! empty($claims['sub']);
+	$jwt     = $this->session->userdata('discord_auth_pending_join_jwt');
 
 	$required = \nova_ext_sim_central\DiscordAuth::requiredOnJoin();
 
@@ -59,12 +64,11 @@ $this->event->listen(['location', 'view', 'output', 'main', 'main_join_1'], func
 
 		if ($required) {
 			// Client-side guard: refuse to submit the join form unless
-			// Discord is linked. Capture-phase listener so we run
-			// before any other handler. Server-side enforcement would
-			// require modifying Nova's join controller, which we don't
-			// do; this is best-effort UX. An admin can still reject
-			// the character at approval time if they really want to
-			// enforce it strictly.
+			// Discord is linked. Capture-phase listener so we run before
+			// any other handler. This is the friendly first line of
+			// defence; it's backed by a hard server-side gate in init.php
+			// (requiredJoinMissingLink) that blocks the submit even if a
+			// user bypasses this JS.
 			$block .= '<script type="text/javascript">'
 				.'(function(){'
 				.'document.addEventListener("submit", function(e){'
@@ -81,4 +85,15 @@ $this->event->listen(['location', 'view', 'output', 'main', 'main_join_1'], func
 
 	$event['output'] .= \nova_ext_sim_central\Generator::select('form')->first()
 		->before($block);
+
+	// When linked, carry the signed JWT as a hidden field INSIDE the join
+	// form (prepend, so it's submitted with the form). The db-stamp event
+	// re-verifies it from POST, so the Discord identity is persisted even if
+	// the session was lost across the OAuth round-trip.
+	if ($linked && is_string($jwt) && $jwt !== '') {
+		$hidden = '<input type="hidden" name="discord_auth_jwt" value="'
+			.htmlspecialchars((string) $jwt, ENT_QUOTES).'">';
+		$event['output'] .= \nova_ext_sim_central\Generator::select('form')->first()
+			->prepend($hidden);
+	}
 });

@@ -108,6 +108,7 @@ if ( ! empty($simCentralFeatures['discord_auth'])) {
 	require_once dirname(__FILE__).'/events/discord_auth_location_login_index.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_main_join_1.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_admin_user_account.php';
+	require_once dirname(__FILE__).'/events/discord_auth_email_join.php';
 
 	// Enforcement hooks run here (post_controller_constructor time,
 	// before the action method) so redirects actually short-circuit
@@ -141,6 +142,16 @@ if ( ! empty($simCentralFeatures['discord_auth'])) {
 			$ci->session->set_flashdata('discord_auth_message',
 				'This sim requires Discord sign-in. Please use the Sign in with Discord button.');
 			header('Location: '.\nova_ext_sim_central\DiscordAuth::requiredPageUrl(), true, 302);
+			exit;
+		}
+		// Join gate (v1.23.0+): when linking is required on join, block the
+		// join-form submit server-side if no Discord link is proven. Backs up
+		// the client-side JS guard on the join form so the requirement can't
+		// be bypassed. No Nova core edit - we short-circuit before join() runs.
+		if (\nova_ext_sim_central\DiscordAuth::requiredJoinMissingLink($ci)) {
+			$ci->session->set_flashdata('discord_auth_message',
+				'This sim requires a linked Discord account to join. Click "Link Discord" on the join form first.');
+			header('Location: '.site_url('main/join'), true, 302);
 			exit;
 		}
 	}

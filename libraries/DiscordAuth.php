@@ -39,6 +39,15 @@ class DiscordAuth
 {
 	const DEFAULT_BROKER_URL = 'https://auth.simcentral.host';
 
+	/**
+	 * Request-scoped hand-off of the Discord claims stamped onto a new user
+	 * row during the join flow. Set by events/discord_auth_db.php when it
+	 * stamps the columns; read by events/discord_auth_email_join.php so the
+	 * GM notification email can show the linked Discord identity (by then the
+	 * session stash has already been cleared).
+	 */
+	public static $joinClaims = null;
+
 	// ---------- config accessors ----------
 
 	public static function brokerUrl()
@@ -70,6 +79,51 @@ class DiscordAuth
 		}
 		$c = Config::load();
 		return ! empty($c['setting']['discord_auth_required_on_join']);
+	}
+
+	/**
+	 * Hard server-side gate for the "Discord linking required to join" rule.
+	 * Returns true when the current request is the join-form submit, linking
+	 * is required, and the applicant has NOT proved a Discord link (no valid
+	 * signed JWT on the POST, no pending claims in the session). init.php calls
+	 * this and bounces back to the join form when it returns true - so the
+	 * requirement holds even if a user bypasses the client-side JS guard.
+	 */
+	public static function requiredJoinMissingLink($ci)
+	{
+		if ( ! self::requiredOnJoin()) {
+			return false;
+		}
+		if (strtoupper((string) $ci->input->server('REQUEST_METHOD')) !== 'POST') {
+			return false;
+		}
+		// Only the actual join submit (the submit button is present), not the
+		// disclaimer step or an unrelated POST elsewhere on the site.
+		if ( ! $ci->input->post('submit')) {
+			return false;
+		}
+		if ($ci->router->fetch_class() !== 'main' || $ci->router->fetch_method() !== 'join') {
+			return false;
+		}
+
+		// Linked if the form carried a valid signed JWT...
+		$jwt = $ci->input->post('discord_auth_jwt');
+		if (is_string($jwt) && $jwt !== '') {
+			list($status, ) = self::verifyToken($jwt);
+			if ($status === 'ok') {
+				return false;
+			}
+		}
+		// ...or the callback stashed claims in the session.
+		$pending = $ci->session->userdata('discord_auth_pending_join');
+		if ( ! empty($pending)) {
+			$decoded = json_decode((string) $pending, true);
+			if (is_array($decoded) && ! empty($decoded['sub'])) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**
