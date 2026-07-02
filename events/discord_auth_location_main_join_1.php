@@ -79,14 +79,18 @@ $this->event->listen(['location', 'view', 'output', 'main', 'main_join_1'], func
 		if ($required) {
 			// Client-side guard: refuse to submit the join form unless
 			// Discord is linked. Capture-phase listener so we run before
-			// any other handler. This is the friendly first line of
-			// defence; it's backed by a hard server-side gate in init.php
-			// (requiredJoinMissingLink) that blocks the submit even if a
-			// user bypasses this JS.
+			// any other handler. Scoped to forms posting to main/join
+			// that carry an email field - skins like LCARS render a
+			// header sign-in form (which also has an email input) on
+			// every page, and it must never be blocked. This is the
+			// friendly first line of defence; it's backed by a hard
+			// server-side gate in init.php (requiredJoinMissingLink)
+			// that blocks the submit even if a user bypasses this JS.
 			$block .= '<script type="text/javascript">'
 				.'(function(){'
 				.'document.addEventListener("submit", function(e){'
 				.'var form = e.target;'
+				.'if (!form || String(form.action || "").indexOf("main/join") === -1) return;'
 				.'if (!form.querySelector(\'input[name="email"]\')) return;'
 				.'alert('.json_encode('Discord linking is required to join this sim. Click "Link Discord" above first.').');'
 				.'e.preventDefault();'
@@ -97,7 +101,11 @@ $this->event->listen(['location', 'view', 'output', 'main', 'main_join_1'], func
 		}
 	}
 
-	$event['output'] .= \nova_ext_sim_central\Generator::select('form')->first()
+	// selectNearest: target the join view's OWN form (the nearest one
+	// before this event's output), not the first form in the document -
+	// LCARS-style skins put a hidden sign-in form in the header, and a
+	// document-wide first() injected this block into that invisible panel.
+	$event['output'] .= \nova_ext_sim_central\Generator::selectNearest('form')->first()
 		->before($block);
 
 	// When linked, carry the signed JWT as a hidden field INSIDE the join
@@ -107,7 +115,7 @@ $this->event->listen(['location', 'view', 'output', 'main', 'main_join_1'], func
 	if ($linked && is_string($jwt) && $jwt !== '') {
 		$hidden = '<input type="hidden" name="discord_auth_jwt" value="'
 			.htmlspecialchars((string) $jwt, ENT_QUOTES).'">';
-		$event['output'] .= \nova_ext_sim_central\Generator::select('form')->first()
+		$event['output'] .= \nova_ext_sim_central\Generator::selectNearest('form')->first()
 			->prepend($hidden);
 	}
 });

@@ -29,7 +29,12 @@ $this->event->listen(['location', 'view', 'output', 'login', 'login_index'], fun
 		.'});'
 		.'})();</script>';
 
-	$event['output'] .= \nova_ext_sim_central\Generator::select('form')->first()
+	// selectNearest: place the button after the login VIEW's form (the
+	// nearest one before this event's output). Skins like LCARS also
+	// render a hidden header sign-in form earlier in the document, and a
+	// document-wide first() would attach the button inside that
+	// invisible panel.
+	$event['output'] .= \nova_ext_sim_central\Generator::selectNearest('form')->first()
 		->after($wrap);
 
 	if ( ! \nova_ext_sim_central\DiscordAuth::loginDiscordOnly()) {
@@ -57,12 +62,15 @@ $this->event->listen(['location', 'view', 'output', 'login', 'login_index'], fun
 		.'Sysadmin sign-in with email + password &raquo;'
 		.'</button>'
 		.'<script>(function(){'
-		.'var form = document.querySelector(\'form[action$="/login"], form[action*="/login/"]\');'
-		.'if (form) { form.classList.add("nova-ext-stock-login-form"); }'
+		// All matching forms, not just the first: skins like LCARS also
+		// render a header sign-in form, and discord-only mode should
+		// hide every password form on the page.
+		.'var forms = Array.prototype.slice.call(document.querySelectorAll(\'form[action$="/login"], form[action*="/login/"]\'));'
+		.'for (var i = 0; i < forms.length; i++) { forms[i].classList.add("nova-ext-stock-login-form"); }'
 		.'var btn = document.getElementById("nova-ext-reveal-sysadmin-login");'
 		.'if (btn) {'
 		.'btn.addEventListener("click", function(){'
-		.'if (form) form.classList.add("nova-ext-revealed");'
+		.'for (var i = 0; i < forms.length; i++) { forms[i].classList.add("nova-ext-revealed"); }'
 		.'btn.style.display = "none";'
 		.'});'
 		.'}'

@@ -31,6 +31,22 @@ class Generator
 	{
 		return new GeneratorChain($selector);
 	}
+
+	/**
+	 * Like select(), but resolves to the matching element NEAREST BEFORE
+	 * the emitted script in document order. Nova appends event output
+	 * right after the view that fired it, so "the nearest preceding
+	 * <form>" is that view's own form - not whatever the skin happens to
+	 * put earlier in the page. LCARS-style skins ship a hidden sign-in
+	 * form in the header, so a document-wide select('form')->first()
+	 * quietly injects into that invisible panel instead of the page's
+	 * actual form. Falls back to document-wide matching when the browser
+	 * gives us no currentScript (shouldn't happen for inline scripts).
+	 */
+	public static function selectNearest($selector)
+	{
+		return new GeneratorChain($selector, true);
+	}
 }
 
 class GeneratorChain
@@ -51,9 +67,12 @@ class GeneratorChain
 		'remove',
 	);
 
-	public function __construct($selector)
+	public $nearest = false;
+
+	public function __construct($selector, $nearest = false)
 	{
 		$this->selector = $selector;
+		$this->nearest  = (bool) $nearest;
 	}
 
 	public function __call($method, $args = array())
@@ -87,12 +106,19 @@ class GeneratorChain
 		}
 		// json_encode's default slash-escaping keeps any literal
 		// "</script>" inside injected HTML from terminating this tag.
-		$program = json_encode(array('s' => $this->selector, 'o' => $ops));
+		$program = json_encode(array(
+			's' => $this->selector,
+			'n' => $this->nearest ? 1 : 0,
+			'o' => $ops,
+		));
 
 		// ins(): insert parsed HTML relative to an element. Scripts inside
 		// the fragment are rebuilt via createElement so they execute on
 		// insertion (template-parsed scripts are inert by spec).
+		// currentScript is only valid during the initial inline execution,
+		// so capture it now for the DOMContentLoaded path.
 		$js = 'var p='.$program.';'
+			.'var cs=document.currentScript||null;'
 			.'function ins(el,pos,html){'
 			.'var t=document.createElement("template");t.innerHTML=html;var f=t.content;'
 			.'var ss=f.querySelectorAll("script");'
@@ -105,6 +131,10 @@ class GeneratorChain
 			.'else{el.appendChild(f);}}'
 			.'function run(){'
 			.'var els;try{els=Array.prototype.slice.call(document.querySelectorAll(p.s));}catch(e){return;}'
+			// nearest mode: keep only matches BEFORE the emitting script
+			// (DOCUMENT_POSITION_PRECEDING = 2) and take the closest one.
+			.'if(p.n&&cs){var pre=[];for(var i=0;i<els.length;i++){'
+			.'if(cs.compareDocumentPosition(els[i])&2){pre.push(els[i]);}}els=pre.slice(-1);}'
 			.'for(var i=0;i<p.o.length;i++){var name=p.o[i][0],arg=p.o[i].length>1?p.o[i][1]:"";'
 			.'if(name==="first"){els=els.slice(0,1);}'
 			.'else if(name==="last"){els=els.slice(-1);}'
