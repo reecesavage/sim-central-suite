@@ -26,13 +26,26 @@ $this->event->listen(['location', 'view', 'output', 'main', 'main_join_1'], func
 
 	$required = \nova_ext_sim_central\DiscordAuth::requiredOnJoin();
 
+	// Flash set by the server-side join gate (init.php bounces the submit
+	// back here when required linking wasn't satisfied) or by the OAuth
+	// callback. Without this, a gated submit looked like it did nothing.
+	$flash = $this->session->flashdata('discord_auth_message');
+	$flashHtml = $flash
+		? '<p style="font-size:12px;color:#a94400;font-weight:bold;margin:0 0 0.5em;">'
+			.htmlspecialchars((string) $flash, ENT_QUOTES).'</p>'
+		: '';
+
+	// All colours in this block are explicit: the box backgrounds are
+	// light, and skins with light body text (Titan etc.) would otherwise
+	// render light-on-light. Never rely on skin classes inside the box.
 	if ($linked) {
 		$user = htmlspecialchars((string) $claims['username'], ENT_QUOTES);
 		$email = isset($claims['email']) ? htmlspecialchars((string) $claims['email'], ENT_QUOTES) : '';
 
-		$block = '<div class="nova_ext_discord_auth_join" style="margin-bottom:1em; padding:0.5em 1em; background:#eafbe7; border:1px solid #b7e3ad;">'
-			.'<p><strong>&check; Discord account linked:</strong> @'.$user.($email ? ' &lt;'.$email.'&gt;' : '').'</p>'
-			.'<p class="fontSmall gray">'
+		$block = '<div class="nova_ext_discord_auth_join" style="margin-bottom:1em; padding:0.5em 1em; background:#eafbe7; border:1px solid #b7e3ad; color:#222;">'
+			.$flashHtml
+			.'<p style="color:#222;"><strong>&check; Discord account linked:</strong> @'.$user.($email ? ' &lt;'.$email.'&gt;' : '').'</p>'
+			.'<p style="font-size:12px;color:#555;">'
 			.'Your Discord identity will be attached to this account when you submit the join form. '
 			.'You can unlink later from your account page if you change your mind.'
 			.'</p>'
@@ -52,12 +65,13 @@ $this->event->listen(['location', 'view', 'output', 'main', 'main_join_1'], func
 	} else {
 		$startUrl = site_url('extensions/nova_ext_sim_central/DiscordAuth/start?intent=join');
 		$reqNotice = $required
-			? '<p class="orange bold">Linking a Discord account is required to join this sim.</p>'
-			: '<p class="fontSmall gray">Optional. You can also link Discord later from your account page.</p>';
+			? '<p style="color:#c05000;font-weight:bold;">Linking a Discord account is required to join this sim.</p>'
+			: '<p style="font-size:12px;color:#555;">Optional. You can also link Discord later from your account page.</p>';
 
 		$btn = \nova_ext_sim_central\DiscordAuth::brandedButtonHtml('Link Discord', $startUrl);
-		$block = '<div class="nova_ext_discord_auth_join" style="margin-bottom:1em; padding:0.5em 1em; background:#f7f7f7; border:1px solid #e1e1e1;">'
-			.'<p><strong>Link your Discord account</strong></p>'
+		$block = '<div class="nova_ext_discord_auth_join" style="margin-bottom:1em; padding:0.5em 1em; background:#f7f7f7; border:1px solid #e1e1e1; color:#222;">'
+			.$flashHtml
+			.'<p style="color:#222;"><strong>Link your Discord account</strong></p>'
 			.$reqNotice
 			.'<p>'.$btn.'</p>'
 			.'</div>';
