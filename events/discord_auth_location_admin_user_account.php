@@ -57,10 +57,11 @@ $this->event->listen(['location', 'view', 'output', 'admin', 'user_account'], fu
 	$hasLinked = ! empty($viewedUser->nova_ext_discord_auth_id);
 
 	if ($hasLinked) {
-		$username  = htmlspecialchars((string) $viewedUser->nova_ext_discord_auth_username, ENT_QUOTES);
+		// The public Discord ID is the only identity detail the suite
+		// stores; usernames change and can be looked up live from the ID.
 		$discordId = htmlspecialchars((string) $viewedUser->nova_ext_discord_auth_id, ENT_QUOTES);
 
-		$identity = '<p><strong>Discord:</strong> '.$username.' '
+		$identity = '<p><strong>Discord linked</strong> '
 			.'<span class="fontSmall gray">(ID '.$discordId.')</span></p>';
 	} else {
 		$identity = '';

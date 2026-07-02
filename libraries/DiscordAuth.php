@@ -12,7 +12,8 @@ defined('BASEPATH') OR exit('No direct script access allowed');
  * those JWTs:
  *
  *   verifyToken($jwt)           - signature + claim checks (iss, aud,
- *                                 exp, email_verified). Returns claims
+ *                                 exp; email_verified when the email
+ *                                 scope was requested). Returns claims
  *                                 array on success, error string on
  *                                 failure.
  *   findUserByDiscordId($id)    - returns user row or null.
@@ -25,11 +26,15 @@ defined('BASEPATH') OR exit('No direct script access allowed');
  *   unlinkUser($userId)         - clears the Discord cols (refuses
  *                                 if the user has no password set,
  *                                 to avoid locking them out).
- *   refreshUserInfo($user)      - keeps stored username/avatar in
- *                                 sync with what Discord just told us.
  *   loginUserById($userId)      - mimics Nova_auth::_set_session so
  *                                 the user is signed in without ever
- *                                 holding a password.
+ *                                 holding a password; optionally sets
+ *                                 Nova's own remember-me cookies.
+ *
+ * The suite stores only the user's public Discord ID (and the moment
+ * it was linked). Requests to the broker are v2: the Discord email
+ * scope is NOT requested unless the admin turns on the
+ * discord_auth_request_email setting.
  *
  * Settings live in the merged suite config (state row over config.json
  * defaults), under the `setting.discord_auth_*` keys. Public broker
@@ -52,6 +57,18 @@ class DiscordAuth
 	{
 		$c = Config::load();
 		return isset($c['setting']['discord_auth_public_key']) ? (string) $c['setting']['discord_auth_public_key'] : '';
+	}
+
+	/**
+	 * True when the admin has opted into requesting the Discord email
+	 * scope (broker v2 `?email=1`). Off by default - the only thing the
+	 * email is used for is pre-filling the join form, and the address is
+	 * never stored. Requires broker v1.2.0+ to have any effect.
+	 */
+	public static function requestsEmail()
+	{
+		$c = Config::load();
+		return ! empty($c['setting']['discord_auth_request_email']);
 	}
 
 	/**
@@ -445,10 +462,18 @@ class DiscordAuth
 
 	public static function brokerStartUrl()
 	{
-		$url = self::brokerUrl().'/start?return_to='.rawurlencode(self::callbackUrl());
+		// v=2: the broker requests only the `identify` scope unless we
+		// opt into more below. Requires broker v1.2.0+; older brokers
+		// ignore unknown params and fall back to their legacy flow.
+		$url = self::brokerUrl().'/start?v=2&return_to='.rawurlencode(self::callbackUrl());
+		// Opt into the email scope only when the admin has turned on the
+		// join-form pre-fill option. The address is never stored.
+		if (self::requestsEmail()) {
+			$url .= '&email=1';
+		}
 		// Opt into the broker's optional `guilds` scope only when this
 		// sim actually has a guild check configured. Sims without one
-		// keep the smaller `identify email` scope and don't trigger the
+		// keep the smaller `identify` scope and don't trigger the
 		// extra "see your servers" line on Discord's consent screen.
 		if (self::requiresGuildCheck()) {
 			$url .= '&guilds=1';
@@ -476,7 +501,7 @@ class DiscordAuth
 		}
 
 		// Required claim shape.
-		foreach (array('iss', 'aud', 'sub', 'exp', 'iat', 'email_verified') as $required) {
+		foreach (array('iss', 'aud', 'sub', 'exp', 'iat') as $required) {
 			if ( ! array_key_exists($required, $claims)) {
 				return array('error', 'missing_claim:'.$required);
 			}
@@ -498,10 +523,16 @@ class DiscordAuth
 			return array('error', 'wrong_audience');
 		}
 
-		// Email-verified gate. Broker already enforces it, but we re-check
-		// in case the suite is pointed at a third-party broker with looser
-		// policy. This is a hard suite-level requirement.
-		if ($claims['email_verified'] !== true) {
+		// Email-verified gate. Only applies when this sim asked the broker
+		// for the email scope: the claim must then be present and true
+		// (the broker enforces it too; we re-check in case the suite is
+		// pointed at a third-party broker with looser policy). Brokers
+		// that send the claim unsolicited - legacy v1 flows, self-hosted
+		// forks - still get present-but-false refused.
+		if (self::requestsEmail() && ! array_key_exists('email_verified', $claims)) {
+			return array('error', 'missing_claim:email_verified');
+		}
+		if (array_key_exists('email_verified', $claims) && $claims['email_verified'] !== true) {
 			return array('error', 'email_not_verified');
 		}
 
@@ -550,32 +581,10 @@ class DiscordAuth
 		}
 
 		$ci->user->update_user((int) $userId, array(
-			'nova_ext_discord_auth_id'             => null,
-			'nova_ext_discord_auth_username'       => null,
-			'nova_ext_discord_auth_avatar'         => null,
-			'nova_ext_discord_auth_email_verified' => null,
-			'nova_ext_discord_auth_linked_at'      => null,
+			'nova_ext_discord_auth_id'        => null,
+			'nova_ext_discord_auth_linked_at' => null,
 		));
 		return array('ok', null);
-	}
-
-	public static function refreshUserInfo($user, array $claims)
-	{
-		// Light touch: only update if something changed. Avoid spurious
-		// writes on every login.
-		$cols = self::discordCols($claims);
-		$dirty = array();
-		foreach ($cols as $k => $v) {
-			if ( ! property_exists($user, $k) || (string) $user->$k !== (string) $v) {
-				$dirty[$k] = $v;
-			}
-		}
-		if (empty($dirty)) {
-			return;
-		}
-		$ci =& get_instance();
-		$ci->load->model('users_model', 'user');
-		$ci->user->update_user((int) $user->userid, $dirty);
 	}
 
 	/**
@@ -605,8 +614,12 @@ class DiscordAuth
 	 *
 	 * Codes are mapped to lang strings by the caller (using Nova's
 	 * existing error_login_* keys for parity with the password login).
+	 *
+	 * When $remember is true, Nova's own 14-day remember-me cookies are
+	 * set after the session, so Nova_auth::_autologin() extends the
+	 * session on later visits exactly as it does for password logins.
 	 */
-	public static function loginUserById($userId)
+	public static function loginUserById($userId, $remember = false)
 	{
 		$ci =& get_instance();
 		$ci->load->model('users_model', 'user');
@@ -669,19 +682,63 @@ class DiscordAuth
 		// email + password). The discord-only enforcement hook leaves
 		// sessions with this marker alone.
 		$ci->session->set_userdata('discord_auth_signed_in', true);
+
+		if ($remember) {
+			self::setRememberCookies($person);
+		}
 		return array('ok', null);
+	}
+
+	/**
+	 * Set Nova's own remember-me cookies (nova_<uid>[email] and
+	 * nova_<uid>[password], 14 days) for a Discord sign-in. The cookie
+	 * "password" is the stored hash, which Nova_auth::login() compares
+	 * directly against the users row on autologin - identical to what
+	 * Nova stores when a password login ticks "remember me". We can't
+	 * call Nova_auth::_set_cookie() (protected), so this mirrors it,
+	 * the same way loginUserById() mirrors _set_session().
+	 *
+	 * A session revived by Nova's autologin lacks the
+	 * discord_auth_signed_in marker, so sims running "Lock sign-in to
+	 * Discord" still bounce remembered users through the (instant,
+	 * already-authorized) Discord redirect - locked sims keep their
+	 * guarantee.
+	 */
+	private static function setRememberCookies($person)
+	{
+		if (empty($person->email) || empty($person->password)) {
+			return;
+		}
+		$ci =& get_instance();
+		$ci->load->model('system_model', 'sys');
+		$ci->load->helper('cookie');
+
+		$uid = $ci->sys->get_nova_uid();
+		set_cookie(array(
+			'name'   => $uid.'[email]',
+			'value'  => $person->email,
+			'expire' => '1209600',
+			'prefix' => 'nova_',
+		));
+		set_cookie(array(
+			'name'   => $uid.'[password]',
+			'value'  => $person->password,
+			'expire' => '1209600',
+			'prefix' => 'nova_',
+		));
 	}
 
 	// ---------- internals ----------
 
 	private static function discordCols(array $claims)
 	{
+		// Deliberately minimal: the public Discord ID is the only thing
+		// the suite needs (login matching, webhook @mentions, the API),
+		// plus the moment it was linked. Username, avatar, email - all
+		// look-up-able live from the ID - are never persisted.
 		return array(
-			'nova_ext_discord_auth_id'             => (string) $claims['sub'],
-			'nova_ext_discord_auth_username'       => isset($claims['username'])   ? (string) $claims['username']   : null,
-			'nova_ext_discord_auth_avatar'         => isset($claims['avatar'])     ? (string) $claims['avatar']     : null,
-			'nova_ext_discord_auth_email_verified' => ! empty($claims['email_verified']) ? 1 : 0,
-			'nova_ext_discord_auth_linked_at'      => time(),
+			'nova_ext_discord_auth_id'        => (string) $claims['sub'],
+			'nova_ext_discord_auth_linked_at' => time(),
 		);
 	}
 

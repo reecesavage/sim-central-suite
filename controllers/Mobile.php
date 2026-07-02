@@ -56,7 +56,8 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		if (strtoupper($this->input->server('REQUEST_METHOD')) === 'POST' && ! $discordOnly) {
 			$email    = (string) $this->input->post('email');
 			$password = (string) $this->input->post('password');
-			$code     = Auth::login($email, Auth::hash($password), '');
+			$remember = ($this->input->post('remember') === 'yes') ? 'yes' : '';
+			$code     = Auth::login($email, Auth::hash($password), $remember);
 
 			if ($code === 0) {
 				if ($this->_discordEnabled()
@@ -517,7 +518,17 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			$icon = '<svg viewBox="0 0 71 55" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
 				. '<path fill="currentColor" d="M60.10 4.90A58.55 58.55 0 0 0 45.65.42a.23.23 0 0 0-.23.11 40.78 40.78 0 0 0-1.8 3.7 54.05 54.05 0 0 0-16.23 0 37.4 37.4 0 0 0-1.83-3.7.24.24 0 0 0-.23-.11A58.39 58.39 0 0 0 10.88 4.9a.21.21 0 0 0-.1.08C1.58 18.73-.94 32.14.29 45.39a.24.24 0 0 0 .09.16 58.86 58.86 0 0 0 17.72 8.96.23.23 0 0 0 .25-.08 41.9 41.9 0 0 0 3.61-5.88.23.23 0 0 0-.12-.32 38.77 38.77 0 0 1-5.54-2.64.23.23 0 0 1-.02-.38c.37-.28.75-.57 1.1-.86a.22.22 0 0 1 .23-.03c11.62 5.3 24.2 5.3 35.68 0a.22.22 0 0 1 .24.03c.36.29.73.58 1.1.86a.23.23 0 0 1-.02.38 36.4 36.4 0 0 1-5.54 2.63.23.23 0 0 0-.12.33 47.07 47.07 0 0 0 3.6 5.87.23.23 0 0 0 .26.09 58.66 58.66 0 0 0 17.74-8.96.23.23 0 0 0 .1-.16c1.48-15.32-2.48-28.62-10.5-40.41a.18.18 0 0 0-.09-.09ZM23.73 37.33c-3.5 0-6.38-3.21-6.38-7.16 0-3.94 2.83-7.16 6.38-7.16 3.58 0 6.43 3.24 6.38 7.16 0 3.95-2.83 7.16-6.38 7.16Zm23.59 0c-3.5 0-6.38-3.21-6.38-7.16 0-3.94 2.83-7.16 6.38-7.16 3.58 0 6.43 3.24 6.38 7.16 0 3.95-2.8 7.16-6.38 7.16Z"/>'
 				. '</svg>';
-			$discordBtn = '<a class="sc-btn-discord" href="'.$this->_esc($url).'">'.$icon.'<span>Sign in with Discord</span></a>';
+			$discordBtn = '<a class="sc-btn-discord" id="sc-discord-login" href="'.$this->_esc($url).'">'.$icon.'<span>Sign in with Discord</span></a>'
+				. '<label class="sc-remember"><input type="checkbox" id="sc-discord-remember"> Remember me</label>'
+				. '<script>(function(){'
+				. 'var box = document.getElementById("sc-discord-remember");'
+				. 'var link = document.getElementById("sc-discord-login");'
+				. 'if (!box || !link) return;'
+				. 'var base = link.getAttribute("href");'
+				. 'box.addEventListener("change", function(){'
+				. 'link.setAttribute("href", box.checked ? base + "&remember=yes" : base);'
+				. '});'
+				. '})();</script>';
 		}
 
 		$body  = '<h1>'.$this->_esc($this->_simName()).'</h1>';
@@ -531,6 +542,7 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 				. $this->_csrf()
 				. '<label>Email<input type="email" name="email" autocomplete="username" required></label>'
 				. '<label>Password<input type="password" name="password" autocomplete="current-password" required></label>'
+				. '<label class="sc-remember"><input type="checkbox" name="remember" value="yes"> Remember me</label>'
 				. '<button class="sc-btn sc-btn-main" type="submit">Log in</button>'
 				. '</form>';
 		} else {
@@ -769,6 +781,8 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '.sc-btn-discord{display:flex;align-items:center;justify-content:center;gap:8px;background:#5865F2;color:#fff;width:100%;padding:12px 16px;border-radius:8px;text-decoration:none;font-weight:600}'
 			. '.sc-btn-discord svg{width:20px;height:20px;flex:0 0 auto}'
 			. '.sc-or{color:var(--sc-mu);text-align:center;margin:14px 0;font-size:13px}'
+			. '.sc-remember{display:flex;align-items:center;gap:8px;margin:12px 0;font-size:14px;color:var(--sc-mu)}'
+			. '.sc-remember input{width:auto;margin:0}'
 			// Alerts
 			. '.sc-error{background:var(--sc-err-bg);color:var(--sc-err-fg);padding:10px 12px;border-radius:8px;margin:0 0 14px;font-size:14px}'
 			. '.sc-ok{background:var(--sc-ok-bg);color:var(--sc-ok-fg);padding:10px 12px;border-radius:8px;margin:0 0 14px;font-size:14px}'

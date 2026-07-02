@@ -1,5 +1,5 @@
 {
-	"version": "1.24.2",
+	"version": "1.25.0",
 	"features": {
 		"display_name": false,
 		"anti_spam": false,
@@ -106,6 +106,7 @@
 		"content_filter_confirm_on_save": 0,
 		"discord_auth_broker_url": "https://auth.simcentral.host",
 		"discord_auth_public_key": "",
+		"discord_auth_request_email": 0,
 		"discord_auth_required_on_join": 0,
 		"discord_auth_required": 0,
 		"discord_auth_login_discord_only": 0,

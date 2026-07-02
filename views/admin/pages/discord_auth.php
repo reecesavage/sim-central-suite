@@ -2,6 +2,7 @@
 	$settings       = isset($jsons['setting']) && is_array($jsons['setting']) ? $jsons['setting'] : array();
 	$brokerUrl      = isset($settings['discord_auth_broker_url']) ? $settings['discord_auth_broker_url'] : 'https://auth.simcentral.host';
 	$publicKey      = isset($settings['discord_auth_public_key']) ? $settings['discord_auth_public_key'] : '';
+	$requestEmail     = ! empty($settings['discord_auth_request_email']);
 	$requiredOnJoin   = ! empty($settings['discord_auth_required_on_join']);
 	$requiredGlobal   = ! empty($settings['discord_auth_required']);
 	$discordOnlyLogin = ! empty($settings['discord_auth_login_discord_only']);
@@ -73,6 +74,31 @@
 	</p>
 
 	<br>
+	<?php echo text_output('Privacy', 'h3', 'page-subhead');?>
+
+	<p class="fontSmall gray">
+		The suite stores only the user's <strong>public Discord ID</strong> (and when it
+		was linked) on their user record. By default it doesn't request the
+		user's Discord email address at all.
+	</p>
+
+	<p>
+		<input type="hidden" name="discord_auth_request_email" value="0">
+		<label>
+			<input type="checkbox" name="discord_auth_request_email" value="1"
+				<?php echo $requestEmail ? 'checked' : '';?>>
+			<strong>Request Discord email (pre-fills the join form)</strong>
+		</label>
+	</p>
+	<p class="fontSmall gray italic">
+		When on, the Discord consent screen additionally asks for the user's email
+		address, sign-in requires the Discord email to be verified, and the join
+		form's email field is pre-filled with it. The address is only ever shown
+		back to the user &mdash; it is never stored. Requires broker v1.2.0+;
+		older brokers always request the email scope regardless of this setting.
+	</p>
+
+	<br>
 	<?php echo text_output('Sign-up behaviour', 'h3', 'page-subhead');?>
 
 	<p class="fontSmall gray">
@@ -123,8 +149,8 @@
 		navigate anywhere except the forced-link page until they finish linking.
 	</p>
 	<p class="fontSmall gray italic">
-		The user must have a verified email on Discord either way &mdash; the broker refuses to issue
-		a token otherwise.
+		When <em>Request Discord email</em> is on (see Privacy above), the user must also have
+		a verified email on Discord &mdash; the broker refuses to issue a token otherwise.
 	</p>
 
 	<p>

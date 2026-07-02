@@ -754,11 +754,19 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				'standalone'  => 'nova_ext_discord_account_confirmation',
 				'requires_db' => array(
 					'users' => array(
-						'nova_ext_discord_auth_id'             => 'VARCHAR(32) NULL',
-						'nova_ext_discord_auth_username'       => 'VARCHAR(100) NULL',
-						'nova_ext_discord_auth_avatar'         => 'VARCHAR(64) NULL',
-						'nova_ext_discord_auth_email_verified' => 'TINYINT NULL',
-						'nova_ext_discord_auth_linked_at'      => 'INT NULL',
+						'nova_ext_discord_auth_id'        => 'VARCHAR(32) NULL',
+						'nova_ext_discord_auth_linked_at' => 'INT NULL',
+					),
+				),
+				// Columns older suite versions created that the feature no
+				// longer uses. Set Up Database drops them when present, so
+				// the sim stores nothing about the Discord account beyond
+				// its public ID (and when it was linked).
+				'removes_db' => array(
+					'users' => array(
+						'nova_ext_discord_auth_username',
+						'nova_ext_discord_auth_avatar',
+						'nova_ext_discord_auth_email_verified',
 					),
 				),
 				'requires_indexes' => array(
@@ -975,7 +983,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			$f['missing_columns']     = ! empty($f['requires_db']) ? $this->_missingColumns($key) : array();
 			$f['missing_tables']      = ! empty($f['requires_tables']) ? $this->_missingTables($key) : array();
 			$f['missing_indexes']     = ! empty($f['requires_indexes']) ? $this->_missingIndexes($key) : array();
-			$f['db_ready']            = empty($f['missing_columns']) && empty($f['missing_tables']) && empty($f['missing_indexes']);
+			$f['stale_columns']       = ! empty($f['removes_db']) ? $this->_staleColumns($key) : array();
+			$f['db_ready']            = empty($f['missing_columns']) && empty($f['missing_tables']) && empty($f['missing_indexes']) && empty($f['stale_columns']);
 			$f['shim_state']          = ! empty($f['shims']) ? $this->_featureCombinedState($key) : 'none';
 			$out[$key] = $f;
 		}
@@ -1368,6 +1377,14 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		if (isset($_POST['discord_auth_public_key'])) {
 			$json['setting']['discord_auth_public_key'] = (string) $_POST['discord_auth_public_key'];
 		}
+		// Opt-in Discord email scope (v1.25.0+). Off by default; the only
+		// use is pre-filling the join form, and the address is never
+		// stored. Requires broker v1.2.0+.
+		if (isset($_POST['discord_auth_request_email'])) {
+			$json['setting']['discord_auth_request_email'] =
+				((int) $_POST['discord_auth_request_email'] === 1) ? 1 : 0;
+		}
+
 		// Required-on-join is a plain checkbox (hidden+checkbox pair so
 		// PHP always gets a 0/1 value). Auto-create mode was removed
 		// in v1.3.1: Nova's join flow includes character approval the
@@ -1968,6 +1985,33 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		return $missing;
 	}
 
+	/**
+	 * Columns listed in a feature's removes_db that still exist -
+	 * leftovers from an older suite version. Drives the same "Set Up
+	 * Database" prompt as missing columns; the setup action drops them.
+	 */
+	private function _staleColumns($key)
+	{
+		$f = $this->features[$key];
+		if (empty($f['removes_db'])) {
+			return array();
+		}
+		$prefix = $this->db->dbprefix;
+		$stale  = array();
+		foreach ($f['removes_db'] as $table => $columns) {
+			if ( ! $this->db->table_exists($prefix.$table) && ! $this->db->table_exists($table)) {
+				continue;
+			}
+			$existing = $this->db->list_fields($prefix.$table);
+			foreach ($columns as $column) {
+				if (in_array($column, $existing, true)) {
+					$stale[] = $table.'.'.$column;
+				}
+			}
+		}
+		return $stale;
+	}
+
 	private function _missingTables($key)
 	{
 		$f = $this->features[$key];
@@ -2016,13 +2060,14 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 	private function _setupDatabase($key)
 	{
 		$f = $this->features[$key];
-		if (empty($f['requires_db']) && empty($f['requires_tables']) && empty($f['requires_indexes'])) {
+		if (empty($f['requires_db']) && empty($f['requires_tables']) && empty($f['requires_indexes']) && empty($f['removes_db'])) {
 			return array('success', 'Nothing to do - this feature has no database setup.');
 		}
-		$prefix       = $this->db->dbprefix;
-		$tablesAdded  = 0;
-		$columnsAdded = 0;
-		$indexesAdded = 0;
+		$prefix         = $this->db->dbprefix;
+		$tablesAdded    = 0;
+		$columnsAdded   = 0;
+		$indexesAdded   = 0;
+		$columnsDropped = 0;
 
 		// Create missing tables first so any column adds below can land on them.
 		if ( ! empty($f['requires_tables'])) {
@@ -2068,14 +2113,34 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 			}
 		}
 
-		if ($tablesAdded === 0 && $columnsAdded === 0 && $indexesAdded === 0) {
-			return array('success', 'Database is already fully set up - nothing to add.');
+		// Drop columns the feature has stopped using (left behind by an
+		// older suite version). Only ever touches columns named in
+		// removes_db, so re-running is safe.
+		if ( ! empty($f['removes_db'])) {
+			foreach ($f['removes_db'] as $table => $columns) {
+				if ( ! $this->db->table_exists($prefix.$table) && ! $this->db->table_exists($table)) {
+					continue;
+				}
+				$existing = $this->db->list_fields($prefix.$table);
+				foreach ($columns as $column) {
+					if ( ! in_array($column, $existing, true)) {
+						continue;
+					}
+					$this->db->query('ALTER TABLE `'.$prefix.$table.'` DROP COLUMN `'.$column.'`');
+					$columnsDropped++;
+				}
+			}
+		}
+
+		if ($tablesAdded === 0 && $columnsAdded === 0 && $indexesAdded === 0 && $columnsDropped === 0) {
+			return array('success', 'Database is already fully set up - nothing to do.');
 		}
 		$parts = array();
-		if ($tablesAdded > 0)  $parts[] = $tablesAdded.' table(s)';
-		if ($columnsAdded > 0) $parts[] = $columnsAdded.' column(s)';
-		if ($indexesAdded > 0) $parts[] = $indexesAdded.' index(es)';
-		return array('success', 'Database setup complete. Added '.implode(', ', $parts).'.');
+		if ($tablesAdded > 0)    $parts[] = 'added '.$tablesAdded.' table(s)';
+		if ($columnsAdded > 0)   $parts[] = 'added '.$columnsAdded.' column(s)';
+		if ($indexesAdded > 0)   $parts[] = 'added '.$indexesAdded.' index(es)';
+		if ($columnsDropped > 0) $parts[] = 'removed '.$columnsDropped.' unused column(s)';
+		return array('success', 'Database setup complete: '.implode(', ', $parts).'.');
 	}
 
 	// ---------- shim writer (per-shim primitives + per-feature aggregates) ----------

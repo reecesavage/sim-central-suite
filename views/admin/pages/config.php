@@ -85,7 +85,6 @@
 					<?php elseif ( ! $f['db_ready']): ?>
 						<span class="orange">Database setup needed</span><br />
 						<span class="gray fontSmall">
-							Missing:
 							<?php
 								$missingBits = isset($f['missing_columns']) ? $f['missing_columns'] : array();
 								if ( ! empty($f['missing_tables'])) {
@@ -98,7 +97,14 @@
 										$missingBits[] = 'index '.$idx;
 									}
 								}
-								echo implode(', ', $missingBits);
+								$bits = array();
+								if ( ! empty($missingBits)) {
+									$bits[] = 'Missing: '.implode(', ', $missingBits);
+								}
+								if ( ! empty($f['stale_columns'])) {
+									$bits[] = 'No longer used (will be removed): '.implode(', ', $f['stale_columns']);
+								}
+								echo implode('<br />', $bits);
 							?>
 						</span>
 					<?php else: ?>

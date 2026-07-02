@@ -38,6 +38,12 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 		}
 		$this->session->set_userdata('discord_auth_intent', $intent);
 
+		// "Remember me" checkbox next to the Discord button. Stashed in
+		// the session (like the intent) so it survives the OAuth
+		// round-trip; the callback reads it back when logging in.
+		$this->session->set_userdata('discord_auth_remember',
+			$this->input->get('remember', true) === 'yes');
+
 		redirect(\nova_ext_sim_central\DiscordAuth::brokerStartUrl());
 	}
 
@@ -50,6 +56,9 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 
 		$intent = $this->session->userdata('discord_auth_intent') ?: 'login';
 		$this->session->unset_userdata('discord_auth_intent');
+
+		$remember = (bool) $this->session->userdata('discord_auth_remember');
+		$this->session->unset_userdata('discord_auth_remember');
 
 		// Broker bounced back an error (user cancelled on Discord,
 		// email_not_verified, etc.). Surface a readable message.
@@ -75,15 +84,14 @@ class __extensions__nova_ext_sim_central__DiscordAuth extends Nova_login
 			return $this->_renderError($this->_friendlyError($guildCode));
 		}
 
-		// 1. Existing user with this Discord ID? Refresh + log them in.
+		// 1. Existing user with this Discord ID? Log them in.
 		// loginUserById enforces the same status / maintenance checks
 		// Nova's email+password login does (pending users can't sign
 		// in, maintenance blocks non-sysadmins), so the Discord path
 		// can't be used to bypass either gate.
 		$user = \nova_ext_sim_central\DiscordAuth::findUserByDiscordId($claims['sub']);
 		if ($user !== null) {
-			\nova_ext_sim_central\DiscordAuth::refreshUserInfo($user, $claims);
-			list($loginStatus, $loginCode) = \nova_ext_sim_central\DiscordAuth::loginUserById($user->userid);
+			list($loginStatus, $loginCode) = \nova_ext_sim_central\DiscordAuth::loginUserById($user->userid, $remember);
 			if ($loginStatus !== 'ok') {
 				return $this->_renderError($this->_friendlyError('login_'.$loginCode));
 			}
