@@ -17,10 +17,16 @@ $this->event->listen(['location', 'view', 'data', 'main', 'main_join_2'], functi
              $event['data']['inputs']['nova_ext_anti_spam_questions_setting_id']=$model->setting_id;
 
 
+      // No HTML `required` attribute: on skins that put the form in
+      // jQuery UI tabs (LCARS), a required control in a hidden tab makes
+      // the browser refuse the submit with only a console warning ("not
+      // focusable") and no visible feedback. The view ships its own
+      // submit guard instead, and AntiSpam::shouldBlock() enforces
+      // server-side regardless.
       $event['data']['inputs']['nova_ext_anti_spam_questions_answer'] = array(
         'name' => 'nova_ext_anti_spam_questions_answer',
         'id' => 'nova_ext_anti_spam_questions_answer',
-        'required' => 'required',
+        'aria-required' => 'true',
       );
 
 

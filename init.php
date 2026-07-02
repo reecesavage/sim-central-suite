@@ -118,6 +118,7 @@ if ( ! empty($simCentralFeatures['discord_auth'])) {
 	require_once dirname(__FILE__).'/events/discord_auth_location_login_index.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_main_join_1.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_admin_user_account.php';
+	require_once dirname(__FILE__).'/events/discord_auth_location_personnel_user.php';
 
 	// Enforcement hooks run here (post_controller_constructor time,
 	// before the action method) so redirects actually short-circuit

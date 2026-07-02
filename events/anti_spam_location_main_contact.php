@@ -16,10 +16,14 @@ $this->event->listen(['location', 'view', 'data', 'main', 'main_contact'], funct
              $event['data']['inputs']['nova_ext_anti_spam_questions_setting_id']=$model->setting_id;
 
 
+      // No HTML `required` attribute - see the join event for why (hidden
+      // required controls silently block submits on tabbed skins). The
+      // shared anti_spam_form view carries a JS submit guard, and
+      // AntiSpam::shouldBlock() enforces server-side.
       $event['data']['inputs']['nova_ext_anti_spam_questions_answer'] = array(
         'name' => 'nova_ext_anti_spam_questions_answer',
         'id' => 'nova_ext_anti_spam_questions_answer',
-        'required' => 'required',
+        'aria-required' => 'true',
       );
 
 
