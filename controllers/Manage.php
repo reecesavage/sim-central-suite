@@ -774,7 +774,18 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 						'nova_ext_discord_auth_id_unique' => '(`nova_ext_discord_auth_id`)',
 					),
 				),
-				'shims'        => array(),
+				'shims' => array(
+					// Adds the applicant's linked Discord to the GM
+					// join-application email. Optional: without the shim,
+					// the stock join email sends as always.
+					'join_email' => array(
+						'file'   => APPPATH.'controllers/Main.php',
+						'txt'    => dirname(__FILE__).'/../main.txt',
+						'tag'    => 'join_email',
+						'method' => '_email',
+						'label'  => 'Join application email code',
+					),
+				),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/discord_auth',
 			),
 			'content_filter' => array(

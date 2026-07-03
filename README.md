@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.25.3"><img src="https://img.shields.io/badge/Version-v1.25.3-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.26.0"><img src="https://img.shields.io/badge/Version-v1.26.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -193,6 +193,9 @@ UI additions when enabled (all using Discord-branded buttons in Discord Blurple 
 - **Link Discord** card at the top of the join form &mdash; stamps the Discord identity onto the new user row when the join form is submitted (and pre-fills the email field when *Request Discord email* is on). The character still queues for GM approval like any other join.
 - **Link Discord / Unlink Discord / Change Discord account** section on the **User &rarr; My Account** page. The action shown depends on whether linking is required globally: optional mode shows Unlink, required mode shows Change instead. Unlink is gated behind a "you need a password set" check so users can't lock themselves out.
 - **Forced-link page** at `/extensions/nova_ext_sim_central/DiscordAuth/required` &mdash; the one-page landing the enforcement hook bounces unlinked users to when global require is on.
+- **Discord row on the public user page** *(v1.25.3+)* &mdash; `/personnel/user/{id}` shows the linked public Discord ID alongside Name / Email / Timezone.
+
+**GM join-application email** *(v1.26.0+)*: with the feature's optional **Join application email code** shim installed (dashboard &rarr; Install Shim), the email GMs receive for a new application gains a **Discord** row in Basic Info &mdash; the applicant's linked public Discord ID, so you can check them against your server before approving. On sims that require Discord linking to join, an application that somehow arrives without a link is flagged as **NOT LINKED**. The shim is a thin wrapper: if the suite ever can't build the email, the stock Nova join email sends as normal. Without the shim, nothing changes.
 
 The suite does not auto-create user accounts from Discord sign-ins &mdash; every new user goes through Nova's normal join flow (including character approval). Discord auth is identity attachment, not a join bypass.
 

@@ -113,6 +113,7 @@ if ( ! empty($simCentralFeatures['content_filter'])) {
 require_once dirname(__FILE__).'/libraries/Jwt.php';
 require_once dirname(__FILE__).'/libraries/DiscordAuth.php';
 if ( ! empty($simCentralFeatures['discord_auth'])) {
+	require_once dirname(__FILE__).'/libraries/JoinEmail.php';
 	require_once dirname(__FILE__).'/events/discord_auth_db.php';
 	require_once dirname(__FILE__).'/events/discord_auth_template_render.php';
 	require_once dirname(__FILE__).'/events/discord_auth_location_login_index.php';

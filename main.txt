@@ -14,6 +14,23 @@
 	}
 	/* nova_ext_sim_central:contact END */
 
+	/* nova_ext_sim_central:join_email v1 START - managed block, do not edit by hand */
+	protected function _email($type, $data)
+	{
+		// Discord Sign-In: hand the GM join-application email to the suite
+		// so it can add the applicant's linked Discord to the Basic Info
+		// block. JoinEmail::send() returns null to decline (or on any
+		// internal problem), in which case core sends as normal.
+		if ($type === 'join_gm' && class_exists('nova_ext_sim_central\\JoinEmail')) {
+			$sent = \nova_ext_sim_central\JoinEmail::send($data);
+			if ($sent !== null) {
+				return $sent;
+			}
+		}
+		return parent::_email($type, $data);
+	}
+	/* nova_ext_sim_central:join_email END */
+
 	/* nova_ext_sim_central:join v1 START - managed block, do not edit by hand */
 	public function join()
 	{
