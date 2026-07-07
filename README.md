@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.26.0"><img src="https://img.shields.io/badge/Version-v1.26.0-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.27.0"><img src="https://img.shields.io/badge/Version-v1.27.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -53,6 +53,17 @@ When a newer published release exists on GitHub, the dashboard banner shows an *
 6. Render a "reload to finish" page; click the button and you're on the new version.
 
 Your settings row in the `nova_settings` table is **untouched** through the whole flow, so feature toggles, edited labels, and per-feature settings carry across unchanged.
+
+### Automatic post-update housekeeping (v1.27.0+)
+
+On the first request after any update (a dashboard reload, or simply the next visit/API call after a remote `POST /suite` upgrade), the suite automatically performs whatever **Set Up Database** and **Install Shim** actions the new version needs &mdash; **for enabled features only**:
+
+- Disabled features are never touched.
+- Only clear-cut shim states are handled (fresh install or updating the suite's own managed block). Take-over situations &mdash; a standalone extension's shim or an unmarked hand-written method in the target file &mdash; are always left for a human on the dashboard.
+- It runs exactly the same code the dashboard buttons run, once per version (guarded by a marker in the settings row and a database lock, so concurrent requests can't double-apply).
+- The next dashboard visit shows a one-time summary of what ran; anything that couldn't be completed (e.g. a file the web user can't write) stays flagged on the feature cards as before.
+
+So after the first manual install, keeping a sim current is genuinely one click (or one API call) &mdash; database changes and shims included.
 
 **If anything goes wrong:** the backup folder is kept indefinitely (we never auto-prune). Roll back from the shell:
 

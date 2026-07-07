@@ -31,6 +31,17 @@ require_once dirname(__FILE__).'/libraries/UpdateCheck.php';
 // invoked from the Manage controller's do_update action.
 require_once dirname(__FILE__).'/libraries/Updater.php';
 
+// Migrations owns the feature registry, database setup, and shim writer
+// (the Manage controller delegates to it). runPending() is the
+// post-update auto-runner: on the first request after a suite update -
+// dashboard reload OR the next API hit after a remote POST /suite - it
+// performs any pending Set Up Database / Install Shim actions for
+// ENABLED features, then records a marker so every later request is a
+// single array lookup. Runs before the per-feature loads below so this
+// request already sees the migrated state.
+require_once dirname(__FILE__).'/libraries/Migrations.php';
+\nova_ext_sim_central\Migrations::runPending();
+
 // Broker / SimCentralAccess / PhoneHome back the Sim Central access button
 // and the periodic status report. Loaded unconditionally and cheap: nothing
 // here touches the DB or network until something explicitly calls it
