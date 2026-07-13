@@ -795,7 +795,8 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 
 		$mainChar = isset($user->main_char) ? (int) $user->main_char : 0;
 		$rows = $this->db
-			->select('characters.charid, characters.first_name, characters.last_name, characters.suffix, characters.display_name, characters.crew_type, characters.rank, ranks.rank_name, ranks.rank_order')
+			->select('characters.charid, characters.first_name, characters.last_name, characters.suffix, characters.crew_type, characters.rank, ranks.rank_name, ranks.rank_order'
+				.(\nova_ext_sim_central\Migrations::hasColumn('characters', 'display_name') ? ', characters.display_name' : ''))
 			->from('characters')
 			->join('ranks', 'ranks.rank_id = characters.rank', 'left')
 			->where('characters.user', (int) $user->userid)

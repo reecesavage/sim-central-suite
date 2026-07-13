@@ -1026,7 +1026,8 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		$authorIds   = array_filter(array_map('intval', explode(',', (string) $row->post_authors)));
 		if ( ! empty($authorIds)) {
 			$chars = $this->db
-				->select('charid, first_name, last_name, display_name')
+				->select('charid, first_name, last_name'
+					.(\nova_ext_sim_central\Migrations::hasColumn('characters', 'display_name') ? ', display_name' : ''))
 				->where_in('charid', $authorIds)
 				->get('characters')->result();
 			foreach ($chars as $c) {
@@ -1087,7 +1088,8 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 	{
 		$selectedIds = array_map('intval', $selectedIds);
 		$rows = $this->db
-			->select('characters.charid, characters.first_name, characters.last_name, characters.suffix, characters.display_name, characters.user, characters.crew_type, ranks.rank_name')
+			->select('characters.charid, characters.first_name, characters.last_name, characters.suffix, characters.user, characters.crew_type, ranks.rank_name'
+				.(\nova_ext_sim_central\Migrations::hasColumn('characters', 'display_name') ? ', characters.display_name' : ''))
 			->from('characters')
 			->join('ranks', 'ranks.rank_id = characters.rank', 'left')
 			->where_in('characters.crew_type', array('active', 'npc'))
@@ -1377,7 +1379,8 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 	private function _logCharSelect($selectedId, $uid)
 	{
 		$chars = $this->db
-			->select('characters.charid, characters.first_name, characters.last_name, characters.display_name, ranks.rank_name')
+			->select('characters.charid, characters.first_name, characters.last_name, ranks.rank_name'
+				.(\nova_ext_sim_central\Migrations::hasColumn('characters', 'display_name') ? ', characters.display_name' : ''))
 			->from('characters')
 			->join('ranks', 'ranks.rank_id = characters.rank', 'left')
 			->where('characters.user', $uid)
@@ -1435,7 +1438,8 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 	private function _manifestPage()
 	{
 		$chars = $this->db
-			->select('characters.charid, characters.first_name, characters.last_name, characters.display_name, characters.images, characters.crew_type, ranks.rank_name, positions.pos_name')
+			->select('characters.charid, characters.first_name, characters.last_name, characters.images, characters.crew_type, ranks.rank_name, positions.pos_name'
+				.(\nova_ext_sim_central\Migrations::hasColumn('characters', 'display_name') ? ', characters.display_name' : ''))
 			->from('characters')
 			->join('ranks',     'ranks.rank_id = characters.rank',          'left')
 			->join('positions', 'positions.pos_id = characters.position_1', 'left')

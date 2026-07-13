@@ -501,8 +501,13 @@ class PostWrite
 		$user = $ci->db->select('main_char')->get_where('users', array('userid' => (int) $userId))->row();
 		$mainChar = $user ? (int) $user->main_char : 0;
 
+		// display_name only exists once the Display Name feature's database
+		// setup has run - never select it unconditionally.
+		$cols = 'first_name, last_name'
+			.(Migrations::hasColumn('characters', 'display_name') ? ', display_name' : '');
+
 		if ($mainChar > 0) {
-			$char = $ci->db->select('first_name, last_name, display_name')
+			$char = $ci->db->select($cols)
 				->get_where('characters', array('charid' => $mainChar))->row();
 			if ($char) {
 				return ! empty($char->display_name) ? $char->display_name
@@ -510,7 +515,7 @@ class PostWrite
 			}
 		}
 
-		$char = $ci->db->select('first_name, last_name, display_name')
+		$char = $ci->db->select($cols)
 			->where('user', (int) $userId)->where('crew_type', 'active')
 			->limit(1)->get('characters')->row();
 		if ($char) {

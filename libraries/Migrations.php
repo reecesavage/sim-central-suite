@@ -37,6 +37,27 @@ class Migrations
 		return self::$registry;
 	}
 
+	private static $columnCache = array();
+
+	/**
+	 * Does a column exist right now? For code paths that OPTIONALLY use a
+	 * column another feature's database setup creates (e.g. webhooks
+	 * enriching authors with display_name / the Discord ID). Selecting
+	 * such a column unconditionally kills the query on sims that never
+	 * enabled the owning feature. Cached per request.
+	 */
+	public static function hasColumn($table, $column)
+	{
+		$key = $table.'.'.$column;
+		if ( ! array_key_exists($key, self::$columnCache)) {
+			$db = self::db();
+			$exists = $db->table_exists($db->dbprefix.$table) || $db->table_exists($table);
+			self::$columnCache[$key] = $exists
+				&& in_array($column, $db->list_fields($db->dbprefix.$table), true);
+		}
+		return self::$columnCache[$key];
+	}
+
 	/**
 	 * Post-update auto-runner. Cheap on the hot path: one array lookup
 	 * against the already-loaded state. When the last-migrated version

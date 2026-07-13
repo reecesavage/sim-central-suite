@@ -562,6 +562,27 @@ class Webhooks
 	}
 
 	/**
+	 * Columns owned by OTHER suite features that enrich webhook authors
+	 * when present: the Discord ID (Discord Sign-In) powers @mentions,
+	 * the display name (Display Name) improves the byline. Neither
+	 * feature is required for webhooks - a sim that never ran their
+	 * database setup simply doesn't have the columns, and selecting them
+	 * unconditionally kills the query (and with it the webhook).
+	 * Checked once per request.
+	 */
+	private static function optionalAuthorSelects()
+	{
+		$selects = array();
+		if (Migrations::hasColumn('users', 'nova_ext_discord_auth_id')) {
+			$selects[] = 'users.nova_ext_discord_auth_id AS discord_id';
+		}
+		if (Migrations::hasColumn('characters', 'display_name')) {
+			$selects[] = 'characters.display_name';
+		}
+		return $selects;
+	}
+
+	/**
 	 * Enrich a CSV (or single) charid list into an author array, preserving
 	 * the original order: [{id, name, rank, rank_name, discord_id, user_id}, ...]
 	 */
@@ -577,7 +598,11 @@ class Webhooks
 			return $result;
 		}
 
-		$ci->db->select('characters.charid AS id, characters.first_name, characters.last_name, characters.suffix, characters.user, characters.display_name, ranks.rank_name, users.nova_ext_discord_auth_id AS discord_id');
+		$select = 'characters.charid AS id, characters.first_name, characters.last_name, characters.suffix, characters.user, ranks.rank_name';
+		foreach (self::optionalAuthorSelects() as $extra) {
+			$select .= ', '.$extra;
+		}
+		$ci->db->select($select);
 		$ci->db->from('characters');
 		$ci->db->join('ranks', 'ranks.rank_id = characters.rank', 'left');
 		$ci->db->join('users', 'users.userid = characters.user', 'left');
@@ -598,6 +623,8 @@ class Webhooks
 
 	private static function authorArrayShape($r)
 	{
+		// display_name / discord_id are optional selects (see
+		// optionalAuthorSelects) - absent properties must not warn.
 		$displayName = ! empty($r->display_name)
 			? $r->display_name
 			: trim(($r->first_name ?? '').' '.($r->last_name ?? '').(empty($r->suffix) ? '' : ' '.$r->suffix));
@@ -607,7 +634,7 @@ class Webhooks
 			'name'       => $displayName,
 			'rank'       => $r->rank_name ?: null,
 			'rank_name'  => $r->rank_name ?: null,
-			'discord_id' => $r->discord_id ?: null,
+			'discord_id' => ($r->discord_id ?? null) ?: null,
 			'user_id'    => $r->user ? (int) $r->user : null,
 		);
 	}
