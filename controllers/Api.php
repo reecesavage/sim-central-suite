@@ -780,6 +780,26 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	}
 
 	/**
+	 * GET /Api/snapshot
+	 *
+	 * The Astrolabe snapshot: one read-only aggregate of this sim's public data
+	 * (game info, crew manifest, stories, recent posts, counts) for the
+	 * Astrolabe platform to mirror on its per-game page. Scope: astrolabe:read.
+	 * A token scoped to only this reads nothing else. Served from a short-TTL
+	 * cache since Astrolabe polls on a schedule. See ASTROLABE.md.
+	 */
+	public function snapshot()
+	{
+		$this->_gate();
+		$this->_requireMethod('GET');
+		$this->_authenticate('astrolabe:read');
+
+		// The library returns a JSON string (whitelisted shape, absolute https
+		// URLs, HTML-stripped text). Emit it verbatim so we don't re-encode.
+		$this->_emitRaw(200, \nova_ext_sim_central\AstrolabeSnapshot::cached());
+	}
+
+	/**
 	 * GET /Api/me
 	 *
 	 * Identity of the bound user behind this token: the user, their characters
@@ -1907,12 +1927,18 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 */
 	private function _emit($status, array $payload)
 	{
+		$this->_emitRaw($status, json_encode($payload));
+	}
+
+	/** Emit a pre-encoded JSON string (e.g. the cached Astrolabe snapshot). */
+	private function _emitRaw($status, $json)
+	{
 		if ( ! headers_sent()) {
 			http_response_code($status);
 			header('Content-Type: application/json; charset=utf-8');
 			header('Cache-Control: no-store');
 		}
-		echo json_encode($payload);
+		echo (string) $json;
 		exit;
 	}
 }

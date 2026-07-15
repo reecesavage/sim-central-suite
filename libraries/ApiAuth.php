@@ -51,6 +51,7 @@ class ApiAuth
 			'characters:read'  => 'Read characters (list + view).',
 			'missions:read'    => 'Read missions (list + view).',
 			'positions:read'   => 'Read open crew positions (list, with a top-open filter).',
+			'astrolabe:read'   => 'Read the public Astrolabe snapshot (game info, crew manifest, stories, recent posts). A token scoped to only this exposes just that one public aggregate.',
 			'users:write'      => 'Disable or reactivate users and their linked characters.',
 			'webhooks:read'    => 'List event webhooks and view their config.',
 			'webhooks:write'   => 'Create, update, and delete event webhooks.',

@@ -271,6 +271,17 @@ class ApiEndpoints
 				'try_it'         => true,
 			),
 			array(
+				'method'         => 'GET',
+				'path'           => '/snapshot',
+				'operation_id'   => 'getSnapshot',
+				'scope'          => 'astrolabe:read',
+				'summary'        => 'Astrolabe snapshot of this sim.',
+				'description'    => 'One read-only aggregate of this sim\'s PUBLIC data for the Astrolabe platform to mirror: game info, crew manifest (departments and characters, active + NPCs), stories (missions), the 10 most recent posts, and headcounts. All url / avatar_url / rank.image values are absolute https or null; descriptions and excerpts are plain text (HTML stripped) and length-capped. No private data (no email, real name, IP, or account internals). Served from a short-TTL cache since Astrolabe polls on a schedule. A token scoped to only astrolabe:read exposes nothing else.',
+				'parameters'     => array(),
+				'response_schema'=> 'Snapshot',
+				'try_it'         => true,
+			),
+			array(
 				'method'         => 'POST',
 				'path'           => '/users/disable',
 				'operation_id'   => 'disableUser',
@@ -699,6 +710,20 @@ class ApiEndpoints
 					'total'    => array('type' => 'integer'),
 				),
 				'required' => array('data', 'page', 'per_page', 'total'),
+			),
+			'Snapshot' => array(
+				'type' => 'object',
+				'description' => 'Public per-sim aggregate for Astrolabe. All URLs are absolute https or null; text fields are plain (HTML stripped) and capped.',
+				'properties' => array(
+					'version'      => array('type' => 'integer', 'description' => 'Contract version. Always 1 for this shape.'),
+					'generated_at' => array('type' => 'string', 'format' => 'date-time', 'description' => 'ISO 8601 UTC time the snapshot was built.'),
+					'game'         => array('type' => 'object', 'description' => 'Keys: name, url (absolute https), description (always null - Astrolabe owns the blurb).'),
+					'stats'        => array('type' => 'object', 'description' => 'Keys: players (active accounts), characters (active + NPC), stories (mission count).'),
+					'manifest'     => array('type' => 'array', 'description' => 'Roster groups. Each: {name, slug, departments:[{department, characters:[{name, position, avatar_url, url, rank:{name,abbreviation,image}, player:{name}}]}]}. Active players + NPCs. May be [].'),
+					'stories'      => array('type' => 'array', 'description' => 'Missions. Each: {title, description, status, start_date, end_date (both null - Nova has no in-character dates), posts_count, url}. May be [].'),
+					'recent_posts' => array('type' => 'array', 'description' => 'Up to 10 most recent activated posts, newest first. Each: {title, authors:[names], published_at, excerpt, url}. May be [].'),
+				),
+				'required' => array('version', 'generated_at', 'game', 'stats', 'manifest'),
 			),
 			'UserStatusResult' => array(
 				'type' => 'object',

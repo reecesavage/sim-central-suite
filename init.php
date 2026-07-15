@@ -193,6 +193,8 @@ if ( ! empty($simCentralFeatures['rest_api'])) {
 	// ApiEndpoints is consumed by Api::openapi() and Manage::api_explorer().
 	// Loading it alongside ApiAuth keeps the on-demand work in the same place.
 	require_once dirname(__FILE__).'/libraries/ApiEndpoints.php';
+	// AstrolabeSnapshot backs the Api::snapshot() endpoint (scope astrolabe:read).
+	require_once dirname(__FILE__).'/libraries/AstrolabeSnapshot.php';
 }
 
 // PostWrite backs both the REST API post endpoints and the mobile site's
