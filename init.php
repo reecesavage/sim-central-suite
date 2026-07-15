@@ -61,6 +61,11 @@ require_once dirname(__FILE__).'/libraries/TimelineFormat.php';
 // feature has been enabled). Cheap to load unconditionally.
 require_once dirname(__FILE__).'/libraries/ContentFilter.php';
 
+// PostWordCount is used by the Ordered Mission Posts mission pages AND by
+// the REST API (post/mission word_count fields), which must work whether
+// or not Ordered is enabled. Cheap to load unconditionally (class def).
+require_once dirname(__FILE__).'/libraries/PostWordCount.php';
+
 // Admin-index update notice. Surfaces "new Sim Central release
 // available" to gamemasters on the admin home, alongside Nova's own
 // update notice. Loaded unconditionally - it self-skips when the
@@ -223,10 +228,10 @@ if ( ! empty($simCentralFeatures['url_parser'])) {
 
 // ---------- Ordered Mission Posts ----------
 // Feed.php + Email.php are shared with the Summary / URL Parser features and
-// loaded above. PostNumber / PostWordCount are exclusive to this feature.
+// loaded above; PostWordCount is loaded unconditionally above (REST API
+// uses it too). PostNumber is exclusive to this feature.
 if ( ! empty($simCentralFeatures['ordered_mission_posts'])) {
 	require_once dirname(__FILE__).'/libraries/PostNumber.php';
-	require_once dirname(__FILE__).'/libraries/PostWordCount.php';
 
 	require_once dirname(__FILE__).'/events/ordered_template_render.php';
 	require_once dirname(__FILE__).'/events/ordered_db.php';

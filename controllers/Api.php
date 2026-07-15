@@ -1085,14 +1085,38 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				if ( ! $hasId) { $this->_emit(400, array('error' => 'Token id required in path.')); }
 				$existing = $this->db->get_where('sim_central_api_tokens', array('id' => $id))->row();
 				if ( ! $existing) { $this->_emit(404, array('error' => 'Token not found.')); }
-				$input  = $this->_readInput();
-				$revoke = $this->_boolParam($input, 'revoked', true);
-				$this->db->where('id', $id)->update('sim_central_api_tokens', array(
-					'revoked_at' => $revoke ? date('Y-m-d H:i:s') : null,
-				));
+				$input = $this->_readInput();
+
+				// Build the update from the fields present. Scopes editing is
+				// additive (v1.28.0); revocation keeps its original contract.
+				$scopesProvided = array_key_exists('scopes', $input);
+				$update   = array();
+				$doRevoke = false;
+
+				if ($scopesProvided) {
+					if (\nova_ext_sim_central\SimCentralAccess::isSimCentralToken($id)) {
+						$this->_emit(409, array('error' => 'The Sim Central access token is managed automatically; its scopes cannot be edited here.'));
+					}
+					$scopeResult = \nova_ext_sim_central\ApiAuth::validateScopeSet($input['scopes'], (int) $existing->user_id);
+					if ( ! empty($scopeResult['errors'])) {
+						$this->_emit(422, array('error' => implode(' ', $scopeResult['errors']), 'errors' => $scopeResult['errors']));
+					}
+					$update['scopes'] = json_encode($scopeResult['scopes']);
+				}
+
+				// Revocation: original behaviour is "PATCH revokes unless
+				// revoked=false". Preserve that when no scopes are supplied; when
+				// editing scopes only, leave revocation untouched unless the
+				// caller passes an explicit `revoked`.
+				if (array_key_exists('revoked', $input) || ! $scopesProvided) {
+					$doRevoke = $this->_boolParam($input, 'revoked', true);
+					$update['revoked_at'] = $doRevoke ? date('Y-m-d H:i:s') : null;
+				}
+
+				$this->db->where('id', $id)->update('sim_central_api_tokens', $update);
 				// If this is the Sim Central access token, tell the broker it's
 				// been revoked so Sim Central stops using a dead credential.
-				if ($revoke) {
+				if ($doRevoke) {
 					\nova_ext_sim_central\SimCentralAccess::onTokenRevoked($id);
 				}
 				$row = $this->db->get_where('sim_central_api_tokens', array('id' => $id))->row();
@@ -1596,6 +1620,12 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			'authors'    => isset($row->post_authors) ? $row->post_authors : null,
 			'status'     => isset($row->post_status) ? $row->post_status : null,
 			'date'       => isset($row->post_date) ? date('c', (int) $row->post_date) : null,
+			// Words in this post's body (HTML stripped). Same definition as
+			// the mission-page counts. Not attributed to any one author -
+			// a post can have several.
+			'word_count' => isset($row->post_content)
+				? \nova_ext_sim_central\PostWordCount::countText($row->post_content)
+				: 0,
 		);
 
 		$features = $this->_suiteFeatures();
@@ -1676,6 +1706,14 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			'end'         => ( ! empty($row->mission_end)) ? date('c', (int) $row->mission_end) : null,
 		);
 
+		// Total words across this mission's activated posts. Only exposed to
+		// tokens that can read all posts (posts:read / posts:read.all): a
+		// mission total aggregates every author's posts, so an own-only or
+		// missions-only token must not see it.
+		if ($this->_tokenCanReadAllPosts()) {
+			$out['word_count'] = \nova_ext_sim_central\PostWordCount::forMission((int) $row->mission_id);
+		}
+
 		$features = $this->_suiteFeatures();
 
 		// Mission Post Summary - per-mission toggle (whether writers see the
@@ -1741,6 +1779,8 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 * referenced by every projector that needs to decide whether to surface
 	 * a feature-added column.
 	 */
+	private $_authToken = null;
+
 	private $_featuresCache = null;
 	private function _suiteFeatures()
 	{
@@ -1798,7 +1838,26 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		if ($result['status'] !== 'ok') {
 			$this->_emit($result['code'], array('error' => $result['message']));
 		}
+		// Remember the authenticated token for the request so projections
+		// can consult its scopes (e.g. mission word_count is only exposed to
+		// all-posts readers). Every endpoint calls _authenticate before it
+		// projects anything.
+		$this->_authToken = $result['token'];
 		return $result['token'];
+	}
+
+	/**
+	 * True when the current token may read arbitrary posts (not just its
+	 * own). Gates the mission word_count field, since a mission total
+	 * aggregates every author's posts.
+	 */
+	private function _tokenCanReadAllPosts()
+	{
+		if ( ! isset($this->_authToken)) {
+			return false;
+		}
+		return $this->_tokenHasScope($this->_authToken, 'posts:read')
+			|| $this->_tokenHasScope($this->_authToken, 'posts:read.all');
 	}
 
 	/**

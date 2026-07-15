@@ -77,6 +77,41 @@ class ApiAuth
 	 * @return array { errors: string[], data: array|null }
 	 *         data = { label, scopes(string[]), user_id(int|null), expires_at(string|null) }
 	 */
+	/**
+	 * Validate a set of scope strings against the registry and the
+	 * user-binding rule, independent of the other token fields. Shared by
+	 * token creation (validateTokenInput) and the scopes-only edit path
+	 * (ACP + PATCH /tokens/{id}). Pass the token's bound user id (0/none
+	 * if unbound) so post own/write/delete scopes are only allowed when a
+	 * binding is present.
+	 *
+	 * Returns array('errors' => string[], 'scopes' => string[] normalized).
+	 */
+	public static function validateScopeSet($rawScopes, $boundUserId)
+	{
+		$errors    = array();
+		$available = self::availableScopes();
+		$posted    = is_array($rawScopes) ? $rawScopes : array();
+		$scopes    = array();
+		foreach ($posted as $s) {
+			if (isset($available[$s])) { $scopes[] = $s; }
+		}
+		$scopes = array_values(array_unique($scopes));
+		if (empty($scopes)) {
+			$errors[] = 'Select at least one valid scope.';
+		}
+
+		$needsUser = false;
+		foreach ($scopes as $s) {
+			if (self::scopeNeedsUser($s)) { $needsUser = true; break; }
+		}
+		if ($needsUser && (int) $boundUserId <= 0) {
+			$errors[] = 'A user binding is required for the post own/write/delete scopes.';
+		}
+
+		return array('errors' => $errors, 'scopes' => $scopes);
+	}
+
 	public static function validateTokenInput(array $in)
 	{
 		$ci =& get_instance();
@@ -89,32 +124,21 @@ class ApiAuth
 			$errors[] = 'label is too long (max 120 chars).';
 		}
 
-		$available = self::availableScopes();
-		$posted    = isset($in['scopes']) && is_array($in['scopes']) ? $in['scopes'] : array();
-		$scopes    = array();
-		foreach ($posted as $s) {
-			if (isset($available[$s])) { $scopes[] = $s; }
-		}
-		$scopes = array_values(array_unique($scopes));
-		if (empty($scopes)) {
-			$errors[] = 'Select at least one valid scope.';
-		}
-
 		$rawUser     = isset($in['user_id']) ? trim((string) $in['user_id']) : '';
 		$boundUserId = ($rawUser !== '' && ctype_digit($rawUser)) ? (int) $rawUser : 0;
 
-		$needsUser = false;
-		foreach ($scopes as $s) {
-			if (self::scopeNeedsUser($s)) { $needsUser = true; break; }
-		}
 		if ($boundUserId > 0) {
 			$exists = $ci->db->where('userid', $boundUserId)->count_all_results('users') > 0;
 			if ( ! $exists) {
 				$errors[] = 'Selected user does not exist.';
 			}
-		} elseif ($needsUser) {
-			$errors[] = 'A user binding is required for the post own/write/delete scopes.';
 		}
+
+		// Scope filtering + the user-binding rule, shared with the
+		// scopes-only edit path (validateScopeSet).
+		$scopeResult = self::validateScopeSet(isset($in['scopes']) ? $in['scopes'] : array(), $boundUserId);
+		$scopes = $scopeResult['scopes'];
+		$errors = array_merge($errors, $scopeResult['errors']);
 
 		$expiresAt = null;
 		if ( ! empty($in['expires_at'])) {

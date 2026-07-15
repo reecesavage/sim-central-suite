@@ -22,6 +22,18 @@ class PostWordCount
 	private static $cache = array();
 
 	/**
+	 * The one canonical word-count definition used everywhere in the
+	 * suite: strip tags so HTML/BBCode-ish markup doesn't inflate the
+	 * count, then treat each remaining token as a word. Used for the
+	 * mission-page figures, the per-post REST field, and mission totals,
+	 * so they always agree.
+	 */
+	public static function countText($content)
+	{
+		return str_word_count(strip_tags((string) $content));
+	}
+
+	/**
 	 * Returns array(missionId => word_count) for the given mission IDs.
 	 * Missions with no activated posts come back with 0.
 	 */
@@ -50,9 +62,7 @@ class PostWordCount
 			$query = $ci->db->get();
 
 			foreach ($query->result() as $row) {
-				// strip tags so HTML/BBCode-ish markup doesn't inflate the
-				// count; treat each remaining token as a word.
-				$counts[(int) $row->post_mission] += str_word_count(strip_tags((string) $row->post_content));
+				$counts[(int) $row->post_mission] += self::countText($row->post_content);
 			}
 
 			foreach ($counts as $id => $n) {

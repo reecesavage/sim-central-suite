@@ -145,6 +145,8 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 				$this->_flash($result);
 			} elseif ($action === 'revoke_token') {
 				$this->_flash($this->_revokeApiToken());
+			} elseif ($action === 'update_token_scopes') {
+				$this->_flash($this->_updateApiTokenScopes());
 			} elseif ($action === 'delete_token') {
 				$this->_flash($this->_deleteApiToken());
 			} elseif ($action === 'grant_sim_central') {
@@ -1543,6 +1545,39 @@ class __extensions__nova_ext_sim_central__Manage extends Nova_controller_admin
 		\nova_ext_sim_central\SimCentralAccess::onTokenDeleted($id);
 		$this->db->where('id', $id)->delete('sim_central_api_tokens');
 		return array('success', 'Token deleted.');
+	}
+
+	/**
+	 * Change an existing token's scopes in place - no need to re-issue the
+	 * key. Re-validates the new set against the token's EXISTING user
+	 * binding (so you can't add a post write/own/delete scope to an
+	 * unbound token). Refuses the managed Sim Central token, whose scopes
+	 * are owned by the grant flow.
+	 */
+	private function _updateApiTokenScopes()
+	{
+		$id = isset($_POST['token_id']) ? (int) $_POST['token_id'] : 0;
+		if ($id <= 0) {
+			return array('error', 'Invalid token id.');
+		}
+		$row = $this->db->get_where('sim_central_api_tokens', array('id' => $id))->row();
+		if ( ! $row) {
+			return array('error', 'Token not found.');
+		}
+		if (\nova_ext_sim_central\SimCentralAccess::isSimCentralToken($id)) {
+			return array('error', 'The Sim Central access token is managed automatically - use Revoke / re-grant to change its access, not scope editing.');
+		}
+
+		$posted = isset($_POST['scopes']) && is_array($_POST['scopes']) ? $_POST['scopes'] : array();
+		$result = \nova_ext_sim_central\ApiAuth::validateScopeSet($posted, (int) $row->user_id);
+		if ( ! empty($result['errors'])) {
+			return array('error', implode(' ', $result['errors']));
+		}
+
+		$this->db->where('id', $id)->update('sim_central_api_tokens', array(
+			'scopes' => json_encode($result['scopes']),
+		));
+		return array('success', 'Token scopes updated.');
 	}
 
 	/**

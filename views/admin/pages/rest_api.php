@@ -263,12 +263,36 @@
 					?>
 				</td>
 				<td class="fontSmall">
-					<?php if (empty($scopeList)): ?>
-						<span class="gray">(none)</span>
+					<?php if ($revoked): ?>
+						<?php if (empty($scopeList)): ?>
+							<span class="gray">(none)</span>
+						<?php else: ?>
+							<?php foreach ($scopeList as $s): ?>
+								<code><?php echo htmlspecialchars($s, ENT_QUOTES);?></code><br>
+							<?php endforeach;?>
+						<?php endif;?>
 					<?php else: ?>
-						<?php foreach ($scopeList as $s): ?>
-							<code><?php echo htmlspecialchars($s, ENT_QUOTES);?></code><br>
-						<?php endforeach;?>
+						<details>
+							<summary style="cursor: pointer;" title="Click to edit scopes">
+								<?php if (empty($scopeList)): ?>
+									<span class="gray">(none)</span>
+								<?php else: ?>
+									<?php foreach ($scopeList as $s): ?><code><?php echo htmlspecialchars($s, ENT_QUOTES);?></code> <?php endforeach;?>
+								<?php endif;?>
+							</summary>
+							<?php echo form_open('extensions/nova_ext_sim_central/Manage/rest_api/', array('style' => 'margin-top: 6px;'));?>
+								<input type="hidden" name="action" value="update_token_scopes">
+								<input type="hidden" name="token_id" value="<?php echo (int) $t->id;?>">
+								<?php foreach ($availableScopes as $scope => $description): ?>
+									<label style="display: block; margin: 2px 0;">
+										<input type="checkbox" name="scopes[]" value="<?php echo htmlspecialchars($scope, ENT_QUOTES);?>"
+											<?php echo in_array($scope, $scopeList, true) ? 'checked' : '';?>>
+										<code><?php echo htmlspecialchars($scope, ENT_QUOTES);?></code>
+									</label>
+								<?php endforeach;?>
+								<button type="submit" class="button-sec" style="margin-top: 4px;"><span>Save scopes</span></button>
+							<?php echo form_close();?>
+						</details>
 					<?php endif;?>
 				</td>
 				<td class="fontSmall"><?php echo htmlspecialchars($t->created_at, ENT_QUOTES);?></td>
