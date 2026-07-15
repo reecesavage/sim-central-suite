@@ -28,6 +28,7 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		$this->load->model('personallogs_model','logs');
 		$this->load->model('characters_model',  'characters');
 		$this->load->model('tour_model',        'tour');
+		$this->load->model('privmsgs_model',    'pm');
 		// text_output() (the display renderer used by _richBody) lives in the
 		// language helper. Load it here so read-only views always render stored
 		// content as HTML instead of falling back to an escaper.
@@ -79,6 +80,126 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		$this->_gate();
 		Auth::logout();
 		redirect($this->_u('login'));
+	}
+
+	// ========== PUBLIC ROUTES — MESSAGES (DMs) ==========
+
+	public function messages()
+	{
+		$this->_gate();
+		$this->_requireLogin();
+		$this->_requireMessages();
+		$this->_inboxPage();
+	}
+
+	public function sent()
+	{
+		$this->_gate();
+		$this->_requireLogin();
+		$this->_requireMessages();
+		$this->_sentPage();
+	}
+
+	public function message()
+	{
+		$this->_gate();
+		$this->_requireLogin();
+		$this->_requireMessages();
+
+		$id = $this->uri->segment(5);
+		$id = ($id !== null && ctype_digit((string) $id)) ? (int) $id : 0;
+		if ($id <= 0) { redirect($this->_u('messages')); }
+
+		$msg = $this->pm->get_message($id);
+		if ($msg->num_rows() === 0) {
+			$this->session->set_flashdata('sc_mobile', 'That message no longer exists.');
+			redirect($this->_u('messages'));
+		}
+		$row    = $msg->row();
+		$recips = $this->pm->get_message_recipients($row->privmsgs_id);
+		$recips = is_array($recips) ? $recips : array();
+
+		$uid = (int) $this->session->userdata('userid');
+		// Only the author or a recipient may read it.
+		if ((int) $row->privmsgs_author_user !== $uid && ! in_array($uid, array_map('intval', $recips), true)) {
+			$this->session->set_flashdata('sc_mobile', 'You can only read your own messages.');
+			redirect($this->_u('messages'));
+		}
+
+		// Mark read for a recipient viewing it (no-op for the author).
+		if (in_array($uid, array_map('intval', $recips), true)) {
+			$this->pm->update_message($id, $uid, array('pmto_unread' => 'n'));
+		}
+
+		$this->_messageRead($row, $recips, $uid);
+	}
+
+	public function messagenew()
+	{
+		$this->_gate();
+		$this->_requireLogin();
+		$this->_requireMessages();
+
+		$uid = (int) $this->session->userdata('userid');
+
+		if (strtoupper((string) $this->input->server('REQUEST_METHOD')) === 'POST') {
+			$this->_sendMessage($uid);
+			return;
+		}
+
+		// Optional reply prefill: ?reply=<message id> the user can see.
+		$values = array('subject' => '', 'body' => '', 'recipients' => array());
+		$replyId = $this->input->get('reply', true);
+		if ($replyId !== null && ctype_digit((string) $replyId)) {
+			$src = $this->pm->get_message((int) $replyId);
+			if ($src->num_rows() > 0) {
+				$srcRow = $src->row();
+				$srcRecips = $this->pm->get_message_recipients($srcRow->privmsgs_id);
+				$srcRecips = is_array($srcRecips) ? array_map('intval', $srcRecips) : array();
+				if ((int) $srcRow->privmsgs_author_user === $uid || in_array($uid, $srcRecips, true)) {
+					$subj = (string) $srcRow->privmsgs_subject;
+					if (stripos($subj, 're:') !== 0) { $subj = 'Re: '.$subj; }
+					$values['subject'] = $subj;
+					// Reply goes to the original author (unless that's you).
+					$to = (int) $srcRow->privmsgs_author_user;
+					if ($to !== $uid) { $values['recipients'] = array($to); }
+				}
+			}
+		}
+
+		$this->_composeForm($values, '', $uid);
+	}
+
+	public function messagedelete()
+	{
+		$this->_gate();
+		$this->_requireLogin();
+		$this->_requireMessages();
+
+		if (strtoupper((string) $this->input->server('REQUEST_METHOD')) !== 'POST') {
+			redirect($this->_u('messages'));
+		}
+
+		$uid = (int) $this->session->userdata('userid');
+		$box = $this->input->post('box') === 'sent' ? 'sent' : 'inbox';
+		$id  = (int) $this->input->post('message_id');
+
+		if ($box === 'sent') {
+			if ($id > 0) {
+				// Author-side soft delete (hides from the sender's Sent box).
+				$this->pm->update_private_message($id, array('privmsgs_author_display' => 'n'));
+			}
+			$this->session->set_flashdata('sc_mobile', 'Message removed from Sent.');
+			redirect($this->_u('sent'));
+		}
+
+		// Inbox soft delete: keyed on (message, recipient) so we only touch
+		// this user's copy, never other recipients'.
+		if ($id > 0) {
+			$this->pm->update_message($id, $uid, array('pmto_display' => 'n', 'pmto_unread' => 'n'));
+		}
+		$this->session->set_flashdata('sc_mobile', 'Message deleted.');
+		redirect($this->_u('messages'));
 	}
 
 	// ========== PUBLIC ROUTES — POSTS ==========
@@ -605,6 +726,23 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		}
 	}
 
+	/**
+	 * Whether the current user may use private messages. Honours the same
+	 * Nova access control the desktop messaging controller does, so a role
+	 * without messages access sees no Messages nav or routes on mobile.
+	 */
+	private function _messagesAllowed()
+	{
+		return Auth::is_logged_in() && Auth::check_access('messages/index', false);
+	}
+
+	private function _requireMessages()
+	{
+		if ( ! $this->_messagesAllowed()) {
+			show_404();
+		}
+	}
+
 	// ========== HTML HELPERS ==========
 
 	private function _u($path = '')
@@ -664,9 +802,16 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		$nav      = '';
 		$themeBtn = '';
 		if ($showNav && Auth::is_logged_in()) {
+			$messagesLink = '';
+			if ($this->_messagesAllowed()) {
+				$unread = (int) $this->pm->count_pms((int) $this->session->userdata('userid'), 'unread');
+				$badge  = $unread > 0 ? ' <span class="sc-nav-badge">'.$unread.'</span>' : '';
+				$messagesLink = '<a href="'.$this->_esc($this->_u('messages')).'">Messages'.$badge.'</a>';
+			}
 			$nav = '<nav class="sc-nav">'
 				. '<a href="'.$this->_esc($this->_u()).'">Posts</a>'
 				. '<a href="'.$this->_esc($this->_u('logs')).'">Logs</a>'
+				. $messagesLink
 				. '<a href="'.$this->_esc($this->_u('manifest')).'">Manifest</a>'
 				. '<a href="'.$this->_esc($this->_u('missions')).'">Missions</a>'
 				. '<a href="'.$this->_esc($this->_u('tour')).'">Tour</a>'
@@ -765,6 +910,19 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '.sc-nav::-webkit-scrollbar{display:none}'
 			. '.sc-nav a{color:var(--sc-bl2);text-decoration:none;font-size:14px;white-space:nowrap;padding-right:16px}'
 			. '.sc-nav a:last-child{padding-right:0}'
+			. '.sc-nav-badge{display:inline-block;font-size:11px;min-width:16px;text-align:center;padding:0 5px;border-radius:999px;background:var(--sc-bl);color:#fff;font-weight:700}'
+			// Messages (DMs)
+			. '.sc-subnav{margin:2px 0 14px;font-size:14px;color:var(--sc-mu)}'
+			. '.sc-subnav a{color:var(--sc-bl2);text-decoration:none}'
+			. '.sc-badge-unread{background:var(--sc-bl);color:#fff}'
+			. '.sc-recips{max-height:220px;overflow:auto;border:1px solid var(--sc-brd);border-radius:8px;padding:4px 10px;margin:0 0 12px;background:var(--sc-bg3)}'
+			. '.sc-check{display:block;font-size:15px;color:var(--sc-fg);padding:8px 0;border-bottom:1px solid var(--sc-brd3)}'
+			. '.sc-check:last-child{border-bottom:0}'
+			. '.sc-check input{width:auto;margin:0 8px 0 0}'
+			. '.sc-msg{border:1px solid var(--sc-brd);border-radius:10px;padding:14px;background:var(--sc-bg2);margin:0 0 12px}'
+			. '.sc-msg h1{font-size:19px;margin:0 0 8px}'
+			. '.sc-msg-body{margin-top:12px;line-height:1.7;font-size:15px;border-top:1px solid var(--sc-brd3);padding-top:12px;word-break:break-word}'
+			. '.sc-pager{display:flex;align-items:center;gap:10px;justify-content:center;margin:14px 0}'
 			// Main
 			. '.sc-main{padding:18px 0}'
 			. 'h1{font-size:22px;margin:0 0 4px}'
@@ -843,6 +1001,248 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 	}
 
 	// ========== POST LIST ==========
+
+	// ========== MESSAGES RENDERING ==========
+
+	private function _inboxPage()
+	{
+		$uid     = (int) $this->session->userdata('userid');
+		$perPage = 25;
+		$page    = max(1, (int) $this->input->get('p'));
+		$offset  = ($page - 1) * $perPage;
+
+		$total = (int) $this->pm->count_pms($uid, 'inbox');
+		$rows  = $this->pm->get_inbox($uid, $perPage, $offset)->result();
+
+		$body  = $this->_messagesFlash();
+		$body .= '<a class="sc-btn sc-btn-main" href="'.$this->_esc($this->_u('messagenew')).'">+ New message</a>';
+		$body .= '<nav class="sc-subnav"><strong>Inbox</strong> &middot; '
+			. '<a href="'.$this->_esc($this->_u('sent')).'">Sent</a></nav>';
+
+		if (empty($rows)) {
+			$body .= '<p class="sc-meta">Your inbox is empty.</p>';
+		} else {
+			foreach ($rows as $m) {
+				$body .= $this->_messageCard($m, 'inbox');
+			}
+			$body .= $this->_pager('messages', $page, $perPage, $total);
+		}
+
+		$this->_layout('Messages', $body);
+	}
+
+	private function _sentPage()
+	{
+		$uid     = (int) $this->session->userdata('userid');
+		$perPage = 25;
+		$page    = max(1, (int) $this->input->get('p'));
+		$offset  = ($page - 1) * $perPage;
+
+		$total = (int) $this->pm->count_pms($uid, 'sent');
+		$rows  = $this->pm->get_outbox($uid, $perPage, $offset)->result();
+
+		$body  = $this->_messagesFlash();
+		$body .= '<a class="sc-btn sc-btn-main" href="'.$this->_esc($this->_u('messagenew')).'">+ New message</a>';
+		$body .= '<nav class="sc-subnav"><a href="'.$this->_esc($this->_u('messages')).'">Inbox</a> &middot; '
+			. '<strong>Sent</strong></nav>';
+
+		if (empty($rows)) {
+			$body .= '<p class="sc-meta">You haven\'t sent any messages.</p>';
+		} else {
+			foreach ($rows as $m) {
+				$body .= $this->_messageCard($m, 'sent');
+			}
+			$body .= $this->_pager('sent', $page, $perPage, $total);
+		}
+
+		$this->_layout('Sent', $body);
+	}
+
+	private function _messageCard($m, $box)
+	{
+		$subject = $this->_esc(($m->privmsgs_subject !== '' && $m->privmsgs_subject !== null) ? $m->privmsgs_subject : '(no subject)');
+		$when    = ! empty($m->privmsgs_date) ? date('M j, Y', (int) $m->privmsgs_date) : '';
+		$href    = $this->_esc($this->_u('message/'.(int) $m->privmsgs_id));
+
+		if ($box === 'inbox') {
+			$who    = 'From '.$this->_esc($this->_charName((int) $m->privmsgs_author_character));
+			$unread = (isset($m->pmto_unread) && $m->pmto_unread === 'y')
+				? '<span class="sc-badge sc-badge-unread">new</span>' : '';
+		} else {
+			$recips = $this->pm->get_message_recipients((int) $m->privmsgs_id, 'character');
+			$who    = 'To '.$this->_esc($this->_recipientNames(is_array($recips) ? $recips : array()));
+			$unread = '';
+		}
+
+		return '<a class="sc-card" href="'.$href.'"><h3>'.$subject.$unread.'</h3>'
+			. '<div class="sc-meta">'.$who.' &middot; '.$this->_esc($when).'</div></a>';
+	}
+
+	private function _messageRead($row, array $recips, $uid)
+	{
+		$isAuthor = ((int) $row->privmsgs_author_user === $uid);
+		$subject  = $this->_esc(($row->privmsgs_subject !== '' && $row->privmsgs_subject !== null) ? $row->privmsgs_subject : '(no subject)');
+		$when     = ! empty($row->privmsgs_date) ? date('M j, Y \a\t g:i a', (int) $row->privmsgs_date) : '';
+
+		$recipChars = $this->pm->get_message_recipients((int) $row->privmsgs_id, 'character');
+		$toNames    = $this->_recipientNames(is_array($recipChars) ? $recipChars : array());
+
+		$body  = $this->_messagesFlash();
+		$body .= '<nav class="sc-subnav"><a href="'.$this->_esc($this->_u($isAuthor ? 'sent' : 'messages')).'">&larr; Back</a></nav>';
+		$body .= '<article class="sc-msg">';
+		$body .= '<h1>'.$subject.'</h1>';
+		$body .= '<div class="sc-meta">From '.$this->_esc($this->_charName((int) $row->privmsgs_author_character))
+			. '<br>To '.$this->_esc($toNames)
+			. '<br>'.$this->_esc($when).'</div>';
+		$body .= '<div class="sc-msg-body">'.$this->_richBody($row->privmsgs_content).'</div>';
+		$body .= '</article>';
+
+		// Actions: reply (to the author, unless you are the author) + delete.
+		$body .= '<div class="sc-actions">';
+		if ( ! $isAuthor) {
+			$body .= '<a class="sc-btn sc-btn-main" href="'.$this->_esc($this->_u('messagenew').'?reply='.(int) $row->privmsgs_id).'">Reply</a>';
+		}
+		$body .= $this->_deleteMessageForm((int) $row->privmsgs_id, $isAuthor ? 'sent' : 'inbox');
+		$body .= '</div>';
+
+		$this->_layout($subject, $body);
+	}
+
+	private function _deleteMessageForm($messageId, $box)
+	{
+		return '<form method="post" action="'.$this->_esc($this->_u('messagedelete')).'" '
+			. 'onsubmit="return confirm(\'Delete this message?\');" style="display:inline;">'
+			. $this->_csrf()
+			. '<input type="hidden" name="message_id" value="'.(int) $messageId.'">'
+			. '<input type="hidden" name="box" value="'.$this->_esc($box).'">'
+			. '<button class="sc-btn sc-btn-sec" type="submit">Delete</button>'
+			. '</form>';
+	}
+
+	private function _composeForm($values, $error, $uid)
+	{
+		$body  = '<h1>New message</h1>';
+		if ($error !== '') {
+			$body .= '<div class="sc-error">'.$this->_esc($error).'</div>';
+		}
+
+		$selected = array_map('intval', (array) $values['recipients']);
+
+		$body .= '<form method="post" action="'.$this->_esc($this->_u('messagenew')).'" id="sc-msg-form">'.$this->_csrf();
+		$body .= '<label>Subject<input type="text" name="subject" value="'.$this->_esc($values['subject']).'" maxlength="255" required></label>';
+
+		$body .= '<div class="sc-section">Recipients</div>';
+		$body .= '<div class="sc-recips">';
+		$chars = $this->user->get_main_characters();
+		$any = false;
+		if ($chars->num_rows() > 0) {
+			foreach ($chars->result() as $item) {
+				if ($item->crew_type !== 'active') { continue; }
+				if ((int) $item->userid === $uid) { continue; } // no messaging yourself
+				$any = true;
+				$name = $this->char->get_character_name($item->main_char, true);
+				$body .= '<label class="sc-check"><input type="checkbox" name="recipients[]" value="'.(int) $item->userid.'"'
+					. (in_array((int) $item->userid, $selected, true) ? ' checked' : '').'> '.$this->_esc($name).'</label>';
+			}
+		}
+		if ( ! $any) {
+			$body .= '<p class="sc-meta">No other active members to message.</p>';
+		}
+		$body .= '</div>';
+
+		$body .= '<label>Message<textarea name="message" rows="8" required>'.$this->_esc($values['body']).'</textarea></label>';
+		$body .= '<div class="sc-actions"><button class="sc-btn sc-btn-main" type="submit">Send</button> '
+			. '<a class="sc-btn sc-btn-sec" href="'.$this->_esc($this->_u('messages')).'">Cancel</a></div>';
+		$body .= '</form>';
+
+		$this->_layout('New message', $body);
+	}
+
+	private function _sendMessage($uid)
+	{
+		$subject    = trim((string) $this->input->post('subject', true));
+		$message    = (string) $this->input->post('message', true);
+		$recipients = $this->input->post('recipients', true);
+		$recipients = is_array($recipients) ? array_values(array_unique(array_filter(array_map('intval', $recipients), function($v){ return $v > 0; }))) : array();
+
+		$values = array('subject' => $subject, 'body' => $message, 'recipients' => $recipients);
+
+		if ($subject === '' || trim($message) === '') {
+			$this->_composeForm($values, 'A subject and a message are both required.', $uid);
+			return;
+		}
+		if (empty($recipients)) {
+			$this->_composeForm($values, 'Pick at least one recipient.', $uid);
+			return;
+		}
+
+		$this->pm->insert_private_message(array(
+			'privmsgs_author_user'      => $uid,
+			'privmsgs_author_character' => (int) $this->session->userdata('main_char'),
+			'privmsgs_date'             => now(),
+			'privmsgs_subject'          => $subject,
+			'privmsgs_content'          => $message,
+		));
+		$msgId = (int) $this->db->insert_id();
+		if ($msgId <= 0) {
+			$this->_composeForm($values, 'Could not send the message. Please try again.', $uid);
+			return;
+		}
+
+		foreach ($recipients as $rid) {
+			$this->pm->insert_pm_recipients(array(
+				'pmto_message'             => $msgId,
+				'pmto_recipient_user'      => $rid,
+				'pmto_recipient_character' => (int) $this->user->get_main_character($rid),
+			));
+		}
+
+		$this->session->set_flashdata('sc_mobile', 'Message sent.');
+		redirect($this->_u('sent'));
+	}
+
+	// ---------- messages helpers ----------
+
+	private function _messagesFlash()
+	{
+		$flash = $this->session->flashdata('sc_mobile');
+		return $flash ? '<div class="sc-ok">'.$this->_esc($flash).'</div>' : '';
+	}
+
+	/** Character name for a charid, safe when the char is missing. */
+	private function _charName($charId)
+	{
+		$charId = (int) $charId;
+		if ($charId <= 0) { return '(unknown)'; }
+		$name = $this->char->get_character_name($charId, true);
+		return ($name !== '' && $name !== null) ? $name : '(unknown)';
+	}
+
+	/** Comma-joined recipient names from an array of charids. */
+	private function _recipientNames(array $charIds)
+	{
+		$names = array();
+		foreach ($charIds as $cid) {
+			$names[] = $this->_charName((int) $cid);
+		}
+		return empty($names) ? '(no recipients)' : implode(', ', $names);
+	}
+
+	/** Prev/Next pager for the message lists. */
+	private function _pager($route, $page, $perPage, $total)
+	{
+		$pages = (int) ceil($total / max(1, $perPage));
+		if ($pages <= 1) { return ''; }
+		$out = '<nav class="sc-pager">';
+		if ($page > 1) {
+			$out .= '<a class="sc-btn sc-btn-sec" href="'.$this->_esc($this->_u($route).'?p='.($page - 1)).'">&larr; Newer</a> ';
+		}
+		$out .= '<span class="sc-meta">Page '.(int) $page.' of '.$pages.'</span>';
+		if ($page < $pages) {
+			$out .= ' <a class="sc-btn sc-btn-sec" href="'.$this->_esc($this->_u($route).'?p='.($page + 1)).'">Older &rarr;</a>';
+		}
+		return $out.'</nav>';
+	}
 
 	private function _postList()
 	{
