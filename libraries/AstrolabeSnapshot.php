@@ -98,9 +98,10 @@ class AstrolabeSnapshot
 			'generated_at' => gmdate('Y-m-d\TH:i:s\Z'),
 			'game'         => self::guard(function () { return self::game(); }, array('name' => 'Sim', 'url' => self::absUrl(''), 'description' => null)),
 			'stats'        => self::guard(function () { return self::stats(); }, array('players' => null, 'characters' => null, 'stories' => null)),
-			'manifest'     => self::guard(function () { return self::manifest(); }, array()),
-			'stories'      => self::guard(function () { return self::stories(); }, array()),
-			'recent_posts' => self::guard(function () { return self::recentPosts(); }, array()),
+			'manifest'       => self::guard(function () { return self::manifest(); }, array()),
+			'stories'        => self::guard(function () { return self::stories(); }, array()),
+			'recent_posts'   => self::guard(function () { return self::recentPosts(); }, array()),
+			'open_positions' => self::guard(function () { return self::openPositions(); }, array()),
 		);
 	}
 
@@ -122,7 +123,7 @@ class AstrolabeSnapshot
 		$ci =& get_instance();
 		$name = $ci->sc_settings->get_setting('sim_name');
 		return array(
-			'name'        => ($name !== false && $name !== '') ? (string) $name : 'Sim',
+			'name'        => ($name !== false && $name !== '') ? self::dec((string) $name) : 'Sim',
 			'url'         => self::absUrl(''),
 			// Astrolabe owns the blurb (admins enter it on the Astrolabe side).
 			'description' => null,
@@ -182,7 +183,7 @@ class AstrolabeSnapshot
 			}
 
 			$out[] = array(
-				'name'        => (string) $man->manifest_name,
+				'name'        => self::dec((string) $man->manifest_name),
 				'slug'        => $slug,
 				'departments' => $departments,
 			);
@@ -232,7 +233,7 @@ class AstrolabeSnapshot
 		}
 
 		return array(
-			'department' => (string) $deptName,
+			'department' => self::dec((string) $deptName),
 			'characters' => $characters,
 		);
 	}
@@ -248,15 +249,15 @@ class AstrolabeSnapshot
 		$rank = null;
 		if ( ! empty($char->rank_name) || ! empty($char->rank_short_name) || ! empty($char->rank_image)) {
 			$rank = array(
-				'name'         => ! empty($char->rank_name) ? (string) $char->rank_name : null,
-				'abbreviation' => ! empty($char->rank_short_name) ? (string) $char->rank_short_name : null,
+				'name'         => ! empty($char->rank_name) ? self::dec((string) $char->rank_name) : null,
+				'abbreviation' => ! empty($char->rank_short_name) ? self::dec((string) $char->rank_short_name) : null,
 				'image'        => self::rankImage(isset($char->rank_image) ? $char->rank_image : '', $rankMeta),
 			);
 		}
 
 		return array(
-			'name'       => $name !== '' ? $name : '(unnamed)',
-			'position'   => ($positionName !== '' && $positionName !== null) ? (string) $positionName : null,
+			'name'       => $name !== '' ? self::dec($name) : '(unnamed)',
+			'position'   => ($positionName !== '' && $positionName !== null) ? self::dec((string) $positionName) : null,
 			'avatar_url' => self::absImg(isset($char->images) ? $char->images : ''),
 			'url'        => self::absUrl('personnel/character/'.(int) $char->charid),
 			'rank'       => $rank,
@@ -274,7 +275,7 @@ class AstrolabeSnapshot
 		}
 		foreach ($missions->result() as $m) {
 			$out[] = array(
-				'title'       => (string) $m->mission_name,
+				'title'       => self::dec((string) $m->mission_name),
 				'description' => self::plain(isset($m->mission_desc) ? $m->mission_desc : '', self::CAP_STORY),
 				'status'      => isset($m->mission_status) ? (string) $m->mission_status : null,
 				// Nova has no in-character free-text mission dates.
@@ -303,7 +304,7 @@ class AstrolabeSnapshot
 
 		foreach ($rows as $p) {
 			$out[] = array(
-				'title'        => (string) $p->post_title,
+				'title'        => self::dec((string) $p->post_title),
 				'authors'      => self::authorNames(isset($p->post_authors) ? $p->post_authors : ''),
 				'published_at' => ! empty($p->post_date) ? gmdate('Y-m-d\TH:i:s\Z', (int) $p->post_date) : null,
 				'excerpt'      => self::plain(isset($p->post_content) ? $p->post_content : '', self::CAP_EXCERPT),
@@ -313,7 +314,54 @@ class AstrolabeSnapshot
 		return $out;
 	}
 
+	/**
+	 * Positions the sim is actively recruiting for - Nova's open-positions
+	 * concept (pos_open > 0, displayed), the same set shown on the join page.
+	 * Department labels match the manifest's where they share a department.
+	 */
+	private static function openPositions()
+	{
+		$ci =& get_instance();
+		$out = array();
+		$rows = $ci->sc_pos->get_open_positions('y', false);
+		if ( ! $rows || $rows->num_rows() === 0) {
+			return $out;
+		}
+
+		$deptNames = array();
+		foreach ($rows->result() as $p) {
+			$deptId = isset($p->pos_dept) ? (int) $p->pos_dept : 0;
+			if ($deptId > 0 && ! array_key_exists($deptId, $deptNames)) {
+				$n = $ci->sc_dept->get_dept($deptId, 'dept_name');
+				$deptNames[$deptId] = ($n !== false && $n !== null && $n !== '') ? self::dec((string) $n) : null;
+			}
+
+			$out[] = array(
+				'name'        => self::dec(isset($p->pos_name) ? (string) $p->pos_name : ''),
+				'department'  => ($deptId > 0 && ! empty($deptNames[$deptId])) ? $deptNames[$deptId] : null,
+				'openings'    => isset($p->pos_open) ? (int) $p->pos_open : 0,
+				'description' => self::plain(isset($p->pos_desc) ? $p->pos_desc : '', self::CAP_STORY),
+				// Best public destination for applying is the join page.
+				'url'         => self::absUrl('main/join'),
+			);
+		}
+		return $out;
+	}
+
 	// ---------- helpers ----------
+
+	/**
+	 * Decode HTML entities in a human-readable string so names arrive clean
+	 * (e.g. "Security &amp; Tactical" -> "Security & Tactical"). json_encode
+	 * handles output escaping, so decoding here is safe and non-double-encoding.
+	 */
+	private static function dec($s)
+	{
+		if ($s === null) {
+			return null;
+		}
+		return html_entity_decode((string) $s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+	}
 
 	/** Public player display name for a user id (users.name), or null. */
 	private static function player($userId)
@@ -326,7 +374,7 @@ class AstrolabeSnapshot
 		if ( ! array_key_exists($userId, $cache)) {
 			$ci =& get_instance();
 			$row = $ci->db->select('name')->get_where('users', array('userid' => $userId), 1)->row();
-			$cache[$userId] = ($row && $row->name !== '' && $row->name !== null) ? (string) $row->name : null;
+			$cache[$userId] = ($row && $row->name !== '' && $row->name !== null) ? self::dec((string) $row->name) : null;
 		}
 		return $cache[$userId] !== null ? array('name' => $cache[$userId]) : null;
 	}
@@ -347,7 +395,7 @@ class AstrolabeSnapshot
 
 		$byId = array();
 		foreach ($rows as $r) {
-			$byId[(int) $r->charid] = trim(($r->first_name ?? '').' '.($r->last_name ?? '').(empty($r->suffix) ? '' : ' '.$r->suffix));
+			$byId[(int) $r->charid] = self::dec(trim(($r->first_name ?? '').' '.($r->last_name ?? '').(empty($r->suffix) ? '' : ' '.$r->suffix)));
 		}
 		$names = array();
 		foreach ($ids as $id) {

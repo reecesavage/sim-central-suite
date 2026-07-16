@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.30.1"><img src="https://img.shields.io/badge/Version-v1.30.1-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.31.0"><img src="https://img.shields.io/badge/Version-v1.31.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -278,7 +278,7 @@ Every post carries a **`word_count`** *(v1.28.0+)* &mdash; the words in that pos
 
 Response JSON uses whitelisted, documented fields &mdash; not raw column dumps &mdash; so internal schema churn doesn't leak through. Suite-feature fields are **layered on conditionally**: when *Mission Post Summary* is on, posts gain a `summary` key; when *Ordered Mission Posts* is on, posts gain an `ordered` object and missions gain ordering config; when *Display Name* is on, characters gain `display_name` and a precomputed `preferred_name`; when *Content Filter* is on, posts gain an `age_gated` boolean (full content is still returned &mdash; the flag lets consumers decide whether to redact). Field *presence* is the signal that a feature is enabled &mdash; consumers can detect what's available without an extra config endpoint.
 
-**Astrolabe snapshot** *(v1.30.0+)*: `GET /snapshot` (scope `astrolabe:read`) returns one read-only aggregate of the sim's **public** data &mdash; game info, crew manifest (departments + characters, active players and NPCs), stories (missions), the 10 most recent posts, and headcounts &mdash; for the Astrolabe platform to mirror on its per-game page. All URLs/avatars/rank images are absolute https or null; descriptions/excerpts are HTML-stripped and length-capped; no private data. Served from a short (~10 min) cache since Astrolabe polls on a schedule. A token scoped to only `astrolabe:read` exposes just this one endpoint. Full integration contract (for the Astrolabe developer) in [`ASTROLABE.md`](ASTROLABE.md).
+**Astrolabe snapshot** *(v1.30.0+)*: `GET /snapshot` (scope `astrolabe:read`) returns one read-only aggregate of the sim's **public** data &mdash; game info, crew manifest (departments + characters, active players and NPCs), stories (missions), the 10 most recent posts, **open positions** *(v1.31.0+)*, and headcounts &mdash; for the Astrolabe platform to mirror on its per-game page. All URLs/avatars/rank images are absolute https or null; descriptions/excerpts are HTML-stripped and length-capped; no private data. Served from a short (~10 min) cache since Astrolabe polls on a schedule. A token scoped to only `astrolabe:read` exposes just this one endpoint. Full integration contract (for the Astrolabe developer) in [`ASTROLABE.md`](ASTROLABE.md).
 
 Designed primarily for [n8n](https://n8n.io/) consumers but works with any HTTP client. See [`REST_API.md`](REST_API.md) for the full endpoint reference: every parameter, every response field, curl + n8n examples, and the error-code matrix.
 

@@ -118,6 +118,15 @@ Content-Type `application/json`. Shape:
       "excerpt": "Klaxons blared across the bridge as...",
       "url": "https://ussexample.simcentral.org/sim/viewpost/123"
     }
+  ],
+  "open_positions": [
+    {
+      "name": "Chief Engineer",
+      "department": "Engineering",
+      "openings": 1,
+      "description": "Keeps the warp core humming.",
+      "url": "https://ussexample.simcentral.org/main/join"
+    }
   ]
 }
 ```
@@ -160,6 +169,12 @@ Content-Type `application/json`. Shape:
 | `recent_posts[].published_at` | string \| null | ISO 8601 UTC. |
 | `recent_posts[].excerpt` | string \| null | Plain text, ≤ 300 chars. |
 | `recent_posts[].url` | string \| null | Absolute https link to the post. |
+| `open_positions` | array | Positions the sim is recruiting for (Nova open positions). `[]` when none. *(v1.31.0+)* |
+| `open_positions[].name` | string | Position title, e.g. `"Chief Engineer"`. |
+| `open_positions[].department` | string \| null | Department name (matches the manifest's department labels where shared). |
+| `open_positions[].openings` | int | Open slots (Nova `pos_open`); always ≥ 1 (filled positions are omitted). |
+| `open_positions[].description` | string \| null | Plain text, ≤ 300 chars. |
+| `open_positions[].url` | string \| null | Absolute https link to the sim's join/apply page. |
 
 ---
 
@@ -168,7 +183,10 @@ Content-Type `application/json`. Shape:
 1. **All URLs are absolute `https://`** (or null) — every `url`, `avatar_url`,
    and `rank.image`.
 2. **Plain text** in `description` and `excerpt` — HTML stripped, entities
-   decoded, whitespace collapsed, length-capped.
+   decoded, whitespace collapsed, length-capped. **All human-readable strings**
+   (names, department labels, positions, ranks, titles, player names) are also
+   **entity-decoded** *(v1.31.0+)*, so `Security &amp; Tactical` arrives as
+   `Security & Tactical`.
 3. **`null` for a missing single value, `[]` for a missing list.** Required keys
    (`version`, `generated_at`, `game`, `stats`, `manifest`) are always present.
 4. **`recent_posts` ≤ 10, newest first.**
