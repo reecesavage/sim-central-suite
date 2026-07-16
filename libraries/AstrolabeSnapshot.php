@@ -87,16 +87,32 @@ class AstrolabeSnapshot
 		$ci->load->model('characters_model',  'sc_char');
 		$ci->load->model('ranks_model',       'sc_ranks');
 		$ci->load->model('missions_model',    'sc_missions');
+		// count_mission_posts() lives on the POSTS model, not missions.
+		$ci->load->model('posts_model',       'sc_posts');
 
+		// Each section is guarded so a model quirk on one sim degrades that
+		// section (empty / null) rather than 500ing the whole snapshot -
+		// Astrolabe then still gets a usable, cacheable payload.
 		return array(
 			'version'      => 1,
 			'generated_at' => gmdate('Y-m-d\TH:i:s\Z'),
-			'game'         => self::game(),
-			'stats'        => self::stats(),
-			'manifest'     => self::manifest(),
-			'stories'      => self::stories(),
-			'recent_posts' => self::recentPosts(),
+			'game'         => self::guard(function () { return self::game(); }, array('name' => 'Sim', 'url' => self::absUrl(''), 'description' => null)),
+			'stats'        => self::guard(function () { return self::stats(); }, array('players' => null, 'characters' => null, 'stories' => null)),
+			'manifest'     => self::guard(function () { return self::manifest(); }, array()),
+			'stories'      => self::guard(function () { return self::stories(); }, array()),
+			'recent_posts' => self::guard(function () { return self::recentPosts(); }, array()),
 		);
+	}
+
+	/** Run a section builder, returning $fallback (and logging) on any error. */
+	private static function guard(callable $fn, $fallback)
+	{
+		try {
+			return $fn();
+		} catch (\Throwable $e) {
+			log_message('error', 'nova_ext_sim_central AstrolabeSnapshot section failed: '.$e->getMessage());
+			return $fallback;
+		}
 	}
 
 	// ---------- sections ----------
@@ -264,7 +280,9 @@ class AstrolabeSnapshot
 				// Nova has no in-character free-text mission dates.
 				'start_date'  => null,
 				'end_date'    => null,
-				'posts_count' => (int) $ci->sc_missions->count_mission_posts((int) $m->mission_id),
+				// 'single' count_pref returns the row count; the default empty
+				// pref hits no switch case and always returns 0.
+				'posts_count' => (int) $ci->sc_posts->count_mission_posts((int) $m->mission_id, 'single'),
 				'url'         => self::absUrl('sim/missions/id/'.(int) $m->mission_id),
 			);
 		}
