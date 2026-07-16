@@ -124,6 +124,7 @@ Content-Type `application/json`. Shape:
       "name": "Chief Engineer",
       "department": "Engineering",
       "openings": 1,
+      "top": true,
       "description": "Keeps the warp core humming.",
       "url": "https://ussexample.simcentral.org/main/join"
     }
@@ -169,10 +170,11 @@ Content-Type `application/json`. Shape:
 | `recent_posts[].published_at` | string \| null | ISO 8601 UTC. |
 | `recent_posts[].excerpt` | string \| null | Plain text, ≤ 300 chars. |
 | `recent_posts[].url` | string \| null | Absolute https link to the post. |
-| `open_positions` | array | Positions the sim is recruiting for (Nova open positions). `[]` when none. *(v1.31.0+)* |
+| `open_positions` | array | **All** open positions the sim is recruiting for (Nova open positions, `pos_open > 0`) — not just the featured/top list. Always present; `[]` when none. *(v1.31.0+)* |
 | `open_positions[].name` | string | Position title, e.g. `"Chief Engineer"`. |
 | `open_positions[].department` | string \| null | Department name (matches the manifest's department labels where shared). |
 | `open_positions[].openings` | int | Open slots (Nova `pos_open`); always ≥ 1 (filled positions are omitted). |
+| `open_positions[].top` | bool | `true` when the position is on the sim's "top open positions" (featured) list, else `false`. *(v1.31.1+)* |
 | `open_positions[].description` | string \| null | Plain text, ≤ 300 chars. |
 | `open_positions[].url` | string \| null | Absolute https link to the sim's join/apply page. |
 

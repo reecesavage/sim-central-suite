@@ -42,10 +42,15 @@ class AstrolabeSnapshot
 	public static function cached($ttl = self::CACHE_TTL)
 	{
 		$ci =& get_instance();
+		$version = Config::version();
 		$row = $ci->db->get_where('settings', array('setting_key' => self::CACHE_KEY), 1)->row();
 		if ($row) {
 			$blob = json_decode((string) $row->setting_value, true);
+			// Version-aware: a suite update invalidates the cache immediately,
+			// so the snapshot reflects new fields on the next request instead
+			// of serving up to a full TTL of pre-update data.
 			if (is_array($blob) && isset($blob['at'], $blob['json'])
+				&& (isset($blob['ver']) && $blob['ver'] === $version)
 				&& (time() - (int) $blob['at']) < (int) $ttl) {
 				return $blob['json'];
 			}
@@ -62,7 +67,7 @@ class AstrolabeSnapshot
 	private static function store($json)
 	{
 		$ci =& get_instance();
-		$value = json_encode(array('at' => time(), 'json' => $json));
+		$value = json_encode(array('at' => time(), 'ver' => Config::version(), 'json' => $json));
 		$existing = $ci->db->get_where('settings', array('setting_key' => self::CACHE_KEY), 1);
 		if ($existing->num_rows() > 0) {
 			$ci->db->where('setting_id', $existing->row()->setting_id)
@@ -340,6 +345,8 @@ class AstrolabeSnapshot
 				'name'        => self::dec(isset($p->pos_name) ? (string) $p->pos_name : ''),
 				'department'  => ($deptId > 0 && ! empty($deptNames[$deptId])) ? $deptNames[$deptId] : null,
 				'openings'    => isset($p->pos_open) ? (int) $p->pos_open : 0,
+				// true when featured on the sim's "top open positions" list.
+				'top'         => (isset($p->pos_top_open) && $p->pos_top_open === 'y'),
 				'description' => self::plain(isset($p->pos_desc) ? $p->pos_desc : '', self::CAP_STORY),
 				// Best public destination for applying is the join page.
 				'url'         => self::absUrl('main/join'),

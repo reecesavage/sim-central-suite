@@ -722,7 +722,7 @@ class ApiEndpoints
 					'manifest'     => array('type' => 'array', 'description' => 'Roster groups. Each: {name, slug, departments:[{department, characters:[{name, position, avatar_url, url, rank:{name,abbreviation,image}, player:{name}}]}]}. Active players + NPCs. May be [].'),
 					'stories'        => array('type' => 'array', 'description' => 'Missions. Each: {title, description, status, start_date, end_date (both null - Nova has no in-character dates), posts_count, url}. May be [].'),
 					'recent_posts'   => array('type' => 'array', 'description' => 'Up to 10 most recent activated posts, newest first. Each: {title, authors:[names], published_at, excerpt, url}. May be [].'),
-					'open_positions' => array('type' => 'array', 'description' => 'Positions the sim is recruiting for (Nova open positions, pos_open > 0). Each: {name, department, openings, description, url}. May be [].'),
+					'open_positions' => array('type' => 'array', 'description' => 'ALL open positions the sim is recruiting for (Nova open positions, pos_open > 0 - not just the featured list). Each: {name, department, openings, top (bool - featured/top-open), description, url}. Always present; may be [].'),
 				),
 				'required' => array('version', 'generated_at', 'game', 'stats', 'manifest'),
 			),
