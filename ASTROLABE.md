@@ -60,12 +60,35 @@ Configure → Create token**, label it (e.g. "Astrolabe"), tick **only** the
 
 **Or (v1.32.0+, preferred): use the Sim Central grant.** The one-button
 **"Grant Sim Central access"** token now carries `astrolabe:read` and
-`positions:read` too, and the registry forwards each grant (sim name, URLs,
-token, scopes) to Astrolabe's
+`positions:read` too, and the **registry** worker (registry.simcentral.host —
+not the Discord OAuth broker) forwards each grant to Astrolabe's
 `POST /api/sim-central/registrations` receiver with the shared `X-SC-Secret` —
 so a sim that grants access simply appears in Astrolabe's admin with a working
 token, no copy-paste. Existing grants pick the new scopes up automatically on
 the sim's next suite update.
+
+The forward payload the receiver builds against (raw token included on
+`granted` **only** — decided over a metadata-only forward + pull-back, which
+would have needed a new registry route and a standing credential):
+
+```json
+{
+  "action": "granted",                 // granted | updated | revoked | deleted (event mirrors it)
+  "event":  "granted",
+  "sim": { "name": "USS Example", "url": "https://example.org/",
+           "api_url": "https://example.org/index.php/extensions/nova_ext_sim_central/Api",
+           "version": "1.32.0" },
+  "token": "scapi_…",                  // ONLY on granted; null otherwise
+  "token_prefix": "scapi_abcd12",
+  "scopes": ["posts:read", "positions:read", "astrolabe:read", "…"],
+  "at": "2026-07-17T12:00:00.000Z"
+}
+```
+
+Answer any 2xx quickly (204 ideal). Best-effort, no retries — a missed forward
+is reconciled by re-granting on the sim. `updated` = same token, re-read
+`scopes`; `revoked`/`deleted` = token is dead. Sims are keyed by `sim.url`.
+Full contract: the sim-central-registry README.
 
 ---
 
