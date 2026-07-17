@@ -103,6 +103,16 @@
 		Scopes granted: <?php echo htmlspecialchars(implode(', ', $scScopes), ENT_QUOTES);?>
 	</p>
 
+	<p class="fontSmall" style="color: #b36b00;">
+		<strong>Note:</strong> this grant includes <code>tokens:write</code>, which lets Sim Central /
+		Astrolabe <strong>mint per-member posting tokens</strong> (scoped to
+		<code>posts:read.own</code> + <code>posts:write</code> and bound to one member) so your players
+		can write and save posts on this sim from Astrolabe &mdash; with normal attribution, edit
+		locking, and moderation. The granted token itself still <strong>cannot author posts</strong>,
+		and minting only works while the granting admin's account is a sysadmin. Revoke access above
+		at any time to cut everything off at once.
+	</p>
+
 	<?php if ( ! $brokerOk): ?>
 		<p class="fontSmall" style="color: #b36b00;">Set a <strong>Broker URL</strong> below first so the token can be delivered to Sim Central automatically.</p>
 	<?php endif;?>

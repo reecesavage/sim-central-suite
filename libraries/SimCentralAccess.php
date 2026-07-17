@@ -29,16 +29,20 @@ class SimCentralAccess
 	const SETTING_LABEL = 'Sim Central Suite - access registration (do not edit by hand)';
 
 	/**
-	 * Capabilities handed to Sim Central: read everything, manage webhooks and
-	 * user activation, and trigger suite upgrades. Deliberately NO post-write
-	 * scopes - Sim Central reads posts and manages config, it does not author.
-	 * (tokens:write is intentionally absent until Astrolabe's write-in-Nova
-	 * feature ships - minting tokens is a real trust upgrade over this
-	 * read-mostly grant and will be flagged clearly in the grant UI then.)
+	 * Capabilities handed to Sim Central: read everything, manage webhooks,
+	 * user activation, tokens, and suite upgrades. The granted token still
+	 * carries NO post-authoring scopes itself - it cannot write posts.
 	 *
 	 * astrolabe:read + positions:read (v1.32.0): the single granted token also
 	 * serves Astrolabe's snapshot poller and open-positions sync, so no
 	 * separate token paste is needed.
+	 *
+	 * tokens:write (v1.33.0): the write-back trust upgrade, flagged in the
+	 * grant UI. It lets Astrolabe mint NARROW per-user tokens (posts:read.own
+	 * + posts:write, bound to a member by their Discord id) so members can
+	 * write/save Nova posts from Astrolabe with native attribution, locking,
+	 * and moderation. Minting requires the granted token's bound admin to be
+	 * a sysadmin (enforced at request time, like every tokens:* call).
 	 */
 	public static function scopes()
 	{
@@ -52,6 +56,7 @@ class SimCentralAccess
 			'webhooks:write',
 			'users:write',
 			'tokens:read',
+			'tokens:write',
 			'suite:update',
 		);
 	}
