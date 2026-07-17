@@ -58,6 +58,15 @@ Configure → Create token**, label it (e.g. "Astrolabe"), tick **only** the
 `astrolabe:read` scope, and copy the token shown once. A token scoped to only
 `astrolabe:read` can read **just this snapshot** and nothing else in the API.
 
+**Or (v1.32.0+, preferred): use the Sim Central grant.** The one-button
+**"Grant Sim Central access"** token now carries `astrolabe:read` and
+`positions:read` too, and the registry forwards each grant (sim name, URLs,
+token, scopes) to Astrolabe's
+`POST /api/sim-central/registrations` receiver with the shared `X-SC-Secret` —
+so a sim that grants access simply appears in Astrolabe's admin with a working
+token, no copy-paste. Existing grants pick the new scopes up automatically on
+the sim's next suite update.
+
 ---
 
 ## 3. Response (HTTP 200)
@@ -92,7 +101,7 @@ Content-Type `application/json`. Shape:
                 "abbreviation": "CAPT",
                 "image": "https://ussexample.simcentral.org/nova/assets/common/genre/ranks/standard/capt.png"
               },
-              "player": { "name": "Reece" }
+              "player": { "name": "Reece", "discord_id": "797896720586768385" }
             }
           ]
         }
@@ -155,7 +164,7 @@ Content-Type `application/json`. Shape:
 | `…characters[].avatar_url` | string \| null | Absolute https, or null. |
 | `…characters[].url` | string \| null | Absolute https link to the character's page. |
 | `…characters[].rank` | object \| null | `{ name, abbreviation, image }`; each may be null. `image` absolute https or null. |
-| `…characters[].player` | object \| null | `{ name }` — the player's **public display name only**. null for NPCs / unowned. |
+| `…characters[].player` | object \| null | `{ name, discord_id }` — the player's **public display name**, plus *(v1.32.0+)* their linked **public Discord ID** when the sim runs Discord Sign-In and the player linked their account (`null` otherwise — feature off, unlinked, or pre-1.32 suite). Object is null for NPCs / unowned. Same visibility rule the event webhooks use for @mentions; the ID is public Discord data. |
 | `stories` | array | Missions. May be `[]`. |
 | `stories[].title` | string | |
 | `stories[].description` | string \| null | Plain text, ≤ 300 chars. |

@@ -32,6 +32,13 @@ class SimCentralAccess
 	 * Capabilities handed to Sim Central: read everything, manage webhooks and
 	 * user activation, and trigger suite upgrades. Deliberately NO post-write
 	 * scopes - Sim Central reads posts and manages config, it does not author.
+	 * (tokens:write is intentionally absent until Astrolabe's write-in-Nova
+	 * feature ships - minting tokens is a real trust upgrade over this
+	 * read-mostly grant and will be flagged clearly in the grant UI then.)
+	 *
+	 * astrolabe:read + positions:read (v1.32.0): the single granted token also
+	 * serves Astrolabe's snapshot poller and open-positions sync, so no
+	 * separate token paste is needed.
 	 */
 	public static function scopes()
 	{
@@ -39,12 +46,56 @@ class SimCentralAccess
 			'posts:read',
 			'characters:read',
 			'missions:read',
+			'positions:read',
+			'astrolabe:read',
 			'webhooks:read',
 			'webhooks:write',
 			'users:write',
 			'tokens:read',
 			'suite:update',
 		);
+	}
+
+	/**
+	 * Bring an existing granted token's scopes up to the current canonical
+	 * scopes() list. Called from the post-update auto-runner so a suite
+	 * upgrade that widens the grant (e.g. v1.32.0 adding astrolabe:read +
+	 * positions:read) applies to already-granted sims without a re-grant.
+	 * Safe: the Sim Central token's scopes aren't hand-editable (the ACP and
+	 * API refuse), so canonical is always the intended set. Re-registers with
+	 * the broker (event 'updated', no raw token) so Sim Central's record
+	 * reflects the new scopes. No-op when nothing is granted or already
+	 * current.
+	 */
+	public static function syncGrantedScopes()
+	{
+		$ci    =& get_instance();
+		$state = self::loadState();
+		$tokenId = isset($state['token_id']) ? (int) $state['token_id'] : 0;
+		if ($tokenId <= 0) {
+			return false;
+		}
+		$row = $ci->db->get_where('sim_central_api_tokens', array('id' => $tokenId))->row();
+		if ( ! $row || ! empty($row->revoked_at)) {
+			return false;
+		}
+
+		$current = json_decode((string) $row->scopes, true);
+		$current = is_array($current) ? $current : array();
+		$target  = self::scopes();
+		sort($current);
+		$sorted = $target;
+		sort($sorted);
+		if ($current === $sorted) {
+			return false;
+		}
+
+		$ci->db->where('id', $tokenId)->update('sim_central_api_tokens', array(
+			'scopes' => json_encode($target),
+		));
+		self::saveState(array('scopes' => $target), true);
+		self::register('updated');
+		return true;
 	}
 
 	// ---------- status ----------

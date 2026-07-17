@@ -132,6 +132,20 @@ class Migrations
 				}
 
 				// Record the marker even when some actions errored: the
+				// Keep the granted Sim Central token's scopes current: an
+				// upgrade that widens the canonical grant (e.g. v1.32.0
+				// adding astrolabe:read + positions:read) applies to
+				// already-granted sims without a manual re-grant.
+				if (class_exists('nova_ext_sim_central\\SimCentralAccess')) {
+					try {
+						if (SimCentralAccess::syncGrantedScopes()) {
+							$actions[] = 'Sim Central access: granted token scopes updated to the current set.';
+						}
+					} catch (\Throwable $e) {
+						$errors[] = 'Sim Central access: scope sync failed - '.$e->getMessage();
+					}
+				}
+
 				// dashboard cards still flag the leftovers, and we must
 				// not retry-loop the same failure on every request.
 				$state['auto_migrated_version'] = $version;

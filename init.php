@@ -40,15 +40,19 @@ require_once dirname(__FILE__).'/libraries/Updater.php';
 // single array lookup. Runs before the per-feature loads below so this
 // request already sees the migrated state.
 require_once dirname(__FILE__).'/libraries/Migrations.php';
-\nova_ext_sim_central\Migrations::runPending();
 
 // Broker / SimCentralAccess / PhoneHome back the Sim Central access button
 // and the periodic status report. Loaded unconditionally and cheap: nothing
 // here touches the DB or network until something explicitly calls it
 // (SimCentralAccess from the REST API page, PhoneHome from UpdateCheck).
+// Required BEFORE runPending() below so the post-update runner can sync the
+// granted Sim Central token's scopes (class_exists guard would silently
+// skip it otherwise).
 require_once dirname(__FILE__).'/libraries/Broker.php';
 require_once dirname(__FILE__).'/libraries/SimCentralAccess.php';
 require_once dirname(__FILE__).'/libraries/PhoneHome.php';
+
+\nova_ext_sim_central\Migrations::runPending();
 
 // TimelineFormat is consumed by Feed.php (loaded for summary OR ordered)
 // and by ordered_mission_posts events; load unconditionally so both

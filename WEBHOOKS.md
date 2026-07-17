@@ -10,6 +10,7 @@ Fires HTTP POST notifications when posts change state. Two events, two delivery 
 |---|---|
 | `post.saved` | A draft mission post is created or saved (`post_status = 'saved'`). Both inserts and updates. |
 | `post.posted` | A mission post **transitions** to `activated`. Edits of already-activated posts do **not** re-fire. |
+| `post.updated` *(v1.32.0+)* | An already-`activated` post is edited and re-saved **without** a status change. Mainly for machine sync (e.g. Astrolabe refreshing its mirrored copy). Generic payload is identical in shape to `post.posted` (with `event: "post.updated"`); the Discord format renders the same embed as `post.posted` but has its **own role-ping opt-in**. Leave it unchecked on announcement channels or every edit re-announces. |
 | `log.posted` | A personal log **transitions** to `activated`. Activation only — no saved event. |
 | `news.posted` | A news item **transitions** to `activated`. Activation only. Honours the per-webhook public/private type filter. |
 
@@ -276,7 +277,7 @@ cURL couldn't reach the URL at all. Either the host doesn't exist, DNS failed, t
 
 ### `post.posted` doesn't fire when I edit an activated post
 
-By design — `post.posted` is the *transition* event, not "post was saved while in activated status." If you want a notification on every edit, subscribe a separate webhook to `post.saved` (which fires for every save regardless of status... actually no, only for saved-status). If you genuinely want "any change to an activated post" we'd need a third event &mdash; open an issue.
+By design — `post.posted` is the *transition* event, not "post was saved while in activated status." As of **v1.32.0**, that's exactly what **`post.updated`** is for: subscribe the webhook to it and you'll get an event on every edit of an already-activated post. (`post.saved` still covers saved-status drafts only.)
 
 ### Authors aren't getting pinged
 

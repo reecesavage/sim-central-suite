@@ -1065,11 +1065,42 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				if ($hasId) {
 					$this->_emit(405, array('error' => 'Use PATCH/DELETE /tokens/{id}; POST /tokens (no id) to create.'));
 				}
-				$input  = $this->_readInput();
+				$input = $this->_readInput();
+
+				// v1.32.0: bind by discord_id as an alternative to user_id, so
+				// consumers that only know a member's Discord identity (e.g.
+				// Astrolabe minting a writer token) can create user-bound
+				// tokens. Mutually exclusive with user_id; resolving mirrors
+				// POST /users/disable (409 when the feature is off/unlinked).
+				// Omitting BOTH still creates an unbound token, as always.
+				$userIdInput   = isset($input['user_id']) ? trim((string) $input['user_id']) : '';
+				$discordIdBind = isset($input['discord_id']) ? trim((string) $input['discord_id']) : '';
+				if ($discordIdBind !== '') {
+					if ($userIdInput !== '') {
+						$this->_emit(422, array('error' => 'Provide user_id OR discord_id, not both.'));
+					}
+					$features = $this->_suiteFeatures();
+					if (empty($features['discord_auth'])) {
+						$this->_emit(409, array(
+							'error'   => 'Cannot bind by Discord ID: the Discord Auth feature is not enabled on this sim. Use user_id instead.',
+							'feature' => 'discord_auth',
+							'enabled' => false,
+						));
+					}
+					if ( ! ctype_digit($discordIdBind)) {
+						$this->_emit(400, array('error' => 'discord_id must be a numeric Discord account ID.'));
+					}
+					$linked = $this->db->get_where('users', array('nova_ext_discord_auth_id' => $discordIdBind))->row();
+					if ( ! $linked) {
+						$this->_emit(409, array('error' => 'No user is linked to that Discord ID.'));
+					}
+					$userIdInput = (string) (int) $linked->userid;
+				}
+
 				$result = \nova_ext_sim_central\ApiAuth::validateTokenInput(array(
 					'label'      => isset($input['label']) ? $input['label'] : '',
 					'scopes'     => isset($input['scopes']) ? $input['scopes'] : array(),
-					'user_id'    => isset($input['user_id']) ? $input['user_id'] : '',
+					'user_id'    => $userIdInput,
 					'expires_at' => isset($input['expires_at']) ? $input['expires_at'] : '',
 				));
 				if ( ! empty($result['errors'])) {

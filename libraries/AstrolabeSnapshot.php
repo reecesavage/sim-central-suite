@@ -370,7 +370,14 @@ class AstrolabeSnapshot
 		return html_entity_decode((string) $s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 	}
 
-	/** Public player display name for a user id (users.name), or null. */
+	/**
+	 * Public player identity for a user id: display name plus, when the
+	 * Discord Sign-In feature is on and the user linked their account, the
+	 * linked public Discord ID (same visibility rule the event webhooks
+	 * apply for @mentions). discord_id is null when the feature is off, the
+	 * column doesn't exist, or the user hasn't linked. Or null entirely when
+	 * the character has no owning user.
+	 */
 	private static function player($userId)
 	{
 		static $cache = array();
@@ -380,10 +387,23 @@ class AstrolabeSnapshot
 		}
 		if ( ! array_key_exists($userId, $cache)) {
 			$ci =& get_instance();
-			$row = $ci->db->select('name')->get_where('users', array('userid' => $userId), 1)->row();
-			$cache[$userId] = ($row && $row->name !== '' && $row->name !== null) ? self::dec((string) $row->name) : null;
+
+			$discordOk = ! empty(Config::features()['discord_auth'])
+				&& Migrations::hasColumn('users', 'nova_ext_discord_auth_id');
+			$select = 'name'.($discordOk ? ', nova_ext_discord_auth_id' : '');
+
+			$row = $ci->db->select($select)->get_where('users', array('userid' => $userId), 1)->row();
+			if ($row && $row->name !== '' && $row->name !== null) {
+				$cache[$userId] = array(
+					'name'       => self::dec((string) $row->name),
+					'discord_id' => ($discordOk && ! empty($row->nova_ext_discord_auth_id))
+						? (string) $row->nova_ext_discord_auth_id : null,
+				);
+			} else {
+				$cache[$userId] = null;
+			}
 		}
-		return $cache[$userId] !== null ? array('name' => $cache[$userId]) : null;
+		return $cache[$userId];
 	}
 
 	/** Character display names from a CSV of charids (batched, cached). */

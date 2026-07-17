@@ -29,10 +29,11 @@ defined('BASEPATH') OR exit('No direct script access allowed');
  */
 class Webhooks
 {
-	const EVENT_POST_SAVED  = 'post.saved';
-	const EVENT_POST_POSTED = 'post.posted';
-	const EVENT_LOG_POSTED  = 'log.posted';
-	const EVENT_NEWS_POSTED = 'news.posted';
+	const EVENT_POST_SAVED   = 'post.saved';
+	const EVENT_POST_POSTED  = 'post.posted';
+	const EVENT_POST_UPDATED = 'post.updated';
+	const EVENT_LOG_POSTED   = 'log.posted';
+	const EVENT_NEWS_POSTED  = 'news.posted';
 
 	const CURL_TIMEOUT_SEC = 2;
 	const CURL_CONNECT_TIMEOUT_SEC = 2;
@@ -64,10 +65,11 @@ class Webhooks
 	public static function availableEvents()
 	{
 		return array(
-			self::EVENT_POST_SAVED  => 'Fires when a draft mission post is created or saved (status = saved). For nudging co-authors that a draft needs another look. Discord pings the authors.',
-			self::EVENT_POST_POSTED => 'Fires when a mission post transitions to activated (i.e. publicly posted). The main announcement event.',
-			self::EVENT_LOG_POSTED  => 'Fires when a personal log is activated. Author, title, content.',
-			self::EVENT_NEWS_POSTED => 'Fires when a news item is activated. Author, title, category, type, content. Honours the public/private filter.',
+			self::EVENT_POST_SAVED   => 'Fires when a draft mission post is created or saved (status = saved). For nudging co-authors that a draft needs another look. Discord pings the authors.',
+			self::EVENT_POST_POSTED  => 'Fires when a mission post transitions to activated (i.e. publicly posted). The main announcement event.',
+			self::EVENT_POST_UPDATED => 'Fires when an already-activated post is edited and re-saved WITHOUT a status change. Mainly for machine sync (e.g. a mirror refreshing its copy) - probably leave unchecked on announcement channels, or every edit re-announces.',
+			self::EVENT_LOG_POSTED   => 'Fires when a personal log is activated. Author, title, content.',
+			self::EVENT_NEWS_POSTED  => 'Fires when a news item is activated. Author, title, category, type, content. Honours the public/private filter.',
 		);
 	}
 
@@ -201,6 +203,11 @@ class Webhooks
 			$events[] = self::EVENT_POST_SAVED;
 		} elseif ($newStatus === 'activated' && $previousStatus !== 'activated') {
 			$events[] = self::EVENT_POST_POSTED;
+		} elseif ($newStatus === 'activated' && $previousStatus === 'activated') {
+			// An already-public post was edited and re-saved: no transition,
+			// so post.posted must NOT re-fire - post.updated (v1.32.0) lets
+			// machine consumers refresh their mirror of the post.
+			$events[] = self::EVENT_POST_UPDATED;
 		}
 		if (empty($events)) {
 			return;
@@ -299,6 +306,11 @@ class Webhooks
 		switch ($eventName) {
 			case self::EVENT_POST_POSTED:
 				return self::discordPostPosted($webhook, $item);
+			case self::EVENT_POST_UPDATED:
+				// Same embed as post.posted (subscription is per-webhook, so
+				// this only reaches channels that opted in) - but its own
+				// role-ping key, so an "announce" ping doesn't fire on edits.
+				return self::discordPostPosted($webhook, $item, self::EVENT_POST_UPDATED);
 			case self::EVENT_POST_SAVED:
 				return self::discordPostSaved($webhook, $item);
 			case self::EVENT_LOG_POSTED:
@@ -310,9 +322,10 @@ class Webhooks
 	}
 
 	/**
-	 * post.posted - templated, public announcement, no ping.
+	 * post.posted - templated, public announcement, no ping. Also renders
+	 * post.updated (identical embed, separate role-ping opt-in).
 	 */
-	private static function discordPostPosted($webhook, $item)
+	private static function discordPostPosted($webhook, $item, $eventName = self::EVENT_POST_POSTED)
 	{
 		$titleTpl = trim((string) $webhook->template_title) !== ''
 			? $webhook->template_title : self::DEFAULT_TITLE_TEMPLATE;
@@ -321,7 +334,7 @@ class Webhooks
 
 		$vars = self::templateVars($item);
 		return array(
-			'content' => self::roleMentionForEvent($webhook, self::EVENT_POST_POSTED),
+			'content' => self::roleMentionForEvent($webhook, $eventName),
 			'embeds'  => array(array(
 				'title'       => self::renderTemplate($titleTpl, $vars),
 				'description' => self::renderTemplate($descTpl, $vars),
