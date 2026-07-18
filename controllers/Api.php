@@ -1679,6 +1679,17 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				: 0,
 		);
 
+		// v1.35.0: who last saved the post (Nova's post_saved). saved_user_id
+		// is the owning user - the value consumers compare against a writer's
+		// own user id for "whose turn is it". Matches the webhook actor's
+		// user: the webhook's actor normalisation only ever swaps WHICH of
+		// that same user's characters is displayed, never the user.
+		$savedCharId = (isset($row->post_saved) && (int) $row->post_saved > 0) ? (int) $row->post_saved : null;
+		$savedUserId = ($savedCharId !== null) ? $this->_characterOwner($savedCharId) : null;
+		$out['saved_character_id'] = $savedCharId;
+		$out['saved_user_id']      = $savedUserId;
+		$out['saved_user_name']    = ($savedUserId !== null) ? $this->_publicUserName($savedUserId) : null;
+
 		$features = $this->_suiteFeatures();
 
 		// Mission Post Summary - the short TL;DR field surfaced in the feed.
@@ -1857,6 +1868,21 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				: null;
 		}
 		return $this->_userNameCache[$userId];
+	}
+
+	/** Per-request memoized charid -> owning user id (null when unowned). */
+	private $_charOwnerCache = array();
+	private function _characterOwner($charId)
+	{
+		$charId = (int) $charId;
+		if ($charId <= 0) {
+			return null;
+		}
+		if ( ! array_key_exists($charId, $this->_charOwnerCache)) {
+			$row = $this->db->select('user')->get_where('characters', array('charid' => $charId), 1)->row();
+			$this->_charOwnerCache[$charId] = ($row && (int) $row->user > 0) ? (int) $row->user : null;
+		}
+		return $this->_charOwnerCache[$charId];
 	}
 
 	private $_featuresCache = null;
