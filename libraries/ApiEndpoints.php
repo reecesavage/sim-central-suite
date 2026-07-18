@@ -647,6 +647,7 @@ class ApiEndpoints
 					'status'         => array('type' => 'string', 'description' => 'crew_type: active, inactive, pending, etc.'),
 					'rank'           => array('type' => 'integer', 'nullable' => true, 'description' => 'rank_id - look up name separately if needed.'),
 					'user_id'        => array('type' => 'integer', 'nullable' => true),
+					'user_name'      => array('type' => 'string', 'nullable' => true, 'description' => 'The linked user\'s public display name (same value/visibility as the snapshot manifest\'s player.name - never email or account internals). Null when unowned/unlinked.'),
 					'display_name'   => array('type' => 'string', 'nullable' => true, 'x-suite-feature' => 'Display Name'),
 					'preferred_name' => array('type' => 'string', 'x-suite-feature' => 'Display Name', 'description' => 'display_name if set, else first last suffix.'),
 				),

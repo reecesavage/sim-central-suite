@@ -1717,6 +1717,8 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 
 	private function _projectCharacter($row)
 	{
+		$userId = (isset($row->user) && (int) $row->user > 0) ? (int) $row->user : null;
+
 		$out = array(
 			'id'         => (int) $row->charid,
 			'first_name' => isset($row->first_name) ? $row->first_name : null,
@@ -1724,7 +1726,11 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			'suffix'     => isset($row->suffix) ? $row->suffix : null,
 			'status'     => isset($row->crew_type) ? $row->crew_type : null,
 			'rank'       => isset($row->rank) ? (int) $row->rank : null,
-			'user_id'    => isset($row->user) ? (int) $row->user : null,
+			'user_id'    => $userId,
+			// v1.34.0: the linked user's PUBLIC display name (same value and
+			// visibility rule as the snapshot manifest's player.name - never
+			// email or account internals). Null when unowned/unlinked.
+			'user_name'  => ($userId !== null) ? $this->_publicUserName($userId) : null,
 		);
 
 		$features = $this->_suiteFeatures();
@@ -1831,6 +1837,27 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 * a feature-added column.
 	 */
 	private $_authToken = null;
+
+	/**
+	 * Per-request memoized lookup of a user's public display name
+	 * (users.name), entity-decoded to match the snapshot's player.name.
+	 * PK lookups, so even a 100-row character page stays cheap.
+	 */
+	private $_userNameCache = array();
+	private function _publicUserName($userId)
+	{
+		$userId = (int) $userId;
+		if ($userId <= 0) {
+			return null;
+		}
+		if ( ! array_key_exists($userId, $this->_userNameCache)) {
+			$row = $this->db->select('name')->get_where('users', array('userid' => $userId), 1)->row();
+			$this->_userNameCache[$userId] = ($row && $row->name !== '' && $row->name !== null)
+				? html_entity_decode((string) $row->name, ENT_QUOTES | ENT_HTML5, 'UTF-8')
+				: null;
+		}
+		return $this->_userNameCache[$userId];
+	}
 
 	private $_featuresCache = null;
 	private function _suiteFeatures()
