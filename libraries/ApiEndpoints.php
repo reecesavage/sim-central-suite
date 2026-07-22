@@ -544,6 +544,8 @@ class ApiEndpoints
 					'authors'    => array('type' => 'string',   'nullable' => true, 'description' => 'Comma-separated charid list (Nova native format).'),
 					'status'     => array('type' => 'string'),
 					'date'       => array('type' => 'string', 'format' => 'date-time'),
+					'location'   => array('type' => 'string', 'description' => 'In-character location (Nova post_location). "" when unset.'),
+					'timeline'   => array('type' => 'string', 'description' => 'Free-text timeline (Nova post_timeline). The raw stored value - not the webhook payload\'s timeline, which renders the Ordered Mission Posts day/time. "" when unset.'),
 					'word_count' => array('type' => 'integer', 'description' => 'Words in this post body (HTML stripped). Not attributed to any single author.'),
 					'saved_character_id' => array('type' => 'integer', 'nullable' => true, 'description' => 'Nova post_saved: the character recorded as the last saver. Null when unknown.'),
 					'saved_user_id'      => array('type' => 'integer', 'nullable' => true, 'description' => 'The user who owns the last saving character - compare against a writer\'s own user id for "whose turn is it". Null when unknown/unowned. Matches the webhook actor\'s user.'),

@@ -1671,6 +1671,13 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			'authors'    => isset($row->post_authors) ? $row->post_authors : null,
 			'status'     => isset($row->post_status) ? $row->post_status : null,
 			'date'       => isset($row->post_date) ? date('c', (int) $row->post_date) : null,
+			// v1.35.1: Nova's free-text location/timeline on the post. Raw
+			// column values - NOT the webhook payload's `timeline`, which
+			// folds in the Ordered Mission Posts day/time. The structured
+			// `ordered` object below is unaffected. "" when unset, so an
+			// edit form can prefill without null-guarding.
+			'location'   => isset($row->post_location) ? (string) $row->post_location : '',
+			'timeline'   => isset($row->post_timeline) ? (string) $row->post_timeline : '',
 			// Words in this post's body (HTML stripped). Same definition as
 			// the mission-page counts. Not attributed to any one author -
 			// a post can have several.

@@ -211,6 +211,8 @@ List mission posts, most recent first. Scope: `posts:read`.
 | `authors` | string \| null | Comma-separated `charid` list (Nova's native format). |
 | `status` | string | `activated` / `saved` / `draft` |
 | `date` | ISO 8601 | UTC |
+| `location` | string | In-character location. `""` when unset. *(v1.35.1+)* |
+| `timeline` | string | Free-text timeline. The raw stored value — **not** the webhook payload's `timeline`, which renders the *Ordered Mission Posts* day/time. `""` when unset. *(v1.35.1+)* |
 | `summary` | string \| null | **Only present when the *Mission Post Summary* feature is enabled.** |
 | `ordered` | object | **Only present when *Ordered Mission Posts* is enabled.** Keys: `day` (int), `time` (string `"HHMM"`), `date` (string), `stardate` (string). Only populated keys are included. |
 | `age_gated` | bool | **Only present when *Content Filter* is enabled.** The API still returns full `content`; this flag lets your consumer decide whether to redact downstream. |
@@ -263,6 +265,7 @@ Returns `201` with the created post object. `422` on validation failure (missing
 Update a post you author (or any post with `posts:write.all` + sysadmin). Scope: `posts:write`. **Partial** — only the fields you send change.
 
 - Same field set as create (all optional).
+- **Omit vs. clear:** a key you don't send is left unchanged; a key sent as `""` **clears** the stored value. So `{"location":""}` empties the location, while leaving `location` out keeps whatever the sim already has.
 - `body_mode`: `replace` (default) or **`append`** (appends to the existing body).
 - Changing `status` to `activated` on a draft publishes it (same activation side-effects as create).
 - **Respects edit locks:** returns **`423`** if another user holds a fresh lock (see [Post edit locking](#post-edit-locking)); on a successful save your own lock is auto-released.
