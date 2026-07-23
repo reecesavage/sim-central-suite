@@ -528,72 +528,160 @@ class PostWrite
 
 	// ---------- content round-trip helpers ----------
 
+	// Tag policy for the mobile editor round-trip. The stored format is plain
+	// text with \n line-breaks plus a *safe structural* allowlist. Nova's display
+	// pipeline (nl2br → HTMLPurifier) renders all of these, so preserving them
+	// keeps mobile edits from destroying formatting authored elsewhere.
+	private const EDITOR_INLINE_KEEP = array('strong', 'em', 'u');
+	private const EDITOR_BLOCK_KEEP  = array('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'ul', 'ol', 'li');
+	private const EDITOR_SOFT_BREAK  = array('div', 'p', 'tr'); // → single \n
+	private const EDITOR_DROP        = array('script', 'style', 'head', 'title', 'iframe', 'object', 'embed', 'noscript', 'template', 'svg');
+
 	/**
 	 * Convert HTML from the mobile contenteditable editor to the format Nova
-	 * stores in post_content: plain text with \n line-breaks, plus <strong>,
-	 * <em>, and <u> for inline formatting.
+	 * stores in post_content: plain text with \n line-breaks, the inline tags
+	 * <strong>/<em>/<u>, and the structural tags <h1>-<h6>, <hr>, <blockquote>,
+	 * <ul>/<ol>/<li>. Everything else is unwrapped (kept as text) or, for
+	 * script/style/etc., dropped with its content. All attributes are stripped.
 	 *
-	 * Rule: each visual line/block break → exactly one \n. Never stores literal
-	 * <br> or double \n\n, because Nova's display pipeline (nl2br → HTMLPurifier)
-	 * already expands each \n to a <br>.
+	 * Rule: each visual line/block break → exactly one \n. A preserved block tag
+	 * self-separates at display, so \n adjacent to one is dropped as redundant.
+	 * Nova's display pipeline (nl2br → HTMLPurifier) expands each \n to one <br>.
 	 */
 	public static function editorHtmlToStored($html)
 	{
-		$html = (string) $html;
+		$html = self::protectBareLt((string) $html);
 
-		// Normalize common browser bold/italic variants
+		// A <br> that merely fills the end of a block element (the trailing <br>
+		// WebKit/Blink leave inside <div>line<br></div> when a contenteditable
+		// line is re-serialized) is not a real break — the block boundary already
+		// ends the line. Drop it so one visual line stores as one \n, not two.
+		$html = preg_replace('#<br\s*/?>(\s*)(</(?:div|p|h[1-6]|li|tr|blockquote|ul|ol)>)#i', '$1$2', $html);
+
+		// Without ext-dom, fall back to the regex normalizer (flattens block tags
+		// to plain lines, but stays functional and safe).
+		if ( ! class_exists('DOMDocument')) {
+			return self::editorHtmlToStoredLegacy($html);
+		}
+
+		$doc  = new \DOMDocument('1.0', 'UTF-8');
+		$prev = libxml_use_internal_errors(true);
+		$doc->loadHTML(
+			'<html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body>'
+				.$html.'</body></html>',
+			LIBXML_NOERROR | LIBXML_NOWARNING
+		);
+		libxml_clear_errors();
+		libxml_use_internal_errors($prev);
+
+		$body = $doc->getElementsByTagName('body')->item(0);
+		$out  = $body ? self::domWalkToStored($body) : '';
+
+		// A preserved block tag already forces a line break at display, so a \n
+		// touching one is redundant — drop it to avoid an extra blank line.
+		$out = preg_replace('#\n*(</?(?:h[1-6]|blockquote|ul|ol|li)>|<hr\s*/?>)\n*#i', '$1', $out);
+
+		// Collapse 3+ newlines to 2 (preserve an intentional paragraph gap).
+		$out = preg_replace('/\n{3,}/', "\n\n", $out);
+
+		return trim($out);
+	}
+
+	/**
+	 * Escape a '<' that does not begin a real HTML tag (HTML5 tokenizer rule:
+	 * '<' is data unless followed by a letter, '/', '!', or '?'). Keeps
+	 * in-character prose like "I <3 you" or "in <20 minutes" intact — DOM and
+	 * strip_tags would otherwise treat "<3" as a tag and eat to the next '>'.
+	 */
+	private static function protectBareLt($html)
+	{
+		return preg_replace('#<(?![a-zA-Z/!?])#', '&lt;', (string) $html);
+	}
+
+	/**
+	 * Recursively serialize a DOM subtree to the stored format. Emits no
+	 * attributes; drops script/style/etc. with their content; unwraps any tag
+	 * not on the allowlist (keeping its text). Text nodes carry through as their
+	 * decoded value, matching Nova's stored convention.
+	 */
+	private static function domWalkToStored(\DOMNode $node)
+	{
+		$out = '';
+		foreach ($node->childNodes as $child) {
+			if ($child->nodeType === XML_TEXT_NODE) {
+				$out .= $child->nodeValue;
+				continue;
+			}
+			if ($child->nodeType !== XML_ELEMENT_NODE) {
+				continue;
+			}
+			$tag = strtolower($child->nodeName);
+			if ($tag === 'b') { $tag = 'strong'; }
+			elseif ($tag === 'i') { $tag = 'em'; }
+
+			if (in_array($tag, self::EDITOR_DROP, true)) {
+				continue; // drop the element and everything inside it
+			}
+			if ($tag === 'br') { $out .= "\n"; continue; }
+			if ($tag === 'hr') { $out .= '<hr>'; continue; }
+			if (in_array($tag, self::EDITOR_INLINE_KEEP, true)
+				|| in_array($tag, self::EDITOR_BLOCK_KEEP, true)) {
+				$out .= '<'.$tag.'>'.self::domWalkToStored($child).'</'.$tag.'>';
+				continue;
+			}
+			if (in_array($tag, self::EDITOR_SOFT_BREAK, true)) {
+				$out .= "\n".self::domWalkToStored($child);
+				continue;
+			}
+			// Anything else (span, a, font, table, td, …): unwrap, keep the text.
+			$out .= self::domWalkToStored($child);
+		}
+		return $out;
+	}
+
+	/**
+	 * Regex fallback used only when ext-dom is unavailable. This is the pre-DOM
+	 * behaviour: it flattens block tags (h1-h6, blockquote, li) to plain \n lines
+	 * rather than preserving them, but is safe and never doubles spacing. Input
+	 * is assumed already run through protectBareLt().
+	 */
+	private static function editorHtmlToStoredLegacy($html)
+	{
+		$html = (string) $html;
 		$html = str_ireplace(array('<b>', '</b>'), array('<strong>', '</strong>'), $html);
 		$html = str_ireplace(array('<i>', '</i>'), array('<em>', '</em>'), $html);
-
-		// Strip attributes from allowed tags (prevent onclick= etc.)
 		$html = preg_replace('/<(strong|em|u)\s[^>]*>/i', '<$1>', $html);
-
-		// A <br> that merely fills the end of a block element (e.g. the
-		// trailing <br> WebKit/Blink leave inside <div>line<br></div> when a
-		// contenteditable line is re-serialized) is NOT a real line break -
-		// the block boundary already ends the line. Drop it so the block-open
-		// rule below yields exactly one \n, not two. Without this, editing an
-		// existing post on mobile doubled the spacing of every existing line
-		// (block-open AND the filler <br> each counted as a newline).
-		$html = preg_replace('#<br\s*/?>(\s*)(</(?:div|p|h[1-6]|li|tr|blockquote)>)#i', '$1$2', $html);
-
-		// Opening block elements → new line (closing tags are just discarded below)
 		$html = preg_replace('/<(div|p|h[1-6]|li|tr|blockquote)(\s[^>]*)?>/i', "\n", $html);
-
-		// <br> → new line
 		$html = preg_replace('/<br\s*\/?>/i', "\n", $html);
-
-		// Strip everything except the three allowed inline tags
 		$html = strip_tags($html, '<strong><em><u>');
-
-		// Decode HTML entities (browser encodes & < > " in contenteditable innerHTML)
 		$html = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-		// Collapse 3+ consecutive newlines to 2 (preserve intentional paragraph gap)
 		$html = preg_replace('/\n{3,}/', "\n\n", $html);
-
 		return trim($html);
 	}
 
 	/**
 	 * Convert stored post_content to HTML suitable for loading into the mobile
-	 * contenteditable editor: \n → <br>, text segments HTML-escaped, inline
-	 * formatting tags passed through unchanged.
+	 * contenteditable editor: \n → <br>, text segments HTML-escaped, and the
+	 * allowlisted inline + structural tags passed through verbatim.
 	 *
-	 * Also normalises legacy content from the desktop editor (strips to the
-	 * same inline-only allowlist so the mobile editor doesn't inject complex HTML).
+	 * Also normalises legacy content from the desktop editor (strips it to the
+	 * same allowlist so the mobile editor doesn't inject links, images, or other
+	 * complex HTML it can't round-trip).
 	 */
 	public static function storedToEditorHtml($content)
 	{
-		// Normalise first (handles legacy desktop-editor content: br tags, block
-		// elements, etc.) — output is clean text + \n + <strong>/<em>/<u> only.
+		// Normalise first (handles legacy desktop-editor content: attributes,
+		// links, tables, etc.) — output is clean text + \n + the allowlist tags.
 		$stored = self::editorHtmlToStored((string) $content);
 
-		// Split on inline tags so we can escape text but keep tags verbatim.
-		$parts = preg_split('/(<\/?(?:strong|em|u)>)/i', $stored, -1, PREG_SPLIT_DELIM_CAPTURE);
+		// Split on the allowlisted tags so we can escape text but keep tags
+		// verbatim (both inline and structural, so headings/lists/hr/blockquote
+		// render in the contenteditable instead of showing as literal markup).
+		$tagPattern = '</?(?:strong|em|u|h[1-6]|blockquote|ul|ol|li)>|<hr\s*/?>';
+		$parts = preg_split('#('.$tagPattern.')#i', $stored, -1, PREG_SPLIT_DELIM_CAPTURE);
 		$out = '';
 		foreach ($parts as $seg) {
-			if (preg_match('/^<\/?(strong|em|u)>$/i', $seg)) {
+			if (preg_match('#^(?:'.$tagPattern.')$#i', $seg)) {
 				$out .= $seg;
 			} else {
 				$out .= str_replace("\n", '<br>',
