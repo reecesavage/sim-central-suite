@@ -548,6 +548,15 @@ class PostWrite
 		// Strip attributes from allowed tags (prevent onclick= etc.)
 		$html = preg_replace('/<(strong|em|u)\s[^>]*>/i', '<$1>', $html);
 
+		// A <br> that merely fills the end of a block element (e.g. the
+		// trailing <br> WebKit/Blink leave inside <div>line<br></div> when a
+		// contenteditable line is re-serialized) is NOT a real line break -
+		// the block boundary already ends the line. Drop it so the block-open
+		// rule below yields exactly one \n, not two. Without this, editing an
+		// existing post on mobile doubled the spacing of every existing line
+		// (block-open AND the filler <br> each counted as a newline).
+		$html = preg_replace('#<br\s*/?>(\s*)(</(?:div|p|h[1-6]|li|tr|blockquote)>)#i', '$1$2', $html);
+
 		// Opening block elements → new line (closing tags are just discarded below)
 		$html = preg_replace('/<(div|p|h[1-6]|li|tr|blockquote)(\s[^>]*)?>/i', "\n", $html);
 
