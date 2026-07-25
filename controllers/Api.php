@@ -1834,8 +1834,11 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		// snapshot's recent_posts use. Consumers link back here (and can use it
 		// as rel="canonical") so the sim keeps the credit for its own content.
 		$out['url']     = \nova_ext_sim_central\AstrolabeSnapshot::postUrl((int) $row->post_id);
-		// Plain-text preview (HTML stripped, capped at 300) for list rows.
-		$out['excerpt'] = \nova_ext_sim_central\AstrolabeSnapshot::excerpt(isset($row->post_content) ? $row->post_content : '');
+		// Plain-text preview (HTML flattened, capped at 300) for list rows. Same
+		// flattener and same cap as the snapshot's excerpts, so the two agree.
+		$out['excerpt'] = \nova_ext_sim_central\PostText::excerpt(
+			isset($row->post_content) ? $row->post_content : ''
+		);
 
 		$features = $this->_suiteFeatures();
 

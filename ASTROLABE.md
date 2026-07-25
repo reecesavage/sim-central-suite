@@ -220,8 +220,18 @@ Content-Type `application/json`. Shape:
 
 1. **All URLs are absolute `https://`** (or null) — every `url`, `avatar_url`,
    and `rank.image`.
-2. **Plain text** in `description` and `excerpt` — HTML stripped, entities
-   decoded, whitespace collapsed, length-capped. **All human-readable strings**
+2. **Plain text** in `description` and `excerpt` — HTML flattened, entities
+   decoded, whitespace collapsed, length-capped. *(v1.36.1+)* Flattening is
+   **block-boundary aware**: a `</p>`, `</h2>`, `<br>`, `</li>` or table cell
+   becomes a **single space**, because a block boundary is a word boundary —
+   so `…TROUBLESHOOTERS</h2><p>September…` reads `…TROUBLESHOOTERS September…`
+   rather than fusing into one word. Inline tags still collapse to nothing, so
+   `<em>un</em><em>breakable</em>` stays `unbreakable`. Markup stored *escaped*
+   (`&lt;p&gt;`) is removed as markup, never shown as a literal tag. A `<` in
+   prose (`in <20 minutes`, `I <3 you`, `5 <= 6`) is preserved rather than
+   eating the rest of the string, and `script`/`style` contents never reach
+   you. Truncation counts characters, so a non-ASCII excerpt is always valid
+   UTF-8 and the cap is spent on prose. **All human-readable strings**
    (names, department labels, positions, ranks, titles, player names) are also
    **entity-decoded** *(v1.31.0+)*, so `Security &amp; Tactical` arrives as
    `Security & Tactical`.
@@ -329,8 +339,10 @@ rows too** &mdash; the list will never carry names in `authors`.
 - `url` is the post's own page on the sim, absolute `https://`, same rule as
   `recent_posts[].url`. Use it for the "Read on {sim} ↗" link and for
   `rel="canonical"`.
-- `excerpt` is plain text, HTML stripped and capped at 300 chars &mdash; the same
-  treatment as `recent_posts[].excerpt`. `null` when the body is empty.
+- `excerpt` is plain text, HTML flattened and capped at 300 chars &mdash; the same
+  treatment as `recent_posts[].excerpt`, from the same code, so the two agree
+  exactly for the same body. `null` when the body is empty. Block boundaries
+  become spaces as of v1.36.1 &mdash; see guarantee 2 in section 4.
 - `published_at` is the activation timestamp, ISO 8601 UTC. `null` on anything
   not activated, so it's never a draft's last-save time.
 - `meta.total` / `meta.last_page` are on **every** list endpoint, not just posts.

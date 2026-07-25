@@ -32,7 +32,8 @@ class AstrolabeSnapshot
 	const CACHE_TTL    = 600;   // 10 minutes
 	const CAP_GAME     = 500;
 	const CAP_STORY    = 300;
-	const CAP_EXCERPT  = 300;
+	// One definition, shared with the REST API's posts[].excerpt.
+	const CAP_EXCERPT  = PostText::CAP_EXCERPT;
 	const RECENT_LIMIT = 10;
 
 	/**
@@ -378,11 +379,6 @@ class AstrolabeSnapshot
 		return self::absUrl('sim/viewpost/'.(int) $postId);
 	}
 
-	/** Plain text (HTML stripped, entities decoded, collapsed), capped. Null when empty. */
-	public static function excerpt($html, $cap = self::CAP_EXCERPT)
-	{
-		return self::plain($html, $cap);
-	}
 
 	// ---------- helpers ----------
 
@@ -520,22 +516,18 @@ class AstrolabeSnapshot
 		return preg_replace('#^http://#i', 'https://', (string) $url);
 	}
 
-	/** Strip HTML, decode entities, collapse whitespace, cap length. */
+	/**
+	 * Flatten HTML to capped plain text. Null when there's no text.
+	 *
+	 * Delegates to PostText so the snapshot's descriptions/excerpts and the REST
+	 * API's post excerpt are flattened by one implementation. See PostText for
+	 * why this can't just be strip_tags(): a block boundary is a word boundary,
+	 * a bare "<" in prose used to eat the rest of the string, and a byte-length
+	 * truncation could emit invalid UTF-8 that broke the whole response.
+	 */
 	private static function plain($html, $cap)
 	{
-		$text = strip_tags((string) $html);
-		$text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-		$text = trim(preg_replace('/\s+/u', ' ', $text));
-		if ($text === '') {
-			return null;
-		}
-		if (function_exists('mb_strlen') && mb_strlen($text, 'UTF-8') > $cap) {
-			return rtrim(mb_substr($text, 0, $cap - 1, 'UTF-8')).'…';
-		}
-		if (strlen($text) > $cap) {
-			return rtrim(substr($text, 0, $cap - 1)).'…';
-		}
-		return $text;
+		return PostText::excerpt($html, $cap);
 	}
 
 	/** URL-safe, unique-within-array slug for a manifest name. */

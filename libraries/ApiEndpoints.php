@@ -279,7 +279,7 @@ class ApiEndpoints
 				'operation_id'   => 'getSnapshot',
 				'scope'          => 'astrolabe:read',
 				'summary'        => 'Astrolabe snapshot of this sim.',
-				'description'    => 'One read-only aggregate of this sim\'s PUBLIC data for the Astrolabe platform to mirror: game info, crew manifest (departments and characters, active + NPCs), stories (missions), the 10 most recent posts, and headcounts. All url / avatar_url / rank.image values are absolute https or null; descriptions and excerpts are plain text (HTML stripped) and length-capped. No private data (no email, real name, IP, or account internals). Served from a short-TTL cache since Astrolabe polls on a schedule. A token scoped to only astrolabe:read exposes nothing else.',
+				'description'    => 'One read-only aggregate of this sim\'s PUBLIC data for the Astrolabe platform to mirror: game info, crew manifest (departments and characters, active + NPCs), stories (missions), the 10 most recent posts, and headcounts. All url / avatar_url / rank.image values are absolute https or null; descriptions and excerpts are plain text - HTML flattened with block boundaries preserved as spaces (v1.36.1+), entities decoded, whitespace collapsed - and length-capped. No private data (no email, real name, IP, or account internals). Served from a short-TTL cache since Astrolabe polls on a schedule. A token scoped to only astrolabe:read exposes nothing else.',
 				'parameters'     => array(),
 				'response_schema'=> 'Snapshot',
 				'try_it'         => true,
@@ -561,7 +561,7 @@ class ApiEndpoints
 					'date'       => array('type' => 'string', 'format' => 'date-time'),
 					'published_at' => array('type' => 'string', 'format' => 'date-time', 'nullable' => true, 'description' => 'ISO 8601 UTC activation timestamp. Null unless the post is activated.'),
 					'url'        => array('type' => 'string', 'description' => 'Absolute https URL of the post\'s public page on the sim.'),
-					'excerpt'    => array('type' => 'string', 'nullable' => true, 'description' => 'Plain-text preview of the body (HTML stripped, <=300 chars). Null when the body is empty.'),
+					'excerpt'    => array('type' => 'string', 'nullable' => true, 'description' => 'Plain-text preview of the body, <=300 chars, null when the body is empty. Flattening is block-boundary aware (v1.36.1+): a </p>, <br>, </h2>, </li> or table cell becomes one space, inline tags become nothing, markup stored escaped is removed as markup, a "<" in prose ("in <20 minutes") is kept, script/style contents are dropped, and the cap counts characters so the value is always valid UTF-8.'),
 					'location'   => array('type' => 'string', 'description' => 'In-character location (Nova post_location). "" when unset.'),
 					'timeline'   => array('type' => 'string', 'description' => 'Free-text timeline (Nova post_timeline). The raw stored value - not the webhook payload\'s timeline, which renders the Ordered Mission Posts day/time. "" when unset.'),
 					'word_count' => array('type' => 'integer', 'description' => 'Words in this post body (HTML stripped). Computed per request from the body, so it is present for EVERY status - drafts included - and never null. Not attributed to any single author. Still present when ?content=0 omits the body.'),
@@ -742,7 +742,7 @@ class ApiEndpoints
 			),
 			'Snapshot' => array(
 				'type' => 'object',
-				'description' => 'Public per-sim aggregate for Astrolabe. All URLs are absolute https or null; text fields are plain (HTML stripped) and capped.',
+				'description' => 'Public per-sim aggregate for Astrolabe. All URLs are absolute https or null; text fields are plain text (HTML flattened, block boundaries preserved as spaces) and capped.',
 				'properties' => array(
 					'version'      => array('type' => 'integer', 'description' => 'Contract version. Always 1 for this shape.'),
 					'generated_at' => array('type' => 'string', 'format' => 'date-time', 'description' => 'ISO 8601 UTC time the snapshot was built.'),

@@ -70,6 +70,12 @@ require_once dirname(__FILE__).'/libraries/ContentFilter.php';
 // or not Ordered is enabled. Cheap to load unconditionally (class def).
 require_once dirname(__FILE__).'/libraries/PostWordCount.php';
 
+// PostText flattens rich text to plain text for the Astrolabe snapshot's
+// descriptions/excerpts and the REST API's post excerpt. Unconditional for the
+// same reason as PostWordCount: the surfaces that need it sit behind different
+// feature toggles, so it can't live on a feature-gated class.
+require_once dirname(__FILE__).'/libraries/PostText.php';
+
 // Admin-index update notice. Surfaces "new Sim Central release
 // available" to gamemasters on the admin home, alongside Nova's own
 // update notice. Loaded unconditionally - it self-skips when the
