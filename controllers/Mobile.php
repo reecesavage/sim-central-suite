@@ -1930,11 +1930,18 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 				$badge = $badgeClass
 					? '<span class="sc-badge '.$this->_esc($badgeClass).'">'.ucfirst($m->mission_status).'</span>'
 					: '';
+				// Flatten and cap in one place, then escape. Escaping BEFORE the
+				// cut used to slice through an entity (a "&quot;" chopped down to
+				// a bare "&"), and the length test measured the unescaped string
+				// while the slice hit the escaped one - so a blurb could also be
+				// cut with no ellipsis at all. isset(), not empty(): the old guard
+				// doubled as an undefined-property suppressor.
 				$blurb = '';
-				if ( ! empty($m->mission_desc)) {
-					$plain = strip_tags((string) $m->mission_desc);
-					$blurb = '<div class="sc-meta">'.mb_substr($this->_esc($plain), 0, 120)
-						.(mb_strlen($plain) > 120 ? '&hellip;' : '').'</div>';
+				$plain = isset($m->mission_desc)
+					? \nova_ext_sim_central\PostText::excerpt($m->mission_desc, 120)
+					: null;
+				if ($plain !== null) {
+					$blurb = '<div class="sc-meta">'.$this->_esc($plain).'</div>';
 				}
 				$href  = $this->_esc($this->_u('mission/'.(int) $m->mission_id));
 				$body .= '<a class="sc-card" href="'.$href.'"><h3>'.$this->_esc($m->mission_title).$badge.'</h3>'.$blurb.'</a>';
@@ -2045,11 +2052,13 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		} else {
 			foreach ($items as $item) {
 				$href = $this->_esc($this->_u('touritem/'.(int) $item->tour_id));
+				// Same flatten-cap-then-escape order as the mission list above.
 				$blurb = '';
-				if ( ! empty($item->tour_summary)) {
-					$plain = strip_tags((string) $item->tour_summary);
-					$blurb = '<div class="sc-meta">'.mb_substr($this->_esc($plain), 0, 120)
-						.(mb_strlen($plain) > 120 ? '&hellip;' : '').'</div>';
+				$plain = isset($item->tour_summary)
+					? \nova_ext_sim_central\PostText::excerpt($item->tour_summary, 120)
+					: null;
+				if ($plain !== null) {
+					$blurb = '<div class="sc-meta">'.$this->_esc($plain).'</div>';
 				}
 				// Show thumbnail from first image if available
 				$thumb = '';
