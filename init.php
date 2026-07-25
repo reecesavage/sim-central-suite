@@ -65,16 +65,18 @@ require_once dirname(__FILE__).'/libraries/TimelineFormat.php';
 // feature has been enabled). Cheap to load unconditionally.
 require_once dirname(__FILE__).'/libraries/ContentFilter.php';
 
+// PostText flattens rich text to plain text for every surface that publishes
+// prose without markup: the Astrolabe snapshot's descriptions/excerpts, the
+// REST API's post excerpt, the word count, the Discord webhook body, and the
+// mobile blurbs. Unconditional because those sit behind different feature
+// toggles, so it can't live on a feature-gated class - and it must come before
+// PostWordCount, which now depends on it.
+require_once dirname(__FILE__).'/libraries/PostText.php';
+
 // PostWordCount is used by the Ordered Mission Posts mission pages AND by
 // the REST API (post/mission word_count fields), which must work whether
 // or not Ordered is enabled. Cheap to load unconditionally (class def).
 require_once dirname(__FILE__).'/libraries/PostWordCount.php';
-
-// PostText flattens rich text to plain text for the Astrolabe snapshot's
-// descriptions/excerpts and the REST API's post excerpt. Unconditional for the
-// same reason as PostWordCount: the surfaces that need it sit behind different
-// feature toggles, so it can't live on a feature-gated class.
-require_once dirname(__FILE__).'/libraries/PostText.php';
 
 // Admin-index update notice. Surfaces "new Sim Central release
 // available" to gamemasters on the admin home, alongside Nova's own
