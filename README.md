@@ -1,7 +1,7 @@
 # Sim Central Suite - A [Nova](https://anodyne-productions.com/nova) Extension
 
 <p align="center">
-  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.35.4"><img src="https://img.shields.io/badge/Version-v1.35.4-brightgreen.svg"></a>
+  <a href="https://github.com/reecesavage/sim-central-suite/releases/tag/v1.36.0"><img src="https://img.shields.io/badge/Version-v1.36.0-brightgreen.svg"></a>
   <a href="http://www.anodyne-productions.com/nova"><img src="https://img.shields.io/badge/Nova-v2.7.19+-orange.svg"></a>
   <a href="https://www.php.net"><img src="https://img.shields.io/badge/PHP-v8.2+-blue.svg"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-red.svg"></a>
@@ -244,7 +244,7 @@ Endpoints (all under `/extensions/nova_ext_sim_central/Api/`):
 |---|---|---|
 | `GET` | `/ping` | any valid token |
 | `GET` | `/me` | any valid token *(user-bound)* |
-| `GET` | `/posts` *(filters: `?mission=`, `?status=`, `?page=`, `?per_page=`)* | `posts:read` / `posts:read.own` / `posts:read.all` |
+| `GET` | `/posts` *(filters: `?mission_id=`, `?status=`, `?sort=`, `?content=`, `?page=`, `?per_page=`)* | `posts:read` / `posts:read.own` / `posts:read.all` |
 | `GET` | `/posts/{id}` | `posts:read` / `posts:read.own` / `posts:read.all` |
 | `POST` | `/posts` *(create; save or activate)* | `posts:write` |
 | `PATCH`/`PUT` | `/posts/{id}` *(update; `body_mode` replace/append)* | `posts:write` |
@@ -277,6 +277,8 @@ The write endpoints *(v1.14.0+)*: **user activation** &mdash; `disable` sets the
 Every post carries a **`word_count`** *(v1.28.0+)* &mdash; the words in that post's body (HTML stripped, matching the counts shown on Manage Missions and `/sim/missions`). Missions carry a **`word_count`** too (total across the mission's activated posts), but only for tokens that can read all posts (`posts:read` / `posts:read.all`), since a mission total aggregates every author's posts; own-only or missions-only tokens don't get it. Word counts are per-post/per-mission &mdash; they are **not** attributed to individual authors (a post can have several).
 
 Response JSON uses whitelisted, documented fields &mdash; not raw column dumps &mdash; so internal schema churn doesn't leak through. Suite-feature fields are **layered on conditionally**: when *Mission Post Summary* is on, posts gain a `summary` key; when *Ordered Mission Posts* is on, posts gain an `ordered` object and missions gain ordering config; when *Display Name* is on, characters gain `display_name` and a precomputed `preferred_name`; when *Content Filter* is on, posts gain an `age_gated` boolean (full content is still returned &mdash; the flag lets consumers decide whether to redact). Field *presence* is the signal that a feature is enabled &mdash; consumers can detect what's available without an extra config endpoint.
+
+**Public post archive** *(v1.36.0+)*: posts carry the fields a *reader* needs, not just the ones a writing app needs &mdash; `author_names` (display names, alongside the untouched `authors` id string), `published_at` (activation time), `url` (the post's own page on the sim, for the read-on-the-sim link and `rel="canonical"`), and a plain-text `excerpt`. `GET /posts` takes `?mission_id=`, `?sort=order` (in-mission reading order, matching what the sim shows on its own mission page), and `?content=0` to return metadata-only rows &mdash; a 25-post page drops from ~235 KB (or 1.6 MB of maximum-length posts) to ~14 KB, for an index that fetches each body only when a reader opens it. Every list envelope gained a `meta` block with `total` / `last_page` for numbered pagination. Snapshot `stories[]` entries now carry the mission `id`, so an external index can link into that mission's archive. Additive throughout &mdash; no existing field changed shape and no default changed, so `?content=` is opt-out and existing callers are untouched.
 
 **Astrolabe snapshot** *(v1.30.0+)*: `GET /snapshot` (scope `astrolabe:read`) returns one read-only aggregate of the sim's **public** data &mdash; game info, crew manifest (departments + characters, active players and NPCs), stories (missions), the 10 most recent posts, **open positions** *(v1.31.0+)*, and headcounts &mdash; for the Astrolabe platform to mirror on its per-game page. All URLs/avatars/rank images are absolute https or null; descriptions/excerpts are HTML-stripped and length-capped; no private data. Served from a short (~10 min) cache since Astrolabe polls on a schedule. A token scoped to only `astrolabe:read` exposes just this one endpoint. Full integration contract (for the Astrolabe developer) in [`ASTROLABE.md`](ASTROLABE.md).
 

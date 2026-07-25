@@ -280,14 +280,24 @@ class AstrolabeSnapshot
 		}
 		foreach ($missions->result() as $m) {
 			$out[] = array(
-				'title'       => self::dec((string) $m->mission_name),
+				// v1.36.0: the Nova mission id, so a consumer can pivot from the
+				// snapshot's story list to GET /posts?mission_id=<id> for that
+				// mission's archive. Nova has no mission slug column, so no
+				// `slug` key is emitted (per the contract: omit, don't invent).
+				'id'          => (int) $m->mission_id,
+				// The column is mission_title; earlier builds read mission_name,
+				// which doesn't exist on the missions table - every title came
+				// back as "". Fixed in v1.36.0.
+				'title'       => self::dec(isset($m->mission_title) ? (string) $m->mission_title : ''),
 				'description' => self::plain(isset($m->mission_desc) ? $m->mission_desc : '', self::CAP_STORY),
 				'status'      => isset($m->mission_status) ? (string) $m->mission_status : null,
 				// Nova has no in-character free-text mission dates.
 				'start_date'  => null,
 				'end_date'    => null,
 				// 'single' count_pref returns the row count; the default empty
-				// pref hits no switch case and always returns 0.
+				// pref hits no switch case and always returns 0. count_mission_posts()
+				// defaults to status 'activated', so this is the publicly visible
+				// count - the same set GET /posts?mission_id=N&status=activated returns.
 				'posts_count' => (int) $ci->sc_posts->count_mission_posts((int) $m->mission_id, 'single'),
 				'url'         => self::absUrl('sim/missions/id/'.(int) $m->mission_id),
 			);
@@ -313,7 +323,7 @@ class AstrolabeSnapshot
 				'authors'      => self::authorNames(isset($p->post_authors) ? $p->post_authors : ''),
 				'published_at' => ! empty($p->post_date) ? gmdate('Y-m-d\TH:i:s\Z', (int) $p->post_date) : null,
 				'excerpt'      => self::plain(isset($p->post_content) ? $p->post_content : '', self::CAP_EXCERPT),
-				'url'          => self::absUrl('sim/viewpost/'.(int) $p->post_id),
+				'url'          => self::postUrl((int) $p->post_id),
 			);
 		}
 		return $out;
@@ -353,6 +363,25 @@ class AstrolabeSnapshot
 			);
 		}
 		return $out;
+	}
+
+	// ---------- shared public helpers ----------
+	//
+	// The REST API's post endpoints emit the same public post URL and the same
+	// plain-text excerpt as the snapshot does (Astrolabe reads both surfaces and
+	// expects them to agree). These thin wrappers keep ONE definition of each
+	// rule here rather than a second copy in the Api controller.
+
+	/** Absolute https URL of a post's public page on the sim. */
+	public static function postUrl($postId)
+	{
+		return self::absUrl('sim/viewpost/'.(int) $postId);
+	}
+
+	/** Plain text (HTML stripped, entities decoded, collapsed), capped. Null when empty. */
+	public static function excerpt($html, $cap = self::CAP_EXCERPT)
+	{
+		return self::plain($html, $cap);
 	}
 
 	// ---------- helpers ----------

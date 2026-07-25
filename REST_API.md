@@ -117,9 +117,12 @@ All endpoints return JSON.
   "data":     [ { ... }, { ... } ],
   "page":     1,
   "per_page": 25,
-  "total":    137
+  "total":    137,
+  "meta":     { "current_page": 1, "last_page": 6, "per_page": 25, "total": 137 }
 }
 ```
+
+`meta` *(v1.36.0+)* restates the flat keys and adds **`last_page`**, so a client can render numbered pages instead of prev/next. The flat `page` / `per_page` / `total` keys are unchanged and aren't going anywhere &mdash; `meta` is purely additive, and every list endpoint carries it.
 
 **Errors** &rarr; `{ "error": "human-readable message" }` with the appropriate HTTP status.
 
@@ -193,10 +196,17 @@ List mission posts, most recent first. Scope: `posts:read`.
 
 | Param | Default | Notes |
 |---|---|---|
-| `mission` | *(none)* | Filter to a single mission id |
+| `mission_id` | *(none)* | Filter to a single mission id *(v1.36.0+)* |
+| `mission` | *(none)* | Legacy spelling of `mission_id`. Used only when `mission_id` is absent |
 | `status` | `activated` | Post status. `any` returns drafts/saved/activated. Other values: `saved`, `draft` |
+| `sort` | *(none)* | `order` &rarr; in-mission **reading order, ascending** *(v1.36.0+)*. Anything else keeps the default newest-first |
+| `content` | `1` | `0` (or `false`/`no`/`off`) omits each post's `content` from the response &mdash; metadata-only rows *(v1.36.0+)*. Default unchanged: bodies included |
 | `page` | `1` | 1-indexed |
 | `per_page` | `25` | Capped at `100` |
+
+`sort=order` matches what the sim itself shows on a mission page: with *Ordered Mission Posts* on it uses that mission's own scheme (day / date / stardate, then time), otherwise post date ascending. `post_date` is always the final tie-break, so paging can't reshuffle rows between pages. Combine it with `mission_id` &mdash; without a mission there's no per-mission scheme to apply, so it's just post date ascending.
+
+**`content=0`** is for index pages: a list of 25 posts with bodies runs from ~235 KB (1,200-word posts) to 1.6 MB (Nova's 64 KB `TEXT` ceiling), against ~14 KB for metadata-only rows. Fetch each body from `GET /posts/{id}` when a reader actually opens that post. Every other field survives, `word_count` and `excerpt` included &mdash; both are derived from the body, so the sim still reads and counts it; what you save is the serialization, the memory, and the transfer. `meta` is unaffected: `total` and `last_page` still describe the whole result set. It applies to the list only; `GET /posts/{id}` always returns `content`.
 
 **Response (envelope):** see [Response shape](#response-shape).
 
@@ -206,13 +216,21 @@ List mission posts, most recent first. Scope: `posts:read`.
 |---|---|---|
 | `id` | int | `posts.post_id` |
 | `title` | string | |
-| `content` | string | Raw post body. May contain BBCode / HTML depending on your Nova install. |
+| `content` | string | Raw post body. May contain BBCode / HTML depending on your Nova install. **Omitted entirely** when the list is called with `?content=0` *(v1.36.0+)*; always present otherwise. |
 | `mission_id` | int \| null | |
-| `authors` | string \| null | Comma-separated `charid` list (Nova's native format). |
+| `authors` | string \| null | Comma-separated `charid` list (Nova's native format). **Unchanged** &mdash; map these ids to an author picker; for names read `author_names`. |
+| `author_names` | string[] | The authors' **display names**, in the stored order. `[]` when there are none, and ids that no longer resolve are dropped rather than null-padded. Honours the *Display Name* override when that feature is on. *(v1.36.0+)* |
 | `status` | string | `activated` / `saved` / `draft` |
 | `date` | ISO 8601 | UTC |
+| `published_at` | ISO 8601 \| null | UTC (`Z`) activation timestamp. `null` unless the post is `activated` &mdash; a draft's `date` is its last save, not a publication time. *(v1.36.0+)* |
+| `url` | string | Absolute `https://` URL of the post's public page on the sim. Use it for a "read on the sim" link and for `rel="canonical"`. *(v1.36.0+)* |
+| `excerpt` | string \| null | Plain-text preview of the body &mdash; HTML stripped, entities decoded, whitespace collapsed, capped at 300 chars. `null` when the body is empty. *(v1.36.0+)* |
 | `location` | string | In-character location. `""` when unset. *(v1.35.1+)* |
 | `timeline` | string | Free-text timeline. The raw stored value — **not** the webhook payload's `timeline`, which renders the *Ordered Mission Posts* day/time. `""` when unset. *(v1.35.1+)* |
+| `word_count` | int | Words in this post's body: `str_word_count(strip_tags($content))`, the suite's one canonical definition — the same figure Manage Missions and `/sim/missions` show. Computed per request rather than stored, so it is present for **every** status (drafts included), never `null`, and still present when `?content=0` omits the body. Not attributed to any single author — a post can have several. *(v1.28.0+)* |
+| `saved_character_id` | int \| null | Nova's `post_saved`: the character recorded as the last saver. `null` when unknown. *(v1.35.0+)* |
+| `saved_user_id` | int \| null | The user who owns that character — compare against a writer's own user id for "whose turn is it". Matches the webhook actor's user. `null` when unknown/unowned. *(v1.35.0+)* |
+| `saved_user_name` | string \| null | That user's public display name (same rule as `Character.user_name`). `null` when unknown. *(v1.35.0+)* |
 | `summary` | string \| null | **Only present when the *Mission Post Summary* feature is enabled.** |
 | `ordered` | object | **Only present when *Ordered Mission Posts* is enabled.** Keys: `day` (int), `time` (string `"HHMM"`), `date` (string), `stardate` (string). Only populated keys are included. |
 | `age_gated` | bool | **Only present when *Content Filter* is enabled.** The API still returns full `content`; this flag lets your consumer decide whether to redact downstream. |
@@ -220,6 +238,8 @@ List mission posts, most recent first. Scope: `posts:read`.
 ### `GET /posts/{id}`
 
 Single post by id. Scope: `posts:read` (public, activated only). A user-bound `posts:read.own` token may also fetch its own drafts; `posts:read.all` (sysadmin) may fetch any post. Returns `404` when the tier doesn't permit the post.
+
+Same object as in the list &mdash; including `author_names`, `published_at`, `url`, and `excerpt` *(v1.36.0+)*. So a public post page can print a byline from `author_names` while an edit form keeps mapping ids from the untouched `authors` string.
 
 ---
 
@@ -648,7 +668,11 @@ curl -H "X-API-Key: $TOKEN" "$BASE/ping"
 curl -H "X-API-Key: $TOKEN" "$BASE/posts?per_page=5"
 
 # Posts for a single mission
-curl -H "X-API-Key: $TOKEN" "$BASE/posts?mission=4&per_page=50"
+curl -H "X-API-Key: $TOKEN" "$BASE/posts?mission_id=4&per_page=50"
+
+# One page of a mission's public archive, in reading order, metadata only
+curl -H "X-API-Key: $TOKEN" \
+  "$BASE/posts?mission_id=4&status=activated&sort=order&page=2&per_page=25&content=0"
 
 # Single post
 curl -H "X-API-Key: $TOKEN" "$BASE/posts/123"

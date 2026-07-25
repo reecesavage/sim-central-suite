@@ -78,11 +78,16 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	}
 
 	/**
-	 * GET /Api/posts          - list (filters: ?mission=, ?status=, ?page=, ?per_page=)
+	 * GET /Api/posts          - list (filters: ?mission_id=, ?status=, ?sort=,
+	 *                                  ?page=, ?per_page=)
 	 * GET /Api/posts/{id}     - single
 	 *
 	 * Default status filter is 'activated' (i.e. public). Override with
 	 * ?status=any to include drafts/saved, or ?status=saved etc.
+	 * ?sort=order lists a mission in reading order (ascending) instead of the
+	 * default newest-first; ?mission= is the legacy spelling of ?mission_id=.
+	 * ?content=0 drops the post bodies from a list response (metadata only);
+	 * the default includes them, exactly as it always has.
 	 */
 	/**
 	 * Mission posts.
@@ -150,9 +155,29 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			$this->_emit(200, $this->_projectPost($row));
 		}
 
-		$status  = $this->input->get('status', true);
-		$mission = $this->input->get('mission', true);
+		$status = $this->input->get('status', true);
+		// mission_id is the documented name (v1.36.0, matches the field on the
+		// post object and the snapshot's stories[].id); `mission` is the
+		// original param and still honoured.
+		$missionParam = $this->input->get('mission_id', true);
+		if ($missionParam === null || $missionParam === '') {
+			$missionParam = $this->input->get('mission', true);
+		}
+		// Same emptiness rule as before mission_id existed, so an unfiltered
+		// call and a junk filter behave exactly as they always have.
+		$mission = ( ! empty($missionParam)) ? (int) $missionParam : 0;
+		$sort    = strtolower(trim((string) $this->input->get('sort', true)));
+		// ?content=0 returns metadata-only rows. Opt-OUT: the default response is
+		// unchanged, so no existing caller has to do anything. A reader that only
+		// needs the body of the post someone actually opened (and fetches it from
+		// GET /posts/{id}) saves transferring every body on the page.
+		$includeContent = $this->_boolQueryParam('content', true);
 		list($page, $perPage, $offset) = $this->_paging();
+
+		// Resolve the mission's ordering scheme BEFORE a single query-builder
+		// call below: that lookup runs get_where(), which resets CI's shared
+		// builder state and would discard the half-built posts query.
+		$readingOrder = ($sort === 'order') ? $this->_readingOrderColumns($mission) : null;
 
 		// Public tokens default to activated (and may still opt into ?status=any
 		// as before); own/all default to every status so drafts are included.
@@ -161,8 +186,8 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		}
 
 		$this->db->from('posts');
-		if ( ! empty($mission)) {
-			$this->db->where('post_mission', (int) $mission);
+		if ( ! empty($missionParam)) {
+			$this->db->where('post_mission', $mission);
 		}
 		if ($status !== 'any') {
 			$this->db->where('post_status', $status);
@@ -171,13 +196,88 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			$this->db->where($this->_authorsUsersClause($uid), null, false);
 		}
 		$total = (int) $this->db->count_all_results('', false);
-		$rows  = $this->db->order_by('post_date', 'desc')->limit($perPage, $offset)->get()->result();
+
+		// Default stays newest-first (every existing consumer depends on it).
+		// ?sort=order gives the mission's reading order instead - what a public
+		// archive wants, and what the sim's own mission page shows.
+		if ($readingOrder !== null) {
+			$this->_applyReadingOrder($readingOrder);
+		} else {
+			$this->db->order_by('post_date', 'desc');
+		}
+		$rows = $this->db->limit($perPage, $offset)->get()->result();
+
+		// One batched name lookup for the whole page rather than one per post.
+		$this->_primeCharacterNames($rows);
 
 		$data = array();
 		foreach ($rows as $row) {
-			$data[] = $this->_projectPost($row);
+			$data[] = $this->_projectPost($row, $includeContent);
 		}
 		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * Which columns express a mission's reading order, per its Ordered Mission
+	 * Posts scheme. Returns array(column|null, time_column|null, cast) - all
+	 * null when the feature is off, no mission was named, or the mission has no
+	 * scheme, which means "fall back to post_date".
+	 *
+	 * ONE query, and it must run before the caller starts building its own
+	 * query: get_where() resets CI's shared query builder.
+	 */
+	private function _readingOrderColumns($missionId)
+	{
+		$missionId = (int) $missionId;
+		$column = null;
+		$timeColumn = null;
+		$cast = 'UNSIGNED';
+
+		$features = $this->_suiteFeatures();
+		if ($missionId > 0 && ! empty($features['ordered_mission_posts'])) {
+			$m = $this->db->get_where('missions', array('mission_id' => $missionId), 1)->row();
+			$config = ($m && isset($m->mission_ext_ordered_config_setting))
+				? (string) $m->mission_ext_ordered_config_setting : '';
+
+			if ($config === 'day_time') {
+				// Legacy mode reads the old Chronological Mission Posts columns.
+				$legacy = ($m && ! empty($m->mission_ext_ordered_legacy_mode));
+				$column     = $legacy ? 'post_chronological_mission_post_day'  : 'nova_ext_ordered_post_day';
+				$timeColumn = $legacy ? 'post_chronological_mission_post_time' : 'nova_ext_ordered_post_time';
+			} elseif ($config === 'date_time') {
+				$column     = 'nova_ext_ordered_post_date';
+				$timeColumn = 'nova_ext_ordered_post_time';
+				$cast       = 'DATE';
+			} elseif ($config === 'stardate') {
+				$column     = 'nova_ext_ordered_post_stardate';
+				$timeColumn = 'nova_ext_ordered_post_time';
+			}
+		}
+
+		return array($column, $timeColumn, $cast);
+	}
+
+	/**
+	 * Order the pending posts query by in-mission reading order, ascending,
+	 * from a spec produced by _readingOrderColumns().
+	 *
+	 * Mirrors what the sim itself renders on a mission page: with Ordered
+	 * Mission Posts on, the mission's own scheme (day / date / stardate, then
+	 * time); otherwise post_date ascending. post_date is always appended as a
+	 * stable tie-break so paging can't reshuffle rows between pages.
+	 */
+	private function _applyReadingOrder(array $spec)
+	{
+		list($column, $timeColumn, $cast) = $spec;
+
+		// Columns are feature-installed, so never order by one that isn't there.
+		if ($column !== null && \nova_ext_sim_central\Migrations::hasColumn('posts', $column)) {
+			$this->db->order_by('cast('.$column.' as '.$cast.')', 'asc');
+			if ($timeColumn !== null && \nova_ext_sim_central\Migrations::hasColumn('posts', $timeColumn)) {
+				$this->db->order_by($timeColumn, 'asc');
+			}
+		}
+		$this->db->order_by('post_date', 'asc');
 	}
 
 	// ---------- post write (create / update / delete) ----------
@@ -1493,6 +1593,20 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 * 0, and false as false; everything else (including absence) falls back to
 	 * $default.
 	 */
+	/**
+	 * Same boolean rule as _boolParam, read off the query string. An absent OR
+	 * empty value falls back to $default, so a malformed `?flag=` can't silently
+	 * flip behaviour - only an explicit false/0/no/off does.
+	 */
+	private function _boolQueryParam($key, $default)
+	{
+		$v = $this->input->get($key, true);
+		if ($v === null || $v === '') {
+			return $default;
+		}
+		return $this->_boolParam(array($key => $v), $key, $default);
+	}
+
 	private function _boolParam(array $input, $key, $default)
 	{
 		if ( ! array_key_exists($key, $input)) {
@@ -1661,7 +1775,7 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 * the relevant feature being enabled, so consumers can detect what's
 	 * available by key presence rather than null sentinels.
 	 */
-	private function _projectPost($row)
+	private function _projectPost($row, $includeContent = true)
 	{
 		$out = array(
 			'id'         => (int) $row->post_id,
@@ -1686,6 +1800,14 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				: 0,
 		);
 
+		// v1.36.0: ?content=0 on the list drops the body from the response. Only
+		// the payload goes - word_count and excerpt below are both derived from
+		// post_content, so the row is still read and counted exactly as before.
+		// Built then unset so the default response keeps its existing key order.
+		if ( ! $includeContent) {
+			unset($out['content']);
+		}
+
 		// v1.35.0: who last saved the post (Nova's post_saved). saved_user_id
 		// is the owning user - the value consumers compare against a writer's
 		// own user id for "whose turn is it". Matches the webhook actor's
@@ -1696,6 +1818,24 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$out['saved_character_id'] = $savedCharId;
 		$out['saved_user_id']      = $savedUserId;
 		$out['saved_user_name']    = ($savedUserId !== null) ? $this->_publicUserName($savedUserId) : null;
+
+		// v1.36.0: the fields a PUBLIC reader of a post needs, so a consumer can
+		// render a post list or a post page without a second round of lookups.
+		// `authors` deliberately keeps its Nova-native comma-joined charid form -
+		// existing consumers map those ids to an author picker - and the display
+		// names arrive alongside it as author_names.
+		$out['author_names'] = $this->_authorNames(isset($row->post_authors) ? $row->post_authors : '');
+		// Activation timestamp. Only an activated post has been published, so a
+		// draft's post_date (its last save) is not reported as a publish time.
+		$out['published_at'] = (isset($row->post_status) && $row->post_status === 'activated' && ! empty($row->post_date))
+			? gmdate('Y-m-d\TH:i:s\Z', (int) $row->post_date)
+			: null;
+		// The post's own public page on the sim - absolute https, same URL the
+		// snapshot's recent_posts use. Consumers link back here (and can use it
+		// as rel="canonical") so the sim keeps the credit for its own content.
+		$out['url']     = \nova_ext_sim_central\AstrolabeSnapshot::postUrl((int) $row->post_id);
+		// Plain-text preview (HTML stripped, capped at 300) for list rows.
+		$out['excerpt'] = \nova_ext_sim_central\AstrolabeSnapshot::excerpt(isset($row->post_content) ? $row->post_content : '');
 
 		$features = $this->_suiteFeatures();
 
@@ -1892,6 +2032,97 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		return $this->_charOwnerCache[$charId];
 	}
 
+	/**
+	 * Per-request memoized charid -> public display name. Honours the Display
+	 * Name override when that feature is on, so a post byline reads the same as
+	 * the name on the sim's own manifest. Null for an id that no longer resolves.
+	 */
+	private $_charNameCache = array();
+
+	/**
+	 * Prime the name cache for every author across a page of post rows, so a
+	 * 25-post list costs one characters query instead of one per row.
+	 */
+	private function _primeCharacterNames(array $rows)
+	{
+		$ids = array();
+		foreach ($rows as $row) {
+			foreach ($this->_authorIds(isset($row->post_authors) ? $row->post_authors : '') as $id) {
+				$ids[$id] = true;
+			}
+		}
+		if ( ! empty($ids)) {
+			$this->_loadCharacterNames(array_keys($ids));
+		}
+	}
+
+	/** Unique positive charids from Nova's comma-joined post_authors value. */
+	private function _authorIds($csv)
+	{
+		$ids = array();
+		foreach (explode(',', (string) $csv) as $part) {
+			$id = (int) trim($part);
+			if ($id > 0) {
+				$ids[] = $id;
+			}
+		}
+		return array_values(array_unique($ids));
+	}
+
+	/** Fill the name cache for any of $ids not already cached (one query). */
+	private function _loadCharacterNames(array $ids)
+	{
+		$missing = array();
+		foreach ($ids as $id) {
+			if ( ! array_key_exists((int) $id, $this->_charNameCache)) {
+				$missing[] = (int) $id;
+			}
+		}
+		if (empty($missing)) {
+			return;
+		}
+
+		$features = $this->_suiteFeatures();
+		$withDisplayName = ! empty($features['display_name'])
+			&& \nova_ext_sim_central\Migrations::hasColumn('characters', 'display_name');
+
+		$rows = $this->db
+			->select('charid, first_name, last_name, suffix'.($withDisplayName ? ', display_name' : ''))
+			->from('characters')
+			->where_in('charid', $missing)
+			->get()->result();
+
+		// Negative-cache first so a deleted character isn't re-queried per row.
+		foreach ($missing as $id) {
+			$this->_charNameCache[$id] = null;
+		}
+		foreach ($rows as $r) {
+			$name = html_entity_decode($this->_characterName($r), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+			$this->_charNameCache[(int) $r->charid] = ($name !== '') ? $name : null;
+		}
+	}
+
+	/**
+	 * Display names for a Nova comma-joined charid list, in the stored order.
+	 * Returns [] when there are no authors or none of them resolve.
+	 */
+	private function _authorNames($csv)
+	{
+		$ids = $this->_authorIds($csv);
+		if (empty($ids)) {
+			return array();
+		}
+		$this->_loadCharacterNames($ids);
+
+		$names = array();
+		foreach ($ids as $id) {
+			if ( ! empty($this->_charNameCache[$id])) {
+				$names[] = $this->_charNameCache[$id];
+			}
+		}
+		return $names;
+	}
+
 	private $_featuresCache = null;
 	private function _suiteFeatures()
 	{
@@ -1927,11 +2158,25 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 
 	private function _paginate(array $data, $total, $page, $perPage)
 	{
+		$total   = (int) $total;
+		$page    = (int) $page;
+		$perPage = (int) $perPage;
+
 		return array(
 			'data'     => $data,
-			'page'     => (int) $page,
-			'per_page' => (int) $perPage,
-			'total'    => (int) $total,
+			'page'     => $page,
+			'per_page' => $perPage,
+			'total'    => $total,
+			// v1.36.0: the same numbers again in a conventional `meta` block, so
+			// a client that expects Laravel-style pagination can render a real
+			// numbered paginator instead of prev/next. The flat keys above stay
+			// exactly as they were - this is purely additive.
+			'meta'     => array(
+				'current_page' => $page,
+				'last_page'    => ($perPage > 0) ? max(1, (int) ceil($total / $perPage)) : 1,
+				'per_page'     => $perPage,
+				'total'        => $total,
+			),
 		);
 	}
 
