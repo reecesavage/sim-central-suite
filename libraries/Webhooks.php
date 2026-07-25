@@ -881,22 +881,59 @@ class Webhooks
 		return $value !== '' ? $value : $fallback;
 	}
 
+	/**
+	 * Rich text -> the Markdown Discord renders in an embed description.
+	 *
+	 * Two stages. First the elements Discord can RENDER rather than lose - bold,
+	 * italic, links - which have to be translated while they are still tags.
+	 * <br> belongs with them for a different reason: to a flattener a <br> is a
+	 * block boundary like any other, but in prose it is a LINE break, and "two
+	 * <br>s mean a paragraph" is a Markdown-authoring convention, not a
+	 * flattening rule. Then PostText does everything else.
+	 *
+	 * Before v1.37.0 the second stage was strip_tags + html_entity_decode, which
+	 * carried the whole family of bugs PostText exists to fix - most visibly, a
+	 * body reading "fuel reserves are <20 percent" delivered its first eighteen
+	 * characters and silently dropped the rest of the post.
+	 */
 	public static function htmlToMarkdown($html)
 	{
 		$s = (string) $html;
-		$s = preg_replace('/<(b|strong)\b[^>]*>(.*?)<\/\1>/is', '**$2**', $s);
-		$s = preg_replace('/<(i|em)\b[^>]*>(.*?)<\/\1>/is', '*$2*', $s);
-		$s = preg_replace_callback('/<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)<\/a>/is', function($m) {
-			return '['.trim(strip_tags($m[2])).']('.$m[1].')';
+
+		// --- 1. what Discord can render ---
+		$s = self::rx('/<(b|strong)\b[^>]*>(.*?)<\/\1>/is', '**$2**', $s);
+		$s = self::rx('/<(i|em)\b[^>]*>(.*?)<\/\1>/is', '*$2*', $s);
+		$out = preg_replace_callback('/<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)<\/a>/is', function ($m) {
+			// Link text flattens with the DEFAULT space separator on purpose: a
+			// newline inside [...] would break the Markdown link.
+			return '['.PostText::flatten($m[2]).']('.$m[1].')';
 		}, $s);
-		$s = preg_replace('/<\/p>\s*<p\b[^>]*>/i', "\n\n", $s);
-		$s = preg_replace('/<br\s*\/?>(\s*<br\s*\/?>)+/i', "\n\n", $s);
-		$s = preg_replace('/<br\s*\/?>/i', "\n", $s);
-		$s = strip_tags($s);
-		$s = html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-		$s = preg_replace('/\r\n/', "\n", $s);
-		$s = preg_replace('/\n{3,}/', "\n\n", $s);
-		return trim($s);
+		if ($out !== null) {
+			$s = $out;
+		}
+		// [^>]* rather than \s*\/? so <br class="x"> is matched too.
+		$s = self::rx('/<br\b[^>]*>(?:\s*<br\b[^>]*>)+/i', "\n\n", $s);
+		$s = self::rx('/<br\b[^>]*>/i', "\n", $s);
+
+		// --- 2. everything else ---
+		// "\n\n" and not " ": smartTruncate()'s best cut is the last paragraph
+		// break inside the budget, and with spaces there would never be one.
+		// flatten() also decodes entities, drops <script>/<style> contents,
+		// normalises CRLF, squeezes blank-line runs and trims - all of which
+		// this function used to do by hand afterwards.
+		return PostText::flatten($s, "\n\n");
+	}
+
+	/**
+	 * preg_replace that leaves the subject alone on a PCRE failure. Without it a
+	 * single failed pattern returned null and blanked the WHOLE embed body;
+	 * skipping one Markdown conversion is much the milder failure, and the
+	 * flattener removes the tag either way.
+	 */
+	private static function rx($pattern, $replacement, $subject)
+	{
+		$out = preg_replace($pattern, $replacement, $subject);
+		return ($out === null) ? $subject : $out;
 	}
 
 	public static function smartTruncate($text, $max)

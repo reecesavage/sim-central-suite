@@ -127,7 +127,7 @@ Each webhook can store an optional Discord **role ID** (`mention_role_id`) plus 
 | `{mission}` | Mission title (or `(no mission)` if unset) |
 | `{location}` | Raw `post_location` field |
 | `{timeline}` | Pulled from the ordered_mission_posts columns if that feature is on, else falls back to `post_timeline` |
-| `{body}` | HTML-stripped, Markdown-flavoured body excerpt, smart-truncated to ~800 chars (excerpt only — the *Read the full post* link is the template's `{url}` line, not baked into the body) |
+| `{body}` | Markdown-flavoured body excerpt, smart-truncated to ~800 chars. *(v1.37.0+)* Flattened rather than `strip_tags`'d, so paragraph breaks survive into the embed, a bare `<` in prose no longer truncates the body mid-sentence, and a pasted `<style>` block's CSS no longer appears in the channel (excerpt only — the *Read the full post* link is the template's `{url}` line, not baked into the body) |
 | `{url}` | Public post URL: `/sim/viewpost/{id}` |
 | `{url_admin}` | Backend write URL: `/write/missionpost/{id}/view` |
 | `{actor}` | Display name of the character whose user did the save |
