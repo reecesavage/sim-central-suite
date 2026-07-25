@@ -4,7 +4,7 @@ v1.36.1 fixed how the suite turns rich text into plain text, but only for the As
 
 ## ⚠️ Your word counts will change — that is the fix
 
-Post and mission word counts move on every sim: in the REST API, on Manage Missions in the ACP, and on the public `/sim/missions` page. They move in **both directions**, because `str_word_count(strip_tags($content))` was wrong in four different ways at once:
+Post and mission word counts move on every sim: in the REST API, on Manage Missions in the ACP, and on the public `/sim/missions` page. They move in **both directions**, because `str_word_count(strip_tags($content))` was wrong on both sides — in what it counted, and in how it counted:
 
 | What was wrong | Effect on the count |
 |---|---|
@@ -12,8 +12,10 @@ Post and mission word counts move on every sim: in the REST API, on Manage Missi
 | `&nbsp;` counted as the word "nbsp"; so did `&amp;`, `&quot;`, `&mdash;` | Falls |
 | A block boundary deleted the tag and fused the words either side | Rises |
 | A bare `<` in prose — `the fee is <20 credits` — made `strip_tags` eat to the next `>` **or to the end of the body** | **Rises, by however much of the post was being silently discarded** |
+| `str_word_count` classified **bytes** with the C library's `isalpha()`, so any word with a non-ASCII letter split in the middle — `Björn Kodak` scored **3** | Falls, on every accented word, on every host |
+| The same byte classification never counted digits at all | Rises — `Deck 12` now scores 2 |
 
-Plain prose and ordinary `<p>`-per-paragraph posts that end their paragraphs in punctuation don't move at all. Everything else depends on what the body actually contains, so the net direction for any one post isn't predictable in advance — but every individual change is toward the truth.
+The body now goes through the same flattener as `excerpt`, and tokens are matched with a Unicode-aware pattern rather than `str_word_count`. A hyphenated or apostrophised word (`Kordra-Lisrit`, `it's`, `it’s`) counts once, and so does a CJK run. Plain ASCII prose in `<p>`-per-paragraph posts ending in punctuation doesn't move at all. Everything else depends on what the body actually contains, so the net direction for any one post isn't predictable in advance — but every individual change is toward the truth.
 
 **If you reimplemented the old formula** to cross-check our number, stop: read the field instead. `str_word_count(strip_tags($content))` was published in `REST_API.md`, `ASTROLABE.md` and the OpenAPI spec as *the* definition, and it no longer is.
 
@@ -40,9 +42,25 @@ The mission-list and tour-list blurbs escaped the text *before* truncating it, t
 
 Blurbs are now at most one character shorter (the ellipsis counts inside the 120-character budget rather than being appended outside it), and a description with no readable text no longer renders an empty blurb.
 
+## Flattening: a typed `<` can no longer be mistaken for markup
+
+Removing markup that was stored *escaped* (`&lt;p&gt;`) rather than showing it to a reader as a literal tag shipped in v1.36.1. Telling escaped **markup** from an escaped **character** was inferred from the finished string: a tag needed a terminating `>`, and Nova escapes a typed `<` only when no `>` follows it.
+
+That inference has a hole, because the two decisions happen at different times. Nova escapes on **write**; the flattener runs on **read**, against whatever is stored now — and Nova's mission-edit form is unfiltered, so a later edit can append the `>` that was missing:
+
+```
+Add Mission:   see <b for details    →  stored:  see &lt;b for details
+Edit Mission:  append "> ok"         →  stored:  see &lt;b for details> ok
+Read:                                   "see  ok"   ← "b for details" deleted
+```
+
+Provenance is now carried through the decode rather than inferred from its result: a tag is removed only when **both** delimiters were produced by decoding. Anything the author typed is put beyond that pass's reach before it runs, so it cannot be stripped even in principle.
+
+One narrow consequence: a delimiter pair split across provenances — a typed `</` closed by an escaped `&gt;` — is no longer markup, so `</>` can survive as text where it was removed before. Verified over 4,000 generated bodies that this never changes a letter or a digit; punctuation only.
+
 ## Also
 
-- **`GET /posts` excerpts are unchanged.** The flattener gained an optional separator argument for Discord's benefit; every existing caller uses the default and produces byte-identical output. Verified against the previous implementation over a fixed table plus 4,000 generated bodies — zero differences.
+- **`GET /posts` excerpts are unchanged** for ordinary content. The flattener gained an optional separator argument for Discord's benefit; every existing caller uses the default. Verified against v1.36.2 over a fixed table plus 4,000 generated bodies: the only differences are the punctuation-only provenance class above, and not one body gains or loses a letter or digit.
 - **A truncation artefact is gone.** For bodies over 16 KB, the excerpt's input bound could cut through an escaped tag and leave a fragment like `<img src=x onerror=…` in the output. The bound now ends on a boundary that can't be mid-tag. Present since v1.36.1; found by re-running the hostile-input sweep.
 
 ## Upgrade

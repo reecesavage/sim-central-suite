@@ -47,13 +47,22 @@ defined('BASEPATH') OR exit('No direct script access allowed');
  *
  *   Pass 2 runs AFTER entities are decoded, so that markup stored escaped
  *   ("&lt;p&gt;") is removed as the markup it is instead of surfacing to a
- *   reader as a literal tag. But here a "<" was typed by a human, so this pass
- *   only removes KNOWN HTML element names. That is what keeps
- *   "Fire if enemy&lt;shields and range&gt;two" and "the manifest uses
- *   Map&lt;name,rank&gt;" intact: <shields> and <name,rank> are not elements.
- *   Decoding first without that restriction reintroduced exactly the reason-2
- *   data loss for escaped prose - and since every WYSIWYG editor stores a typed
- *   "<" as "&lt;", escaped is the COMMON form in Nova data.
+ *   reader as a literal tag. It is restricted two ways, and both are load-bearing:
+ *
+ *     - It only removes KNOWN HTML element names, which keeps "the manifest uses
+ *       Map&lt;name,rank&gt;" intact - <name,rank> is not an element.
+ *     - It only removes delimiters that DECODING PRODUCED. Both the "<" and the
+ *       ">" have to have come from entities. Anything the author typed is parked
+ *       out of reach first, so pass 2 cannot strip it even in principle.
+ *
+ *   The second rule exists because provenance cannot be inferred from the shape
+ *   of the finished string. Nova escapes a typed "<" to "&lt;" only when no ">"
+ *   follows it (CI_Security), and that decision is taken at WRITE time - but a
+ *   later edit through Nova's unfiltered mission-edit form can append a ">" to
+ *   the stored value. "see &lt;b for details" then becomes
+ *   "see &lt;b for details> ok", which reads back as a terminated <b> tag and
+ *   used to have "b for details" deleted from it. The delimiters, not the
+ *   result, are what carry the provenance.
  *
  * In both passes a "<" only opens a tag when a letter or "/" follows it, which
  * is the HTML5 tokenizer's own rule (the same rule PostWrite applies to mobile
@@ -178,12 +187,34 @@ class PostText
 			// --- pass 1: the stored string, where tag-shaped means markup ---
 			$s = self::removeMarkup($s, true, self::namePattern(true), $sep);
 
-			// Decode exactly once. html_entity_decode is not recursive, so
-			// "&amp;lt;" stays "&lt;" - double-escaped text isn't unwrapped twice.
+			// Mark the "<" and ">" that are about to be PRODUCED by decoding, so
+			// pass 2 can tell them from ones the author typed. Each candidate is
+			// decoded individually rather than matched by a hand-written pattern,
+			// so this can never disagree with html_entity_decode about what is a
+			// reference (it wants the semicolon: "&lt" decodes to itself).
+			$s = self::rx_callback('/&(?:[a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#[xX][0-9a-fA-F]+);/', function ($m) {
+				$d = html_entity_decode($m[0], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+				if ($d === '<') { return "\x01"; }
+				if ($d === '>') { return "\x02"; }
+				return $m[0];
+			}, $s);
+
+			// Park every delimiter the author typed. Pass 1 already took anything
+			// tag-shaped, so what is left is prose - and parking it means pass 2
+			// structurally CANNOT strip it, rather than merely declining to.
+			$s = str_replace(array('<', '>'), array("\x03", "\x04"), $s);
+			$s = str_replace(array("\x01", "\x02"), array('<', '>'), $s);
+
+			// Decode the rest. Nothing left can yield a "<" or ">".
+			// html_entity_decode is not recursive, so "&amp;lt;" stays "&lt;" -
+			// double-escaped text isn't unwrapped twice.
 			$s = html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
-			// --- pass 2: decoded text, only real element names are markup ---
+			// --- pass 2: what was stored ESCAPED, and only real element names ---
 			$s = self::removeMarkup($s, false, self::namePattern(false), $sep);
+
+			// Give the author's own delimiters back.
+			$s = str_replace(array("\x03", "\x04"), array('<', '>'), $s);
 		}
 
 		// Zero-width space and BOM are invisible and are NOT word separators, so

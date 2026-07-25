@@ -43,10 +43,27 @@ class PostWordCount
 	 * And flatten(), not excerpt(): excerpt() bounds its input to 16KB, which is
 	 * right for a 300-character preview and wrong here. post_content is longtext,
 	 * and a word count has to see the whole body.
+	 *
+	 * The tokeniser is Unicode-aware for the same reason. str_word_count()
+	 * classifies BYTES with the C library's isalpha() under the server's locale,
+	 * so "Bjorn" with an umlaut scored 3 - the two bytes of the accented letter
+	 * are not alpha, so the word split in the middle. Every word carrying a
+	 * non-ASCII letter was over-counted, on every host, whatever went in. A
+	 * hyphenated or apostrophised word now scores once as well, and digits count
+	 * as words, which str_word_count never did.
 	 */
 	public static function countText($content)
 	{
-		return str_word_count(PostText::flatten($content));
+		$text = PostText::flatten($content);
+		if ($text === '') {
+			return 0;
+		}
+		$count = preg_match_all('/[\p{L}\p{N}]+(?:[\'\x{2019}\-][\p{L}\p{N}]+)*/u', $text);
+
+		// preg_match_all returns false only on a PCRE failure; flatten() has
+		// already guaranteed valid UTF-8, but never report 0 words for a body
+		// that plainly has some.
+		return ($count === false) ? str_word_count($text) : $count;
 	}
 
 	/**

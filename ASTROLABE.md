@@ -312,12 +312,16 @@ flattened exactly as `excerpt` is, then tokenised. That is the suite's one
 canonical definition and the same figure the sim shows on Manage Missions and
 `/sim/missions`.
 
-*(v1.37.0+)* Flattening replaced `strip_tags` here, so these counts **moved on
-every sim**: a block boundary now separates two words instead of fusing them, a
-bare `<` in prose no longer swallows the rest of the body from the count,
-`&nbsp;` no longer counts as the word "nbsp", and the CSS in a pasted `<style>`
-block no longer counts as prose. Directions differ per post, so treat the field
-as the source of truth rather than reimplementing the formula.
+*(v1.37.0+)* This was rewritten in two ways, and these counts **moved on every
+sim** as a result. What goes in changed: flattening replaced `strip_tags`, so a
+block boundary separates two words instead of fusing them, a bare `<` in prose
+no longer swallows the rest of the body from the count, `&nbsp;` no longer
+counts as the word "nbsp", and the CSS in a pasted `<style>` block no longer
+counts as prose. How it counts changed too: a Unicode-aware token matcher
+replaced `str_word_count`, which classified **bytes** — so `Björn` scored 2 and
+now scores 1, a hyphenated or apostrophised word scores once, and digits count
+as words. Directions differ per post, so treat the field as the source of truth
+rather than reimplementing the formula.
 
 **One post's body** &mdash; `GET /posts/{id}` returns the same object plus
 `content`, so a post page needs exactly one call and can be cached on your side.
