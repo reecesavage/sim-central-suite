@@ -550,7 +550,23 @@ class PostWrite
 	 */
 	public static function editorHtmlToStored($html)
 	{
-		$html = self::protectBareLt((string) $html);
+		// Fold CR first: every rule below matches "\n" alone, and content
+		// reaching here routinely carries CRLF. Nova's own desktop composer is a
+		// <textarea> (write_missionpost / write_personallog), and HTML form
+		// submission normalizes every submitted value to CRLF - so any post
+		// written or edited on the desktop site is stored CRLF, and the mobile
+		// editor's own POST comes back the same way.
+		//
+		// A surviving "\r" broke the round trip twice over: it split every
+		// newline run so the \n{3,} collapse below could never fire, and in
+		// storedToEditorHtml() the "\n"-only replace left it orphaned in the
+		// editor HTML, where the browser re-read it as a newline and posted it
+		// back as a fresh CRLF. Each break therefore gained a "\n" per save, so
+		// opening a desktop-written post on mobile and saving it added a blank
+		// line to every paragraph gap in the post.
+		$html = str_replace(array("\r\n", "\r"), "\n", (string) $html);
+
+		$html = self::protectBareLt($html);
 
 		// A <br> that merely fills the end of a block element (the trailing <br>
 		// WebKit/Blink leave inside <div>line<br></div> when a contenteditable
@@ -684,7 +700,11 @@ class PostWrite
 			if (preg_match('#^(?:'.$tagPattern.')$#i', $seg)) {
 				$out .= $seg;
 			} else {
-				$out .= str_replace("\n", '<br>',
+				// CR is already folded by editorHtmlToStored() above; matching it
+				// here too keeps this method correct on its own terms, because a
+				// bare "\r" emitted into the editor is invisible on the page and
+				// comes back as an extra newline.
+				$out .= str_replace(array("\r\n", "\r", "\n"), '<br>',
 					htmlspecialchars($seg, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
 			}
 		}
