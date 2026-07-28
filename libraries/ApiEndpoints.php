@@ -222,7 +222,7 @@ class ApiEndpoints
 				'operation_id'   => 'getCharacter',
 				'scope'          => 'characters:read',
 				'summary'        => 'Get a single character.',
-				'description'    => 'Fetches one character by id. Returns any status (unlike posts, where the single endpoint hides non-activated rows).',
+				'description'    => 'Fetches one character by id. Returns any status (unlike posts, where the single endpoint hides non-activated rows). Includes "bio" (v1.38.0+): the sim\'s whole bio form for this character - every visible field with its value, its type, and the section and tab it belongs to - ordered the way the sim\'s own bio page renders it. The list endpoint does not include it.',
 				'parameters'     => array(
 					array('name' => 'id', 'in' => 'path', 'required' => true, 'type' => 'integer', 'default' => null, 'description' => 'Character id (charid).'),
 				),
@@ -674,8 +674,40 @@ class ApiEndpoints
 					'user_name'      => array('type' => 'string', 'nullable' => true, 'description' => 'The linked user\'s public display name (same value/visibility as the snapshot manifest\'s player.name - never email or account internals). Null when unowned/unlinked.'),
 					'display_name'   => array('type' => 'string', 'nullable' => true, 'x-suite-feature' => 'Display Name'),
 					'preferred_name' => array('type' => 'string', 'x-suite-feature' => 'Display Name', 'description' => 'display_name if set, else first last suffix.'),
+					'bio'            => array(
+						'type'        => 'array',
+						'items'       => array('$ref' => '#/components/schemas/BioField'),
+						'description' => 'ONLY on GET /characters/{id} - never on the list, where it would cost a query per row. The sim\'s whole bio form for this character, ordered the way its own bio page renders it (tab, then section within the tab, then field within the section). Fields the sim has hidden (field_display = n) are omitted; fields the character has not filled in are present with an empty value. (v1.38.0+)',
+					),
 				),
 				'required' => array('id', 'status'),
+			),
+			'BioField' => array(
+				'type' => 'object',
+				'description' => 'One character bio field and this character\'s value for it.',
+				'properties' => array(
+					'id'      => array('type' => 'integer', 'description' => 'characters_fields.field_id.'),
+					'name'    => array('type' => 'string', 'description' => 'Machine name (field_name), e.g. "hair_color". Stable across renames of the label.'),
+					'label'   => array('type' => 'string', 'description' => 'Human label as shown on the bio page, entity-decoded ("Strengths & Weaknesses", not "&amp;"). Falls back to name when the sim left the label blank.'),
+					'type'    => array('type' => 'string', 'description' => 'text, textarea, or select.'),
+					'value'   => array('type' => 'string', 'description' => 'This character\'s value, raw as stored - a textarea field holds the same rich text a post body does. Always a string; "" when unset.'),
+					'section' => array(
+						'type' => 'object',
+						'description' => 'The bio section this field sits in. A section name may be blank (the stock install ships one), so the section carries its tab - otherwise a blank section cannot be told apart. id and tab.id are null if the section or tab was deleted out from under the field.',
+						'properties' => array(
+							'id'   => array('type' => 'integer', 'nullable' => true),
+							'name' => array('type' => 'string'),
+							'tab'  => array(
+								'type' => 'object',
+								'properties' => array(
+									'id'   => array('type' => 'integer', 'nullable' => true),
+									'name' => array('type' => 'string'),
+								),
+							),
+						),
+					),
+				),
+				'required' => array('id', 'name', 'label', 'type', 'value', 'section'),
 			),
 			'CharacterList' => array(
 				'type' => 'object',

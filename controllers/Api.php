@@ -758,7 +758,7 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 
 	/**
 	 * GET /Api/characters          - list (filters: ?status=, ?page=, ?per_page=)
-	 * GET /Api/characters/{id}     - single
+	 * GET /Api/characters/{id}     - single, including the character's bio fields
 	 *
 	 * Default status filter is 'active'. ?status=any returns every character.
 	 */
@@ -774,7 +774,9 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			if ( ! $row) {
 				$this->_emit(404, array('error' => 'Character not found.'));
 			}
-			$this->_emit(200, $this->_projectCharacter($row));
+			// Bio fields on the single read only - on a list they would cost a
+			// query per row and dwarf the rest of the payload.
+			$this->_emit(200, $this->_projectCharacter($row, true));
 		}
 
 		$status = $this->input->get('status', true);
@@ -1876,7 +1878,12 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		return $out;
 	}
 
-	private function _projectCharacter($row)
+	/**
+	 * @param bool $includeBio Attach the character's bio fields. Single-character
+	 *                         reads only - on a list this would be one extra
+	 *                         query per row and a very large payload.
+	 */
+	private function _projectCharacter($row, $includeBio = false)
 	{
 		$userId = (isset($row->user) && (int) $row->user > 0) ? (int) $row->user : null;
 
@@ -1910,7 +1917,99 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				))));
 		}
 
+		if ($includeBio) {
+			$out['bio'] = $this->_characterBio((int) $row->charid);
+		}
+
 		return $out;
+	}
+
+	/**
+	 * The character's bio fields, in the order the sim's own bio page renders
+	 * them: by tab, then by section within the tab, then by field within the
+	 * section. Flat rather than nested, with each field naming its section, so
+	 * a consumer can render the array as-is or group it in one pass.
+	 *
+	 * Nova models a bio as characters_fields (the definitions - one row per
+	 * field, per sim) x characters_data (the values - one row per field, per
+	 * character). Two queries rather than one join: CodeIgniter's join() is
+	 * awkward with a compound ON clause, and the definitions table is small.
+	 *
+	 * Hidden fields (field_display = 'n') are left out - they are fields the
+	 * sim has turned off, and they do not render on the site either. A field
+	 * the character has never filled in IS listed, with an empty value, so the
+	 * array always describes the sim's whole bio form.
+	 */
+	private function _characterBio($charId)
+	{
+		$charId = (int) $charId;
+		if ($charId <= 0) {
+			return array();
+		}
+
+		$fields = $this->db
+			->select('characters_fields.field_id, characters_fields.field_name,'
+				.' characters_fields.field_type, characters_fields.field_label_page,'
+				.' characters_sections.section_id, characters_sections.section_name,'
+				.' characters_tabs.tab_id, characters_tabs.tab_name')
+			->from('characters_fields')
+			->join('characters_sections', 'characters_sections.section_id = characters_fields.field_section', 'left')
+			->join('characters_tabs', 'characters_tabs.tab_id = characters_sections.section_tab', 'left')
+			->where('characters_fields.field_display', 'y')
+			->order_by('characters_tabs.tab_order', 'asc')
+			->order_by('characters_sections.section_order', 'asc')
+			->order_by('characters_fields.field_order', 'asc')
+			->get()->result();
+
+		if (empty($fields)) {
+			return array();
+		}
+
+		$values = array();
+		foreach ($this->db->select('data_field, data_value')
+			->get_where('characters_data', array('data_char' => $charId))->result() as $r) {
+			$values[(int) $r->data_field] = ($r->data_value === null) ? '' : (string) $r->data_value;
+		}
+
+		$out = array();
+		foreach ($fields as $f) {
+			$id   = (int) $f->field_id;
+			$name = isset($f->field_name) ? (string) $f->field_name : '';
+
+			// Labels, section names and tab names are admin-entered and stored
+			// HTML-escaped by Nova ("Strengths &amp; Weaknesses"). Decode them
+			// the way character and user names are decoded elsewhere here - a
+			// JSON consumer wants the text, not the escaping.
+			$label = $this->_bioText(isset($f->field_label_page) ? $f->field_label_page : '');
+
+			$out[] = array(
+				'id'      => $id,
+				'name'    => $name,
+				'label'   => ($label !== '') ? $label : $name,
+				'type'    => isset($f->field_type) ? (string) $f->field_type : 'text',
+				// Raw as stored, exactly like Post.content: a textarea field
+				// holds the same rich text a post body does.
+				'value'   => isset($values[$id]) ? $values[$id] : '',
+				// A section name is optional in Nova and the stock install ships
+				// one blank (its "History" heading is carried by the tab), so the
+				// tab travels with it - a blank section is otherwise unnameable.
+				'section' => array(
+					'id'   => isset($f->section_id) ? (int) $f->section_id : null,
+					'name' => $this->_bioText(isset($f->section_name) ? $f->section_name : ''),
+					'tab'  => array(
+						'id'   => isset($f->tab_id) ? (int) $f->tab_id : null,
+						'name' => $this->_bioText(isset($f->tab_name) ? $f->tab_name : ''),
+					),
+				),
+			);
+		}
+		return $out;
+	}
+
+	/** Decode an admin-entered bio label / section name to plain text. */
+	private function _bioText($s)
+	{
+		return html_entity_decode((string) $s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 	}
 
 	private function _projectMission($row)

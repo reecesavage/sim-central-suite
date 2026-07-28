@@ -366,6 +366,53 @@ List characters. Scope: `characters:read`.
 
 Single character by id. Scope: `characters:read`. Returns any status (unlike posts, where the single endpoint hides non-activated rows).
 
+Everything in the character object above, plus **`bio`** *(v1.38.0+)* — the sim's whole bio form for this character. Not on the list endpoint, where it would cost a query per row.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | `characters_fields.field_id` |
+| `name` | string | Machine name (`field_name`), e.g. `hair_color`. Stable if the sim renames the label |
+| `label` | string | The label the bio page shows, entity-decoded &mdash; `Strengths & Weaknesses`, not `&amp;`. Falls back to `name` when the sim left it blank |
+| `type` | string | `text`, `textarea`, or `select` |
+| `value` | string | This character's value, **raw as stored** &mdash; a `textarea` field holds the same rich text a post body does. Always a string; `""` when unset |
+| `section.id` | int \| null | `characters_sections.section_id`. `null` if the section was deleted out from under the field |
+| `section.name` | string | May be `""` &mdash; section names are optional in Nova and the stock install ships one blank |
+| `section.tab.id` | int \| null | The tab the section belongs to |
+| `section.tab.name` | string | Blank sections are only identifiable by their tab, so the tab travels with the section |
+
+**Ordering** is the order the sim's own bio page renders: by tab, then by section within the tab, then by field within the section. Group it client-side on `section.id` if you want it nested.
+
+**What's in the array:** every field the sim has *visible*. Fields turned off in the ACP (`field_display = n`) are omitted. Fields the character has never filled in are still listed, with `value: ""` — so the array always describes the whole form, not just the answered parts.
+
+**Visibility:** no new exposure. Nova's own `personnel/character/{id}` page has no login check and no `crew_type` gate, so a bio is already readable by an anonymous visitor at any status — this endpoint is strictly narrower, since it needs a `characters:read` token.
+
+```json
+{
+  "id": 7,
+  "first_name": "Kade",
+  "last_name": "Rethis",
+  "status": "active",
+  "bio": [
+    {
+      "id": 2,
+      "name": "species",
+      "label": "Species",
+      "type": "text",
+      "value": "Betazoid",
+      "section": { "id": 1, "name": "Character Information", "tab": { "id": 1, "name": "Basic Info" } }
+    },
+    {
+      "id": 8,
+      "name": "physical_desc",
+      "label": "Physical Description",
+      "type": "textarea",
+      "value": "<p>Tall.</p>\n<p>Dark hair.</p>",
+      "section": { "id": 2, "name": "Physical Appearance", "tab": { "id": 1, "name": "Basic Info" } }
+    }
+  ]
+}
+```
+
 ---
 
 ### `GET /missions`
