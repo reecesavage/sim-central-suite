@@ -52,6 +52,18 @@ require_once dirname(__FILE__).'/libraries/Broker.php';
 require_once dirname(__FILE__).'/libraries/SimCentralAccess.php';
 require_once dirname(__FILE__).'/libraries/PhoneHome.php';
 
+// SyncTrack maintains the API's change-tracking columns (content_hash /
+// content_updated_at) so incremental consumers can ask "what changed since
+// last time?". Unconditional, and for two reasons it must be required HERE:
+//
+//   - runPending() below calls it as the REST API feature's post_setup hook
+//     to seed timestamps on existing rows, and
+//   - the managed blocks the suite writes into Nova's Posts_model,
+//     Personallogs_model and Characters_model call it behind a class_exists
+//     guard. If the class were loaded later - or only when a feature toggle
+//     were on - that guard would silently skip and tracking would just stop.
+require_once dirname(__FILE__).'/libraries/SyncTrack.php';
+
 \nova_ext_sim_central\Migrations::runPending();
 
 // TimelineFormat is consumed by Feed.php (loaded for summary OR ordered)

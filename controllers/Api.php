@@ -172,6 +172,10 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		// needs the body of the post someone actually opened (and fetches it from
 		// GET /posts/{id}) saves transferring every body on the page.
 		$includeContent = $this->_boolQueryParam('content', true);
+		// v1.39.0: ?updated_since=<ISO 8601> returns only rows whose content
+		// changed at or after that instant. Parsed before the query is built -
+		// an invalid value 422s rather than being ignored.
+		$since = $this->_updatedSince();
 		list($page, $perPage, $offset) = $this->_paging();
 
 		// Resolve the mission's ordering scheme BEFORE a single query-builder
@@ -195,6 +199,7 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		if ($level === 'own') {
 			$this->db->where($this->_authorsUsersClause($uid), null, false);
 		}
+		$this->_applyUpdatedSince('posts', $since);
 		$total = (int) $this->db->count_all_results('', false);
 
 		// Default stays newest-first (every existing consumer depends on it).
@@ -783,12 +788,14 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		if ($status === null || $status === '') {
 			$status = 'active';
 		}
+		$since = $this->_updatedSince();
 		list($page, $perPage, $offset) = $this->_paging();
 
 		$this->db->from('characters');
 		if ($status !== 'any') {
 			$this->db->where('crew_type', $status);
 		}
+		$this->_applyUpdatedSince('characters', $since);
 		$this->db->order_by('last_name', 'asc');
 		$this->db->order_by('first_name', 'asc');
 		$total = (int) $this->db->count_all_results('', false);
@@ -797,6 +804,60 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$data = array();
 		foreach ($rows as $row) {
 			$data[] = $this->_projectCharacter($row);
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/logs          - list personal logs, newest first
+	 * GET /Api/logs/{id}     - single log
+	 *
+	 * Scope: logs:read, which is a PUBLIC read - it sees activated logs only.
+	 * ?status is accepted for symmetry with /posts, but a draft is never
+	 * returned to this scope whatever it asks for: a personal log draft is
+	 * one writer's private work, and unlike posts there is no own/all tier
+	 * here to earn access with.
+	 *
+	 * Filters: ?character_id=, ?status=, ?updated_since=, ?content=0,
+	 * ?page=, ?per_page=.
+	 */
+	public function logs()
+	{
+		$this->_gate();
+		$this->_requireMethod('GET');
+		$this->_authenticate('logs:read');
+
+		$id = $this->uri->segment(5);
+		if ($id !== null && $id !== '' && ctype_digit((string) $id)) {
+			$row = $this->db->get_where('personallogs', array('log_id' => (int) $id), 1)->row();
+			// A draft 404s rather than 403s: logs:read cannot tell the
+			// difference between "no such log" and "a log you may not read",
+			// and saying which would leak that a draft exists.
+			if ( ! $row || (isset($row->log_status) && $row->log_status !== 'activated')) {
+				$this->_emit(404, array('error' => 'Log not found.'));
+			}
+			$this->_emit(200, $this->_projectLog($row));
+		}
+
+		$charId         = (int) $this->input->get('character_id', true);
+		$includeContent = $this->_boolQueryParam('content', true);
+		$since          = $this->_updatedSince();
+		list($page, $perPage, $offset) = $this->_paging();
+
+		$this->db->from('personallogs');
+		$this->db->where('log_status', 'activated');
+		if ($charId > 0) {
+			$this->db->where('log_author_character', $charId);
+		}
+		$this->_applyUpdatedSince('personallogs', $since);
+		$total = (int) $this->db->count_all_results('', false);
+
+		$rows = $this->db->order_by('log_date', 'desc')
+			->limit($perPage, $offset)->get()->result();
+
+		$data = array();
+		foreach ($rows as $row) {
+			$data[] = $this->_projectLog($row, $includeContent);
 		}
 		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
 	}
@@ -1842,6 +1903,15 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			isset($row->post_content) ? $row->post_content : ''
 		);
 
+		// v1.39.0 change tracking. content_updated_at is what ?updated_since
+		// filters on; content_hash identifies the version, so a client that is
+		// handed a row again can tell at a glance it already has it. Both null
+		// on a sim that has not run Setup database for the REST API yet.
+		$out['content_hash']       = \nova_ext_sim_central\SyncTrack::hashFor('post', $row);
+		$out['content_updated_at'] = \nova_ext_sim_central\SyncTrack::iso(
+			isset($row->sc_content_updated_at) ? $row->sc_content_updated_at : 0
+		);
+
 		$features = $this->_suiteFeatures();
 
 		// Mission Post Summary - the short TL;DR field surfaced in the feed.
@@ -1917,11 +1987,200 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				))));
 		}
 
+		// v1.39.0: the roster context a consumer needs to render a manifest
+		// without a second round of lookups. Before this, the list returned a
+		// bare numeric rank id and no position at all, so building a
+		// departmental roster with working character links meant joining the
+		// snapshot (which carries no ids) by display name.
+		$ranks = $this->_rankMap();
+		$rankId = (isset($row->rank) && (int) $row->rank > 0) ? (int) $row->rank : null;
+		$out['rank_name']  = ($rankId !== null && isset($ranks[$rankId])) ? $ranks[$rankId]['name']  : null;
+		$out['rank_short'] = ($rankId !== null && isset($ranks[$rankId])) ? $ranks[$rankId]['short'] : null;
+		$out['rank_order'] = ($rankId !== null && isset($ranks[$rankId])) ? $ranks[$rankId]['order'] : null;
+
+		$out['position_primary']   = $this->_positionObject(isset($row->position_1) ? $row->position_1 : null);
+		$out['position_secondary'] = $this->_positionObject(isset($row->position_2) ? $row->position_2 : null);
+
+		// v1.39.0 change tracking. Covers the roster fields above AND every
+		// visible bio value, so editing a bio moves content_updated_at even
+		// though the write lands in a different table.
+		$out['content_hash']       = \nova_ext_sim_central\SyncTrack::hashFor('character', $row);
+		$out['content_updated_at'] = \nova_ext_sim_central\SyncTrack::iso(
+			isset($row->sc_content_updated_at) ? $row->sc_content_updated_at : 0
+		);
+
 		if ($includeBio) {
 			$out['bio'] = $this->_characterBio((int) $row->charid);
 		}
 
 		return $out;
+	}
+
+	/**
+	 * Project a personallogs row. Deliberately the same shape as a post where
+	 * the two have the same thing to say (content / excerpt / word_count / url
+	 * / content_hash), so a consumer can run one code path over both.
+	 *
+	 * A log has exactly one author, so the author's rank and position come
+	 * back flattened rather than as the posts endpoint's parallel arrays.
+	 */
+	private function _projectLog($row, $includeContent = true)
+	{
+		$charId = (isset($row->log_author_character) && (int) $row->log_author_character > 0)
+			? (int) $row->log_author_character : null;
+
+		$out = array(
+			'id'      => (int) $row->log_id,
+			'title'   => isset($row->log_title) ? $row->log_title : null,
+			'content' => isset($row->log_content) ? $row->log_content : null,
+		);
+		if ( ! $includeContent) {
+			unset($out['content']);
+		}
+
+		$out['character_id']   = $charId;
+		$out['character_name'] = null;
+		$out['rank_name']      = null;
+		$out['rank_short']     = null;
+		$out['position']       = null;
+		$out['user_name']      = null;
+
+		if ($charId !== null) {
+			$char = $this->db->select('charid, first_name, last_name, suffix, rank, position_1, user'
+					.(\nova_ext_sim_central\Migrations::hasColumn('characters', 'display_name') ? ', display_name' : ''))
+				->get_where('characters', array('charid' => $charId), 1)->row();
+			if ($char) {
+				$out['character_name'] = html_entity_decode(
+					$this->_characterName($char), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+				$ranks  = $this->_rankMap();
+				$rankId = (isset($char->rank) && (int) $char->rank > 0) ? (int) $char->rank : null;
+				if ($rankId !== null && isset($ranks[$rankId])) {
+					$out['rank_name']  = $ranks[$rankId]['name'];
+					$out['rank_short'] = $ranks[$rankId]['short'];
+				}
+				$pos = $this->_positionObject(isset($char->position_1) ? $char->position_1 : null);
+				$out['position'] = ($pos !== null) ? $pos['name'] : null;
+
+				$userId = (isset($char->user) && (int) $char->user > 0) ? (int) $char->user : null;
+				$out['user_name'] = ($userId !== null) ? $this->_publicUserName($userId) : null;
+			}
+		}
+
+		$out['status']     = isset($row->log_status) ? $row->log_status : null;
+		$out['date']       = ( ! empty($row->log_date))
+			? \nova_ext_sim_central\SyncTrack::iso((int) $row->log_date) : null;
+		$out['url']        = \nova_ext_sim_central\AstrolabeSnapshot::logUrl((int) $row->log_id);
+		$out['excerpt']    = \nova_ext_sim_central\PostText::excerpt(
+			isset($row->log_content) ? $row->log_content : ''
+		);
+		// The suite's own counter, not Nova's stored log_words: log_words is
+		// whatever the editor recorded at save time, while this is the same
+		// definition the API reports for posts, so the two are comparable.
+		$out['word_count'] = isset($row->log_content)
+			? \nova_ext_sim_central\PostWordCount::countText($row->log_content) : 0;
+
+		$out['content_hash']       = \nova_ext_sim_central\SyncTrack::hashFor('log', $row);
+		$out['content_updated_at'] = \nova_ext_sim_central\SyncTrack::iso(
+			isset($row->sc_content_updated_at) ? $row->sc_content_updated_at : 0
+		);
+
+		return $out;
+	}
+
+	/**
+	 * missionId => newest sc_content_updated_at across its posts.
+	 *
+	 * Scoped to what THIS token can actually enumerate: a public token sees
+	 * the rollup over activated posts only. That matters more than it looks -
+	 * if the rollup counted drafts, a mission would report itself dirty and
+	 * then hand the same token an empty delta, and a client following the
+	 * documented pattern would re-check it forever.
+	 *
+	 * One grouped query per request rather than one MAX() per row, served by
+	 * the (post_mission, sc_content_updated_at) index.
+	 */
+	private $_missionPostsUpdatedCache = null;
+	private function _missionPostsUpdatedMap()
+	{
+		if ($this->_missionPostsUpdatedCache === null) {
+			$this->_missionPostsUpdatedCache = array();
+			if (\nova_ext_sim_central\SyncTrack::enabled('posts')) {
+				$this->db->select('post_mission, MAX(sc_content_updated_at) AS newest', false)
+					->from('posts');
+				if ( ! $this->_tokenCanReadAllPosts()) {
+					$this->db->where('post_status', 'activated');
+				}
+				$rows = $this->db->group_by('post_mission')->get()->result();
+				foreach ($rows as $r) {
+					if ( ! empty($r->newest)) {
+						$this->_missionPostsUpdatedCache[(int) $r->post_mission] = (int) $r->newest;
+					}
+				}
+			}
+		}
+		return $this->_missionPostsUpdatedCache;
+	}
+
+	/**
+	 * rankId => {name, short, order}. Ranks are a small fixed table, so the
+	 * whole thing is read once per request and looked up in PHP - cheaper than
+	 * a join per page and, unlike a join, it also serves the single-character
+	 * read, which goes through Nova's own get_character().
+	 */
+	private $_rankMapCache = null;
+	private function _rankMap()
+	{
+		if ($this->_rankMapCache === null) {
+			$this->_rankMapCache = array();
+			foreach ($this->db->select('rank_id, rank_name, rank_short_name, rank_order')
+				->get('ranks')->result() as $r) {
+				$this->_rankMapCache[(int) $r->rank_id] = array(
+					'name'  => html_entity_decode((string) $r->rank_name, ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+					'short' => html_entity_decode((string) $r->rank_short_name, ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+					'order' => (int) $r->rank_order,
+				);
+			}
+		}
+		return $this->_rankMapCache;
+	}
+
+	/** posId => {id, name, department_id, department}. Same one-read rationale. */
+	private $_positionMapCache = null;
+	private function _positionMap()
+	{
+		if ($this->_positionMapCache === null) {
+			$this->_positionMapCache = array();
+			$depts = array();
+			foreach ($this->db->select('dept_id, dept_name')->get('departments')->result() as $d) {
+				$depts[(int) $d->dept_id] = html_entity_decode((string) $d->dept_name, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+			}
+			foreach ($this->db->select('pos_id, pos_name, pos_dept')->get('positions')->result() as $p) {
+				$deptId = (int) $p->pos_dept;
+				$this->_positionMapCache[(int) $p->pos_id] = array(
+					'id'            => (int) $p->pos_id,
+					'name'          => html_entity_decode((string) $p->pos_name, ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+					'department_id' => ($deptId > 0) ? $deptId : null,
+					'department'    => isset($depts[$deptId]) ? $depts[$deptId] : null,
+				);
+			}
+		}
+		return $this->_positionMapCache;
+	}
+
+	/**
+	 * Null for "no position": Nova stores an unset secondary position as 0 or
+	 * NULL depending on how the character was created, and a position id that
+	 * no longer resolves is reported as absent rather than as a broken object.
+	 */
+	private function _positionObject($posId)
+	{
+		$posId = (int) $posId;
+		if ($posId <= 0) {
+			return null;
+		}
+		$map = $this->_positionMap();
+		return isset($map[$posId]) ? $map[$posId] : null;
 	}
 
 	/**
@@ -2030,6 +2289,15 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		if ($this->_tokenCanReadAllPosts()) {
 			$out['word_count'] = \nova_ext_sim_central\PostWordCount::forMission((int) $row->mission_id);
 		}
+
+		// v1.39.0: when any post in this mission last changed. Turns GET
+		// /missions - one already-paginated call - into the whole dirty check
+		// for a per-mission sync: a completed mission whose value matches what
+		// the client stored needs nothing fetched at all.
+		$rollup = $this->_missionPostsUpdatedMap();
+		$mid    = (int) $row->mission_id;
+		$out['posts_updated_at'] = isset($rollup[$mid])
+			? \nova_ext_sim_central\SyncTrack::iso($rollup[$mid]) : null;
 
 		$features = $this->_suiteFeatures();
 
@@ -2278,8 +2546,69 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				'last_page'    => ($perPage > 0) ? max(1, (int) ceil($total / $perPage)) : 1,
 				'per_page'     => $perPage,
 				'total'        => $total,
+				// v1.39.0: which canonical recipe produced the content_hash
+				// values in this response. A client that sees a number it
+				// didn't store hashes under must treat every hash it holds as
+				// stale rather than diffing across recipes.
+				'hash_version' => \nova_ext_sim_central\SyncTrack::HASH_VERSION,
 			),
 		);
+	}
+
+	/**
+	 * Read ?updated_since and return unix seconds, or null when absent.
+	 *
+	 * ISO 8601; a value with no offset is read as UTC, so a client never has
+	 * to know the sim's timezone. A bare integer is accepted as unix seconds.
+	 * An unparseable value is a 422 rather than a silently ignored filter -
+	 * quietly returning everything would look to a poller like "nothing has
+	 * changed" is impossible and hide the mistake.
+	 */
+	private function _updatedSince()
+	{
+		$raw = $this->input->get('updated_since', true);
+		if ($raw === null || trim((string) $raw) === '') {
+			return null;
+		}
+		$ts = \nova_ext_sim_central\SyncTrack::parseSince($raw);
+		if ($ts === null) {
+			$this->_emit(422, array(
+				'error' => 'updated_since must be an ISO 8601 datetime (e.g. 2026-07-27T14:03:00Z) or a unix timestamp.',
+			));
+		}
+		return $ts;
+	}
+
+	/**
+	 * Apply ?updated_since to the query being built.
+	 *
+	 * Inclusive >=, deliberately: a client stores the highest
+	 * content_updated_at it has seen and passes it back verbatim, so the
+	 * boundary row arrives again. That is free - the client's hash comparison
+	 * makes a re-delivery a no-op - and it removes any chance of dropping a
+	 * second row written in the same second as the cursor.
+	 *
+	 * NULL is included, never excluded. A row whose tracking column has not
+	 * been filled in yet (created through a path with no shim, or predating
+	 * setup) must surface rather than hide: being handed a row that turns out
+	 * to be unchanged costs a client nothing, and missing one silently costs
+	 * it correctness. Reading the row fills the column in, so each such row
+	 * can only be over-delivered once.
+	 */
+	private function _applyUpdatedSince($table, $since)
+	{
+		if ($since === null) {
+			return;
+		}
+		// Tracking columns only exist once Setup database has run. Until then
+		// the filter is skipped rather than fataling: the client gets a
+		// superset, which is always correct for a sync (just not incremental),
+		// and the null content_updated_at in the response tells it why.
+		if ( ! \nova_ext_sim_central\SyncTrack::enabled($table)) {
+			return;
+		}
+		$col = $table.'.sc_content_updated_at';
+		$this->db->where('('.$col.' >= '.(int) $since.' OR '.$col.' IS NULL)', null, false);
 	}
 
 	/**

@@ -1,12 +1,20 @@
-	/* nova_ext_sim_central:webhooks_create v1 START - managed block, do not edit by hand */
+	/* nova_ext_sim_central:webhooks_create v2 START - managed block, do not edit by hand */
 	public function create_mission_entry($data = '')
 	{
 		$result = parent::create_mission_entry($data);
 
-		if ($result > 0 && class_exists('nova_ext_sim_central\\Webhooks')) {
+		if ($result > 0) {
 			$newId = $this->db->insert_id();
-			if ($newId) {
+
+			if ($newId && class_exists('nova_ext_sim_central\\Webhooks')) {
 				\nova_ext_sim_central\Webhooks::onPostChanged($newId, $data, null);
+			}
+
+			// Change tracking for the REST API's ?updated_since. Gated
+			// separately from the webhook call because the two features
+			// toggle independently.
+			if ($newId && class_exists('nova_ext_sim_central\\SyncTrack')) {
+				\nova_ext_sim_central\SyncTrack::onPostChanged($newId);
 			}
 		}
 

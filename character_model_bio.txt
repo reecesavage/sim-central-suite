@@ -1,0 +1,15 @@
+	/* nova_ext_sim_central:sync_character_bio v1 START - managed block, do not edit by hand */
+	public function update_character_data($field = '', $character = '', $data = '')
+	{
+		$result = parent::update_character_data($field, $character, $data);
+
+		// A bio edit writes to characters_data, which never touches the
+		// characters row - so without this the character's content_hash would
+		// not move and an incremental consumer would never see the change.
+		if ($result && $character > 0 && class_exists('nova_ext_sim_central\\SyncTrack')) {
+			\nova_ext_sim_central\SyncTrack::onCharacterChanged($character);
+		}
+
+		return $result;
+	}
+	/* nova_ext_sim_central:sync_character_bio END */

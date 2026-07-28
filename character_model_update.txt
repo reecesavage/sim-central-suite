@@ -1,0 +1,15 @@
+	/* nova_ext_sim_central:sync_character_update v1 START - managed block, do not edit by hand */
+	public function update_character($id = '', $data = '')
+	{
+		$result = parent::update_character($id, $data);
+
+		// Change tracking for the REST API's ?updated_since. Re-reads and
+		// re-hashes the stored row rather than trusting $data, so a rewrite
+		// that changed nothing leaves content_updated_at where it was.
+		if ($result > 0 && $id > 0 && class_exists('nova_ext_sim_central\\SyncTrack')) {
+			\nova_ext_sim_central\SyncTrack::onCharacterChanged($id);
+		}
+
+		return $result;
+	}
+	/* nova_ext_sim_central:sync_character_update END */

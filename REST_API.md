@@ -65,7 +65,8 @@ Tokens carry an explicit scope list. Endpoints check for the scope they require 
 | `posts:read.all` | Read **any** post incl. others' drafts *(sysadmin only)* |
 | `posts:write.all` | Create/update **any** post, add a character to it *(sysadmin only)* |
 | `posts:delete.all` | Delete **any** post *(sysadmin only)* |
-| `characters:read` | List characters, view a single character |
+| `characters:read` | List characters, view a single character (including bio fields) |
+| `logs:read` | List personal logs, view a single log &mdash; activated only *(v1.39.0+)* |
 | `missions:read` | List missions, view a single mission |
 | `positions:read` | List open crew positions (with a top-open filter) |
 | `users:write` | Disable / reactivate users and their linked characters |
@@ -143,6 +144,57 @@ Write endpoints accept their body as JSON (`Content-Type: application/json`), fo
 
 ---
 
+## Syncing incrementally
+
+*(v1.39.0+)* Posts, characters and personal logs each carry two fields that let a consumer ask "what changed since last time?" instead of re-reading everything:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `content_hash` | string \| null | SHA-256 identifying this version of the row |
+| `content_updated_at` | string \| null | ISO 8601 **UTC** (`Z`) instant at which `content_hash` last changed |
+
+And each list envelope's `meta` carries `hash_version` (currently `1`) — the recipe that produced those hashes.
+
+### The four guarantees
+
+**1. A no-op save is not a change.** Opening a post and pressing Save without editing anything does not move `content_updated_at`, because the hash it is derived from didn't move. Pollers stay quiet.
+
+**2. Metadata edits count.** The hash covers the fields a reader would see, not just the body — a retitle, a relocation, a timeline correction or an author change all register. For a character it also covers every visible bio value, so a bio edit moves the character's `content_updated_at` even though that write lands in a different table.
+
+**3. `updated_since` is inclusive, and never hides a row.** It matches `>=`, so you can store the highest `content_updated_at` you have seen and pass it straight back: the boundary row arrives again, which costs you nothing once you compare hashes, and nothing written in the same second can be dropped. Rows whose tracking column hasn't been filled in yet are **included**, not hidden — being handed a row that turns out to be unchanged is cheap; missing one silently is not.
+
+**4. Timezones never enter into it.** Every timestamp here is UTC with a `Z`. A value you send with no offset is read as UTC. You never need to know the sim's timezone setting, which is a display concern and does not reach the API.
+
+### Hashes are opaque
+
+Compare them; don't recompute them. The recipe is server-side and may gain fields — that is what `hash_version` is for. If you see a `hash_version` you didn't store your hashes under, treat every hash you hold as stale and re-fetch rather than diffing across recipes.
+
+### The recommended loop
+
+```bash
+# 1. One call tells you which missions have anything new.
+#    A completed mission whose posts_updated_at matches what you stored is done forever.
+curl -H "X-API-Key: $TOKEN" "$BASE/missions"
+
+# 2. Enumerate what actually changed, without paying for bodies.
+curl -H "X-API-Key: $TOKEN" "$BASE/posts?status=any&content=0&updated_since=2026-07-27T14:03:00Z"
+
+# 3. Fetch bodies only for the ids whose content_hash you don't already have.
+curl -H "X-API-Key: $TOKEN" "$BASE/posts/1234"
+```
+
+`GET /characters?updated_since=` and `GET /logs?updated_since=` work the same way.
+
+### Deletions
+
+`updated_since` reports rows that changed, not rows that no longer exist. To catch deletions, periodically enumerate ids with a `content=0` list call and diff against your store — deletions are rare enough that a daily reconciliation is plenty. There is no tombstone endpoint.
+
+### Before it works
+
+The tracking columns are added by **Setup database** on the REST API feature. Until that runs, `content_hash` and `content_updated_at` come back `null` and `updated_since` is ignored — you get a superset, which is still correct for a sync, just not incremental. The null fields are how you can tell.
+
+---
+
 ## Base URL
 
 ```
@@ -201,6 +253,7 @@ List mission posts, most recent first. Scope: `posts:read`.
 | `status` | `activated` | Post status. `any` returns drafts/saved/activated. Other values: `saved`, `draft` |
 | `sort` | *(none)* | `order` &rarr; in-mission **reading order, ascending** *(v1.36.0+)*. Anything else keeps the default newest-first |
 | `content` | `1` | `0` (or `false`/`no`/`off`) omits each post's `content` from the response &mdash; metadata-only rows *(v1.36.0+)*. Default unchanged: bodies included |
+| `updated_since` | *(none)* | ISO 8601 datetime *(v1.39.0+)*. Only posts whose `content_hash` changed at or after this instant. See [Syncing incrementally](#syncing-incrementally) |
 | `page` | `1` | 1-indexed |
 | `per_page` | `25` | Capped at `100` |
 
@@ -231,6 +284,8 @@ List mission posts, most recent first. Scope: `posts:read`.
 | `saved_character_id` | int \| null | Nova's `post_saved`: the character recorded as the last saver. `null` when unknown. *(v1.35.0+)* |
 | `saved_user_id` | int \| null | The user who owns that character — compare against a writer's own user id for "whose turn is it". Matches the webhook actor's user. `null` when unknown/unowned. *(v1.35.0+)* |
 | `saved_user_name` | string \| null | That user's public display name (same rule as `Character.user_name`). `null` when unknown. *(v1.35.0+)* |
+| `content_hash` | string \| null | SHA-256 identifying this version of the post *(v1.39.0+)*. Covers title, content, location, timeline, mission, authors, status, tags, the ordered-timeline fields and the age gate &mdash; so a metadata-only edit is a change. Opaque: compare it, don't recompute it. See [Syncing incrementally](#syncing-incrementally) |
+| `content_updated_at` | ISO 8601 \| null | When `content_hash` last changed, UTC with a `Z` *(v1.39.0+)*. What `?updated_since` filters on. A save that changed nothing does **not** move it |
 | `summary` | string \| null | **Only present when the *Mission Post Summary* feature is enabled.** |
 | `ordered` | object | **Only present when *Ordered Mission Posts* is enabled.** Keys: `day` (int), `time` (string `"HHMM"`), `date` (string), `stardate` (string). Only populated keys are included. |
 | `age_gated` | bool | **Only present when *Content Filter* is enabled.** The API still returns full `content`; this flag lets your consumer decide whether to redact downstream. |
@@ -361,6 +416,17 @@ List characters. Scope: `characters:read`.
 | `user_id` | int \| null | The Nova user that owns this character |
 | `display_name` | string \| null | **Only present when *Display Name* is enabled.** Raw value of the override column. |
 | `preferred_name` | string | **Only present when *Display Name* is enabled.** Precomputed: `display_name` if set, otherwise `first last suffix` joined. Use this if you just want "what to call this character." |
+| `rank_name` | string \| null | Resolved rank name, entity-decoded *(v1.39.0+)* |
+| `rank_short` | string \| null | Resolved rank short name *(v1.39.0+)* |
+| `rank_order` | int \| null | Rank sort order, seniority ascending &mdash; for roster sorting *(v1.39.0+)* |
+| `position_primary` | object \| null | Resolved `position_1` *(v1.39.0+)*: `{id, name, department_id, department}`. `null` when unset, or when the position no longer exists |
+| `position_secondary` | object \| null | Resolved `position_2`, same shape *(v1.39.0+)* |
+| `content_hash` | string \| null | SHA-256 identifying this version of the character *(v1.39.0+)*. Covers the roster fields above **and every visible bio value**, so a bio edit moves it even though that write lands in a different table. Opaque: compare it, don't recompute it |
+| `content_updated_at` | ISO 8601 \| null | When `content_hash` last changed, UTC with a `Z` *(v1.39.0+)*. What `?updated_since` filters on |
+
+The rank and position fields land on the **list** as well as the single read, which is the point: before v1.39.0 the list gave you a bare numeric `rank` id and no position at all, so building a departmental roster with working `characters/{id}` links meant joining the snapshot — which carries no ids — by display name. `GET /characters?status=any` is now enough on its own.
+
+**Query params** also accept `updated_since` *(v1.39.0+)*, same semantics as on `/posts`.
 
 ### `GET /characters/{id}`
 
@@ -437,12 +503,60 @@ List missions, most recent start first. Scope: `missions:read`.
 | `status` | string | `current` / `upcoming` / `completed` |
 | `start` | ISO 8601 \| null | |
 | `end` | ISO 8601 \| null | |
+| `posts_updated_at` | ISO 8601 \| null | When any post in this mission last changed *(v1.39.0+)* &mdash; the newest `content_updated_at` across them, UTC with a `Z`. `null` when the mission has no posts. **Scoped to what your token can enumerate:** without `posts:read.all` it rolls up activated posts only, so a mission can never report itself dirty and then hand you an empty delta. One `GET /missions` is the whole dirty check for a per-mission sync |
 | `summary_enabled` | bool | **Only present when *Mission Post Summary* is enabled.** Whether writers see the summary field on this mission's posts. |
 | `ordered` | object | **Only present when *Ordered Mission Posts* is enabled.** Keys: `config`, `numbering` (bool), `default_date`, `default_stardate`, `legacy_mode` (bool). |
 
 ### `GET /missions/{id}`
 
 Single mission by id. Scope: `missions:read`.
+
+---
+
+### `GET /logs` *(v1.39.0+)*
+
+List personal logs, newest first. Scope: `logs:read`.
+
+`logs:read` is a **public** read: it sees activated logs only. `status` is accepted for symmetry with `/posts` but never widens what you get — a draft personal log is one writer's private work, and unlike posts there is no `own`/`all` tier here to earn access with.
+
+**Query params:**
+
+| Param | Default | Notes |
+|---|---|---|
+| `character_id` | *(none)* | Only logs authored by this character |
+| `status` | `activated` | Accepted for symmetry; activated is what you get regardless |
+| `updated_since` | *(none)* | ISO 8601 datetime. Same semantics as on `/posts` |
+| `content` | `1` | `0` omits each log's `content`. `excerpt` and `word_count` still returned |
+| `page` | `1` | 1-indexed |
+| `per_page` | `25` | Capped at `100` |
+
+**Log object:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | `personallogs.log_id` |
+| `title` | string \| null | |
+| `content` | string \| null | Raw stored body. **Omitted entirely** when `?content=0` |
+| `character_id` | int \| null | The authoring character. A log has exactly one, so the author fields are flat here rather than the parallel arrays `/posts` uses |
+| `character_name` | string \| null | Display-name rules as everywhere else |
+| `rank_name` / `rank_short` | string \| null | The author's rank |
+| `position` | string \| null | The author's primary position name |
+| `user_name` | string \| null | The owning user's public display name &mdash; never email or account internals |
+| `status` | string | Always `activated` under `logs:read` |
+| `date` | ISO 8601 | UTC with a `Z` |
+| `url` | string | Absolute https link to the log's public page |
+| `excerpt` | string \| null | Plain-text preview, &le;300 chars. Same flattener and cap as a post excerpt |
+| `word_count` | int | The suite's counter, **not** Nova's stored `log_words` &mdash; so it's directly comparable with a post's `word_count` |
+| `content_hash` | string \| null | Covers title, content, author character, status, tags |
+| `content_updated_at` | ISO 8601 \| null | When `content_hash` last changed |
+
+The shape deliberately mirrors `Post` wherever the two have the same thing to say — `content`, `excerpt`, `word_count`, `url`, `content_hash` — so one consumer code path can walk both.
+
+**Response (envelope):** see [Response shape](#response-shape).
+
+### `GET /logs/{id}` *(v1.39.0+)*
+
+Single log by id. Scope: `logs:read`. A draft returns **404**, not 403 — saying "forbidden" would confirm a draft with that id exists.
 
 ### `GET /positions` *(v1.22.0+)*
 

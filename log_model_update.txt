@@ -1,4 +1,4 @@
-	/* nova_ext_sim_central:log_update v1 START - managed block, do not edit by hand */
+	/* nova_ext_sim_central:log_update v2 START - managed block, do not edit by hand */
 	public function update_log($id = '', $data = '', $identifier = 'log_id')
 	{
 		// Snapshot the prior status so log.posted only fires on the
@@ -13,6 +13,14 @@
 
 		if ($result > 0 && class_exists('nova_ext_sim_central\\Webhooks')) {
 			\nova_ext_sim_central\Webhooks::onLogChanged($id, $data, $previousStatus);
+		}
+
+		// Change tracking for the REST API's ?updated_since. Only when the row
+		// was addressed by its own id - update_log() also accepts a different
+		// $identifier for bulk rewrites, where $id is not a log id. Rows
+		// changed that way are caught by the read-side backstop instead.
+		if ($result > 0 && $identifier === 'log_id' && class_exists('nova_ext_sim_central\\SyncTrack')) {
+			\nova_ext_sim_central\SyncTrack::onLogChanged($id);
 		}
 
 		return $result;

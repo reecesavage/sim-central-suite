@@ -1,4 +1,4 @@
-	/* nova_ext_sim_central:webhooks_update v1 START - managed block, do not edit by hand */
+	/* nova_ext_sim_central:webhooks_update v2 START - managed block, do not edit by hand */
 	public function update_post($id = '', $data = [])
 	{
 		// Snapshot the prior status BEFORE the update so we can tell a draft
@@ -14,6 +14,15 @@
 
 		if ($result > 0 && class_exists('nova_ext_sim_central\\Webhooks')) {
 			\nova_ext_sim_central\Webhooks::onPostChanged($id, $data, $previousStatus);
+		}
+
+		// Change tracking for the REST API's ?updated_since. Gated separately
+		// from the webhook call above because the two features toggle
+		// independently. It re-reads and re-hashes the stored row rather than
+		// trusting $data, so a save that changed nothing leaves the row's
+		// content_updated_at exactly where it was.
+		if ($result > 0 && class_exists('nova_ext_sim_central\\SyncTrack')) {
+			\nova_ext_sim_central\SyncTrack::onPostChanged($id);
 		}
 
 		return $result;

@@ -379,6 +379,12 @@ class AstrolabeSnapshot
 		return self::absUrl('sim/viewpost/'.(int) $postId);
 	}
 
+	/** The public page for a personal log, mirroring postUrl(). */
+	public static function logUrl($logId)
+	{
+		return self::absUrl('sim/viewlog/'.(int) $logId);
+	}
+
 
 	// ---------- helpers ----------
 

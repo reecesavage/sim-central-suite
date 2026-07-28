@@ -346,12 +346,98 @@ class Migrations
 				// user_id binds a token to a Nova user so write/own endpoints know
 				// "who" the token acts as. Added to existing installs via Setup
 				// database (the CREATE above already includes it for fresh installs).
+				//
+				// The sc_content_* pairs (v1.39.0) are the API's change-tracking
+				// columns, so incremental consumers can ask "what changed since
+				// last time?". BIGINT unix, not TIMESTAMP: it matches how Nova
+				// stores every other date (post_date, log_date), it makes
+				// ?updated_since an integer compare with no timezone semantics
+				// anywhere, and it cannot be silently auto-bumped by the engine's
+				// implicit ON UPDATE CURRENT_TIMESTAMP behaviour - which would
+				// quietly break the no-op-save guarantee. See SyncTrack.
 				'requires_db' => array(
 					'sim_central_api_tokens' => array(
 						'user_id' => "INT DEFAULT NULL",
 					),
+					'posts' => array(
+						'sc_content_hash'       => "CHAR(64) DEFAULT NULL",
+						'sc_content_updated_at' => "BIGINT DEFAULT NULL",
+					),
+					'characters' => array(
+						'sc_content_hash'       => "CHAR(64) DEFAULT NULL",
+						'sc_content_updated_at' => "BIGINT DEFAULT NULL",
+					),
+					'personallogs' => array(
+						'sc_content_hash'       => "CHAR(64) DEFAULT NULL",
+						'sc_content_updated_at' => "BIGINT DEFAULT NULL",
+					),
 				),
-				'shims'       => array(),
+				'requires_indexes' => array(
+					// ?updated_since filters on these, and GET /missions rolls
+					// posts up per mission (posts_updated_at).
+					'posts' => array(
+						'sc_posts_updated'         => '(`sc_content_updated_at`)',
+						'sc_posts_mission_updated' => '(`post_mission`, `sc_content_updated_at`)',
+					),
+					'characters'   => array('sc_characters_updated' => '(`sc_content_updated_at`)'),
+					'personallogs' => array('sc_logs_updated'       => '(`sc_content_updated_at`)'),
+				),
+				// Seeds sc_content_updated_at for rows that predate the feature.
+				// Deliberately does NOT compute hashes: that would mean reading
+				// every post body in one request. Hashes fill in lazily as the
+				// API reads rows, which is safe precisely because the timestamp -
+				// the thing ?updated_since filters on - is correct from here on.
+				'post_setup' => array('\nova_ext_sim_central\SyncTrack', 'backfillTimestamps'),
+				'shims'       => array(
+					// Shared with the webhooks feature - ONE managed block per
+					// method, since two blocks cannot both override update_post()
+					// in the same class. Registered here as well so the change
+					// tracking installs whether or not webhooks is switched on.
+					'webhooks_create' => array(
+						'file'   => APPPATH.'models/Posts_model.php',
+						'txt'    => dirname(__FILE__).'/../posts_model_create.txt',
+						'tag'    => 'webhooks_create',
+						'method' => 'create_mission_entry',
+						'label'  => 'Post create hook',
+					),
+					'webhooks_update' => array(
+						'file'   => APPPATH.'models/Posts_model.php',
+						'txt'    => dirname(__FILE__).'/../posts_model_update.txt',
+						'tag'    => 'webhooks_update',
+						'method' => 'update_post',
+						'label'  => 'Post update hook',
+					),
+					'log_create' => array(
+						'file'   => APPPATH.'models/Personallogs_model.php',
+						'txt'    => dirname(__FILE__).'/../log_model_create.txt',
+						'tag'    => 'log_create',
+						'method' => 'create_personal_log',
+						'label'  => 'Log create hook',
+					),
+					'log_update' => array(
+						'file'   => APPPATH.'models/Personallogs_model.php',
+						'txt'    => dirname(__FILE__).'/../log_model_update.txt',
+						'tag'    => 'log_update',
+						'method' => 'update_log',
+						'label'  => 'Log update hook',
+					),
+					// Characters have no webhook equivalent - these exist purely
+					// so a roster or bio edit moves content_updated_at.
+					'character_update' => array(
+						'file'   => APPPATH.'models/Characters_model.php',
+						'txt'    => dirname(__FILE__).'/../character_model_update.txt',
+						'tag'    => 'sync_character_update',
+						'method' => 'update_character',
+						'label'  => 'Character update hook',
+					),
+					'character_bio' => array(
+						'file'   => APPPATH.'models/Characters_model.php',
+						'txt'    => dirname(__FILE__).'/../character_model_bio.txt',
+						'tag'    => 'sync_character_bio',
+						'method' => 'update_character_data',
+						'label'  => 'Character bio update hook',
+					),
+				),
 				'config_route' => 'extensions/nova_ext_sim_central/Manage/rest_api',
 			),
 			'webhooks' => array(
@@ -692,7 +778,17 @@ class Migrations
 			}
 		}
 
-		if ($tablesAdded === 0 && $columnsAdded === 0 && $indexesAdded === 0 && $columnsDropped === 0) {
+		// A feature may name a callable to run once the schema is in place -
+		// for seeding new columns from data that already exists. It must be
+		// idempotent: setup can be re-run at any time, and the automatic
+		// post-update housekeeping runs it too.
+		$seeded = null;
+		if ( ! empty($f['post_setup']) && is_callable($f['post_setup'])) {
+			$seeded = call_user_func($f['post_setup']);
+		}
+
+		if ($tablesAdded === 0 && $columnsAdded === 0 && $indexesAdded === 0 && $columnsDropped === 0
+			&& empty($seeded)) {
 			return array('success', 'Database is already fully set up - nothing to do.');
 		}
 		$parts = array();
@@ -700,6 +796,7 @@ class Migrations
 		if ($columnsAdded > 0)   $parts[] = 'added '.$columnsAdded.' column(s)';
 		if ($indexesAdded > 0)   $parts[] = 'added '.$indexesAdded.' index(es)';
 		if ($columnsDropped > 0) $parts[] = 'removed '.$columnsDropped.' unused column(s)';
+		if ( ! empty($seeded))   $parts[] = 'seeded change tracking on '.(int) $seeded.' row(s)';
 		return array('success', 'Database setup complete: '.implode(', ', $parts).'.');
 	}
 
@@ -750,12 +847,22 @@ class Migrations
 
 		// Cross-feature: any registered standalone marker counts as
 		// a take-over candidate, not just the one this feature lists.
-		foreach (self::knownStandaloneMarkers() as $m) {
-			$standalonePattern = '/'
-				.preg_quote($m['ns'], '/').':'.preg_quote($m['tag'], '/')
-				.' v\d+ START/';
-			if (preg_match($standalonePattern, $file)) {
-				return 'standalone_shim';
+		//
+		// Only for features that actually replace a predecessor extension,
+		// though. A feature with no 'standalone' is not taking anything over,
+		// and treating a foreign marker as ITS state would make it strip that
+		// extension's block on install - which matters now that more than one
+		// feature shims Characters_model.php: the REST API's change-tracking
+		// blocks would otherwise rip out a live nova_ext_display_name install
+		// on any sim where the suite's own Display Name feature is off.
+		if ( ! empty(self::registry()[$key]['standalone'])) {
+			foreach (self::knownStandaloneMarkers() as $m) {
+				$standalonePattern = '/'
+					.preg_quote($m['ns'], '/').':'.preg_quote($m['tag'], '/')
+					.' v\d+ START/';
+				if (preg_match($standalonePattern, $file)) {
+					return 'standalone_shim';
+				}
 			}
 		}
 
