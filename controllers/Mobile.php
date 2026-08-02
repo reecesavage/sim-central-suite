@@ -817,13 +817,23 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 				. '<a href="'.$this->_esc($this->_u('tour')).'">Tour</a>'
 				. '<a href="'.$this->_esc($this->_u('logout')).'">Log out</a>'
 				. '</nav>';
-			$themeBtn = '<button class="sc-theme-btn" id="sc-theme-btn" aria-label="Toggle colour theme">Auto</button>';
+			// Text size (A- / A+) sits alongside the theme toggle. Grouped so the
+			// brand can truncate rather than the controls wrapping to a new line.
+			$themeBtn = '<div class="sc-head-ctl">'
+				. '<button class="sc-theme-btn sc-ts-btn" id="sc-ts-down" aria-label="Decrease text size">A&minus;</button>'
+				. '<button class="sc-theme-btn sc-ts-btn" id="sc-ts-up" aria-label="Increase text size">A+</button>'
+				. '<button class="sc-theme-btn" id="sc-theme-btn" aria-label="Toggle colour theme">Auto</button>'
+				. '</div>';
 		}
 
-		// Runs before <style> to avoid any flash of wrong theme.
+		// Runs before <style> to avoid any flash of wrong theme / text size.
+		// The text scale is set as an inline custom property on <html>, which
+		// beats the stylesheet regardless of load order.
 		$themeInit = '<script>(function(){'
 			. 'var t=localStorage.getItem("sc-theme");'
 			. 'if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;'
+			. 'var s=parseFloat(localStorage.getItem("sc-textsize"));'
+			. 'if(s>=0.9&&s<=1.5)document.documentElement.style.setProperty("--sc-ts",s);'
 			. '})();</script>';
 
 		header('Content-Type: text/html; charset=utf-8');
@@ -841,8 +851,57 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '<main class="sc-main">'.$bodyHtml.'</main>'
 			. '</div>'
 			. $this->_themeToggleJs()
+			. $this->_textSizeJs()
+			. $this->_headHeightJs()
 			. '</body></html>';
 		exit;
+	}
+
+	/**
+	 * A- / A+ text size. Scales reading and compose text only (nav, buttons and
+	 * labels keep their size so the layout can't break) by driving the --sc-ts
+	 * custom property the relevant CSS rules multiply by. Persisted per device in
+	 * localStorage, same pattern as the theme toggle.
+	 */
+	private function _textSizeJs()
+	{
+		return '<script>(function(){'
+			. 'var down=document.getElementById("sc-ts-down"),up=document.getElementById("sc-ts-up");'
+			. 'if(!down||!up)return;'
+			. 'var steps=[0.9,1,1.15,1.3,1.5];'
+			. 'function idx(){'
+			. 'var s=parseFloat(localStorage.getItem("sc-textsize"));'
+			. 'var i=steps.indexOf(s);return i<0?1:i;}'
+			. 'function apply(i){'
+			. 'i=Math.max(0,Math.min(steps.length-1,i));'
+			. 'document.documentElement.style.setProperty("--sc-ts",steps[i]);'
+			. 'localStorage.setItem("sc-textsize",steps[i]);'
+			// Dim the button that can no longer move, so the limit is visible.
+			. 'down.disabled=(i===0);up.disabled=(i===steps.length-1);'
+			. '}'
+			. 'apply(idx());'
+			. 'down.addEventListener("click",function(){apply(idx()-1);});'
+			. 'up.addEventListener("click",function(){apply(idx()+1);});'
+			. '})();</script>';
+	}
+
+	/**
+	 * Publish the sticky header's rendered height as --sc-head-h so the editor
+	 * toolbar can stick directly beneath it. Measured rather than hard-coded: the
+	 * header height varies with the nav being present and with long sim names.
+	 */
+	private function _headHeightJs()
+	{
+		return '<script>(function(){'
+			. 'var h=document.querySelector(".sc-head");'
+			. 'if(!h)return;'
+			. 'function set(){'
+			. 'document.documentElement.style.setProperty("--sc-head-h",h.offsetHeight+"px");}'
+			. 'set();'
+			. 'window.addEventListener("resize",set);'
+			. 'window.addEventListener("orientationchange",set);'
+			. 'if(window.ResizeObserver){new ResizeObserver(set).observe(h);}'
+			. '})();</script>';
 	}
 
 	private function _themeToggleJs()
@@ -903,8 +962,13 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			// Header
 			. '.sc-head{border-bottom:1px solid var(--sc-brd);position:sticky;top:0;background:var(--sc-bg);padding:10px 0 0;z-index:10}'
 			. '.sc-head-top{display:flex;align-items:center;justify-content:space-between;padding-bottom:8px}'
-			. '.sc-brand{color:var(--sc-fg);font-weight:700;text-decoration:none;font-size:18px}'
+			. '.sc-brand{color:var(--sc-fg);font-weight:700;text-decoration:none;font-size:18px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
 			. '.sc-theme-btn{background:var(--sc-bg4);border:1px solid var(--sc-brd2);color:var(--sc-fg2);border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap}'
+			// Header control cluster (text size + theme). flex:0 0 auto so the
+			// brand truncates instead of these wrapping to a second line.
+			. '.sc-head-ctl{display:flex;gap:4px;flex:0 0 auto;margin-left:8px}'
+			. '.sc-ts-btn{font-weight:700;min-width:30px}'
+			. '.sc-theme-btn:disabled{opacity:.4;cursor:default}'
 			// Nav: horizontally scrollable on small screens
 			. '.sc-nav{display:flex;gap:0;overflow-x:auto;scrollbar-width:none;padding-bottom:10px}'
 			. '.sc-nav::-webkit-scrollbar{display:none}'
@@ -921,7 +985,7 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '.sc-check input{width:auto;margin:0 8px 0 0}'
 			. '.sc-msg{border:1px solid var(--sc-brd);border-radius:10px;padding:14px;background:var(--sc-bg2);margin:0 0 12px}'
 			. '.sc-msg h1{font-size:19px;margin:0 0 8px}'
-			. '.sc-msg-body{margin-top:12px;line-height:1.7;font-size:15px;border-top:1px solid var(--sc-brd3);padding-top:12px;word-break:break-word}'
+			. '.sc-msg-body{margin-top:12px;line-height:1.7;font-size:calc(15px*var(--sc-ts,1));border-top:1px solid var(--sc-brd3);padding-top:12px;word-break:break-word}'
 			. '.sc-pager{display:flex;align-items:center;gap:10px;justify-content:center;margin:14px 0}'
 			// Main
 			. '.sc-main{padding:18px 0}'
@@ -973,13 +1037,22 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			. '.sc-switch input:checked + .sc-slider{background:var(--sc-bl)}'
 			. '.sc-switch input:checked + .sc-slider:before{transform:translateX(20px)}'
 			// Rich-text editor toolbar
-			. '.sc-toolbar{display:flex;gap:6px;margin-bottom:4px}'
+			// Toolbar sticks just below the sticky header (--sc-head-h is measured
+			// in JS) so B/I/U stay reachable while scrolling a long post. Opaque
+			// background so body text can't show through; z-index below the
+			// header's 10 so the header always wins.
+			. '.sc-toolbar{display:flex;gap:6px;margin-bottom:4px;position:sticky;top:var(--sc-head-h,64px);z-index:5;background:var(--sc-bg);padding:6px 0}'
 			. '.sc-toolbar-btn{background:var(--sc-bg4);border:1px solid var(--sc-brd2);color:var(--sc-fg);border-radius:6px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:15px;line-height:1.4;font-family:inherit}'
 			. '.sc-toolbar-btn:active,.sc-toolbar-btn.sc-active{background:var(--sc-bl);color:#fff;border-color:var(--sc-bl)}'
-			. '.sc-editor{display:block;width:100%;min-height:240px;margin:0 0 12px;padding:11px 12px;border:1px solid var(--sc-brd2);border-radius:8px;background:var(--sc-bg3);color:var(--sc-fg);font:inherit;outline:none;overflow-y:auto;word-break:break-word;line-height:1.5;box-sizing:border-box}'
+			. '.sc-paste-btn{margin-left:auto;font-weight:600}'
+			. '.sc-editor{display:block;width:100%;min-height:240px;margin:0 0 12px;padding:11px 12px;border:1px solid var(--sc-brd2);border-radius:8px;background:var(--sc-bg3);color:var(--sc-fg);font:inherit;font-size:calc(16px*var(--sc-ts,1));outline:none;overflow-y:auto;word-break:break-word;line-height:1.5;box-sizing:border-box}'
 			. '.sc-editor:focus{border-color:var(--sc-bl)}'
+			// Placeholder for an empty editor: makes the tap target obvious.
+			// pointer-events:none keeps the whole box tappable.
+			. '.sc-editor:empty::before{content:attr(data-ph);color:var(--sc-mu);pointer-events:none}'
+			. '.sc-editor-hint{font-size:12px;color:var(--sc-mu);margin:-8px 0 12px}'
 			// Post / log body display
-			. '.sc-post-body{margin:16px 0;line-height:1.7;font-size:15px;border-top:1px solid var(--sc-brd3);padding-top:14px}'
+			. '.sc-post-body{margin:16px 0;line-height:1.7;font-size:calc(15px*var(--sc-ts,1));border-top:1px solid var(--sc-brd3);padding-top:14px}'
 			// Manifest character cards
 			. '.sc-char{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--sc-brd);border-radius:10px;margin:0 0 8px;background:var(--sc-bg2)}'
 			. '.sc-char-img{width:48px;height:48px;border-radius:6px;object-fit:cover;flex:0 0 auto}'
@@ -995,9 +1068,9 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			// Tour dynamic fields
 			. '.sc-field{margin:0 0 14px}'
 			. '.sc-field-label{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--sc-mu);margin:0 0 2px}'
-			. '.sc-field-val{font-size:15px;color:var(--sc-fg)}'
+			. '.sc-field-val{font-size:calc(15px*var(--sc-ts,1));color:var(--sc-fg)}'
 			// Mission description block
-			. '.sc-mission-body{font-size:15px;line-height:1.7;color:var(--sc-fg);margin:0 0 16px}';
+			. '.sc-mission-body{font-size:calc(15px*var(--sc-ts,1));line-height:1.7;color:var(--sc-fg);margin:0 0 16px}';
 	}
 
 	// ========== POST LIST ==========
@@ -1316,9 +1389,13 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			// clicks to its first labelable descendant (here the Bold toolbar
 			// button), which steals focus from the contenteditable and bounces
 			// the caret out. Use a plain section heading like the Authors block.
+			// The plain <div class="sc-editor-wrap"> is safe and scopes the
+			// sticky toolbar, so it releases once you scroll past the editor.
 			. '<div class="sc-section">Post</div>'
+			. '<div class="sc-editor-wrap">'
 			. $this->_toolbar()
-			. '<div class="sc-editor" id="sc-editor" contenteditable="true">'.$editorHtml.'</div>'
+			. '<div class="sc-editor" id="sc-editor" contenteditable="true" data-ph="Tap here to write, or use Paste above.">'.$editorHtml.'</div>'
+			. '</div>'
 			. '<input type="hidden" name="body" id="sc-body-hidden">'
 			. '<label>Location<input type="text" name="location" value="'.$this->_esc($values['location']).'"></label>';
 
@@ -1595,13 +1672,20 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 		return implode(',', $parts);
 	}
 
-	/** B / I / U formatting toolbar HTML. */
+	/**
+	 * B / I / U formatting toolbar HTML, plus Paste.
+	 *
+	 * NB: the Paste button deliberately carries no data-cmd. _editorJs() binds
+	 * execCommand only to buttons that have one - execCommand('paste') is blocked
+	 * by browsers, so Paste gets its own clipboard handler.
+	 */
 	private function _toolbar()
 	{
 		return '<div class="sc-toolbar" role="toolbar" aria-label="Formatting">'
 			. '<button type="button" class="sc-toolbar-btn" data-cmd="bold" title="Bold"><b>B</b></button>'
 			. '<button type="button" class="sc-toolbar-btn" data-cmd="italic" title="Italic"><i>I</i></button>'
 			. '<button type="button" class="sc-toolbar-btn" data-cmd="underline" title="Underline"><u>U</u></button>'
+			. '<button type="button" class="sc-toolbar-btn sc-paste-btn" title="Paste text you copied elsewhere">Paste</button>'
 			. '</div>';
 	}
 
@@ -1609,15 +1693,58 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 	private function _editorJs($editorId, $hiddenId, $formId)
 	{
 		return '<script>(function(){'
-			// Toolbar: B / I / U
-			. 'document.querySelectorAll(".sc-toolbar-btn").forEach(function(b){'
-			. 'b.addEventListener("mousedown",function(e){'
-			. 'e.preventDefault();document.execCommand(this.getAttribute("data-cmd"),false,null);});});'
-			// Serialize contenteditable → hidden field on submit
 			. 'var form=document.getElementById("'.$formId.'");'
 			. 'var ed=document.getElementById("'.$editorId.'");'
 			. 'var hid=document.getElementById("'.$hiddenId.'");'
-			. 'if(form&&ed&&hid){form.addEventListener("submit",function(){hid.value=ed.innerHTML;});}'
+			. 'if(!ed)return;'
+			. 'var wrap=(ed.closest&&ed.closest(".sc-editor-wrap"))||document;'
+			// Toolbar: B / I / U. Scoped to buttons that declare a command, so the
+			// Paste button (no data-cmd) keeps its own handler below.
+			. 'wrap.querySelectorAll(".sc-toolbar-btn[data-cmd]").forEach(function(b){'
+			. 'b.addEventListener("mousedown",function(e){'
+			. 'e.preventDefault();document.execCommand(this.getAttribute("data-cmd"),false,null);});});'
+			// Put the caret in the editor: leave an existing in-editor selection
+			// alone, otherwise drop it at the end. Means Paste works without the
+			// member having to tap into the box first.
+			. 'function caretIn(){'
+			. 'var s=window.getSelection();'
+			. 'return !!(s&&s.rangeCount&&ed.contains(s.getRangeAt(0).commonAncestorContainer));}'
+			. 'function focusEnd(){'
+			. 'ed.focus();'
+			. 'if(caretIn())return;'
+			. 'var r=document.createRange();r.selectNodeContents(ed);r.collapse(false);'
+			. 'var s=window.getSelection();s.removeAllRanges();s.addRange(r);}'
+			// Insert in ONE insertHTML: each line HTML-escaped, joined with <br>.
+			// Escaping means clipboard markup lands as literal text rather than
+			// HTML, and <br> round-trips to exactly one \n through
+			// PostWrite::editorHtmlToStored(). (Interleaving per-line
+			// insertHTML/insertText calls instead collapses every line onto one.)
+			. 'function esc(x){return String(x).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}'
+			. 'function insertText(t){'
+			. 'document.execCommand("insertHTML",false,String(t).split(/\r?\n/).map(esc).join("<br>"));}'
+			. 'function hint(msg){'
+			. 'var h=wrap.querySelector&&wrap.querySelector(".sc-editor-hint");'
+			. 'if(!h){h=document.createElement("div");h.className="sc-editor-hint";'
+			. 'ed.parentNode.insertBefore(h,ed.nextSibling);}'
+			. 'h.textContent=msg;}'
+			// Paste. navigator.clipboard is undefined on insecure origins and the
+			// read can be denied, so every failure path still lands the caret in
+			// the editor and explains the manual route.
+			. 'var pb=wrap.querySelector&&wrap.querySelector(".sc-paste-btn");'
+			. 'if(pb){'
+			. 'pb.addEventListener("mousedown",function(e){e.preventDefault();});'
+			. 'pb.addEventListener("click",function(){'
+			. 'focusEnd();'
+			. 'if(!navigator.clipboard||!navigator.clipboard.readText){'
+			. 'hint("Paste needs a secure (https) connection here. Long-press in the box and choose Paste.");return;}'
+			. 'navigator.clipboard.readText().then(function(t){'
+			. 'if(!t){hint("Clipboard is empty.");return;}'
+			. 'focusEnd();insertText(t);hint("");'
+			. '}).catch(function(){'
+			. 'hint("Could not read the clipboard. Long-press in the box and choose Paste.");});'
+			. '});}'
+			// Serialize contenteditable → hidden field on submit
+			. 'if(form&&hid){form.addEventListener("submit",function(){hid.value=ed.innerHTML;});}'
 			. '})();</script>';
 	}
 
@@ -1707,8 +1834,10 @@ class __extensions__nova_ext_sim_central__Mobile extends Nova_controller_main
 			// <label> or clicks get forwarded to the Bold button and focus
 			// bounces out. Plain section heading instead.
 			. '<div class="sc-section">Log</div>'
+			. '<div class="sc-editor-wrap">'
 			. $this->_toolbar()
-			. '<div class="sc-editor" id="sc-log-editor" contenteditable="true">'.$editorHtml.'</div>'
+			. '<div class="sc-editor" id="sc-log-editor" contenteditable="true" data-ph="Tap here to write, or use Paste above.">'.$editorHtml.'</div>'
+			. '</div>'
 			. '<input type="hidden" name="body" id="sc-log-body-hidden">'
 			. '<label>Tags<input type="text" name="tags" value="'.$this->_esc($values['tags']).'" placeholder="comma, separated"></label>';
 
