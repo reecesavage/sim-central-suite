@@ -217,6 +217,10 @@ if ( ! empty($simCentralFeatures['rest_api'])) {
 	// ApiEndpoints is consumed by Api::openapi() and Manage::api_explorer().
 	// Loading it alongside ApiAuth keeps the on-demand work in the same place.
 	require_once dirname(__FILE__).'/libraries/ApiEndpoints.php';
+	// MediaUrl turns Nova's stored filenames into the absolute https URLs both
+	// the API's endpoints and the snapshot hand out. Required BEFORE
+	// AstrolabeSnapshot, which delegates its URL building to it.
+	require_once dirname(__FILE__).'/libraries/MediaUrl.php';
 	// AstrolabeSnapshot backs the Api::snapshot() endpoint (scope astrolabe:read).
 	require_once dirname(__FILE__).'/libraries/AstrolabeSnapshot.php';
 }
