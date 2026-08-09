@@ -22,13 +22,21 @@
  *   GET  missions/{id}     - single mission. Scope: missions:read.
  *   GET  positions         - list open positions (?top=1 for top open). Scope: positions:read.
  *
- * List endpoints accept ?page=N&per_page=M (per_page capped at 100) and
- * resource-specific filters documented on each method below. Responses are
+ * List endpoints accept ?page=N&per_page=M (per_page capped at MAX_PER_PAGE)
+ * and resource-specific filters documented on each method below. Responses are
  * always JSON with a stable, whitelisted set of fields so consumers don't
  * inadvertently couple to internal schema columns that may move.
+ *
+ * Endpoint methods take NO arguments. Nova's extension router hands the action
+ * `array_slice($URI->rsegments, 2)`, so a declared parameter would silently
+ * bind to the string 'Api' rather than to a path segment. Read ids and
+ * sub-resources off $this->uri->segment(5) instead, as every method here does.
  */
 class __extensions__nova_ext_sim_central__Api extends CI_Controller
 {
+	/** Upper bound on ?per_page=. Raised 100 -> 500 in v1.41.0; see _paging(). */
+	const MAX_PER_PAGE = 500;
+
 	public function __construct()
 	{
 		parent::__construct();
@@ -743,6 +751,16 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	}
 
 	/**
+	 * The read-side inverse of _tagsCsv(): a stored tags CSV as a list of
+	 * trimmed, non-empty tags. Always an array. Same split rule as the write,
+	 * so a value written through this API round-trips unchanged.
+	 */
+	private function _tagsList($csv)
+	{
+		return array_values(array_filter(array_map('trim', explode(',', (string) $csv)), 'strlen'));
+	}
+
+	/**
 	 * Resolve the posting character, with a fallback chain for the write.all
 	 * case where none of the post's authors belong to the bound user.
 	 */
@@ -907,13 +925,22 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 *
 	 * "Open" means the position has one or more unfilled slots (pos_open > 0).
 	 * Filters:
+	 *   ?open=1|any   - 1 (default) keeps the open-only list this endpoint has
+	 *                   always returned; any returns EVERY position regardless
+	 *                   of pos_open, filled ones included. v1.41.0.
 	 *   ?top=1        - only positions flagged "top open" in the roster admin
 	 *                   (pos_top_open = y): the sim's headline open billets.
-	 *   ?display=y|n  - include hidden positions (pos_display). Defaults to y.
+	 *                   Ignored when open=any - "top OPEN" has no meaning over
+	 *                   a list that isn't restricted to open billets.
+	 *   ?display=y|n  - listed (y, default) or hidden (n) positions. One or the
+	 *                   other, never both; a consumer that wants every position
+	 *                   makes two calls.
 	 *   ?page=, ?per_page=
 	 *
-	 * Reuses Nova's positions_model::get_open_positions() so the open / top-open
-	 * semantics match what the site shows on the join page.
+	 * The default reuses Nova's positions_model::get_open_positions() so the
+	 * open / top-open semantics match what the site shows on the join page.
+	 * open=any is what a migration wants: the FILLED positions are the ones the
+	 * crew actually holds, and get_open_positions() can never return them.
 	 */
 	public function positions()
 	{
@@ -928,7 +955,19 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$display = $this->input->get('display', true);
 		if ($display !== 'y' && $display !== 'n') { $display = 'y'; }
 
-		$rows = $this->pos->get_open_positions($display, $top)->result();
+		$openParam = $this->input->get('open', true);
+		$allOpen   = (strtolower((string) $openParam) === 'any');
+
+		if ($allOpen) {
+			// get_all_positions() orders by pos_order ALONE, while
+			// get_open_positions() orders by pos_dept then pos_order. Seed the
+			// dept ordering onto the builder first - Nova's own pattern for
+			// steering these models - so both modes come back in one order.
+			$this->db->order_by('pos_dept', 'asc');
+			$rows = $this->pos->get_all_positions('asc', $display)->result();
+		} else {
+			$rows = $this->pos->get_open_positions($display, $top)->result();
+		}
 
 		list($page, $perPage, $offset) = $this->_paging();
 		$total = count($rows);
@@ -938,6 +977,169 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$data      = array();
 		foreach ($slice as $row) {
 			$data[] = $this->_projectPosition($row, $deptNames);
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/departments - list every department. Scope: positions:read.
+	 *
+	 * Until v1.41.0 department names reached the API only as sub-fields of a
+	 * character's position and as labels in the snapshot's manifest tree, so a
+	 * department with nobody in it was invisible and its description, ordering
+	 * and manifest assignment were unavailable at any size.
+	 *
+	 * Reads the table directly rather than through depts_model::get_all_depts(),
+	 * which forces `dept_parent = 0` whenever its $parent argument is 0 - i.e.
+	 * its default call returns TOP-LEVEL departments only, and most sims keep
+	 * their actual billets in children.
+	 *
+	 * Filters: ?display=y|n (default: both, since the flag is in the payload),
+	 * ?manifest_id=, ?page=, ?per_page=.
+	 */
+	public function departments()
+	{
+		$this->_gate();
+		$this->_requireMethod('GET');
+		$this->_authenticate('positions:read');
+
+		list($page, $perPage, $offset) = $this->_paging();
+
+		$this->db->from('departments');
+		$display = $this->_displayFilter();
+		if ($display !== null) {
+			$this->db->where('dept_display', $display);
+		}
+		$manifestId = $this->input->get('manifest_id', true);
+		if ($manifestId !== null && $manifestId !== '' && ctype_digit((string) $manifestId)) {
+			$this->db->where('dept_manifest', (int) $manifestId);
+		}
+		$this->db->order_by('dept_order', 'asc');
+		$this->db->order_by('dept_id', 'asc');
+
+		$total = (int) $this->db->count_all_results('', false);
+		$rows  = $this->db->limit($perPage, $offset)->get()->result();
+
+		$data = array();
+		foreach ($rows as $row) {
+			$data[] = array(
+				'id'          => (int) $row->dept_id,
+				'name'        => $this->_dec(isset($row->dept_name) ? $row->dept_name : ''),
+				// Raw as stored, like Post.content - it's authored HTML.
+				'description' => isset($row->dept_desc) ? $row->dept_desc : null,
+				'order'       => isset($row->dept_order) ? (int) $row->dept_order : null,
+				'display'     => ( ! isset($row->dept_display) || $row->dept_display === 'y'),
+				// Nova concepts with no counterpart in most consumers; returned
+				// as provenance so a migration can record what it flattened.
+				'type'        => isset($row->dept_type) ? $row->dept_type : null,
+				'parent_id'   => ( ! empty($row->dept_parent)) ? (int) $row->dept_parent : null,
+				'manifest_id' => ( ! empty($row->dept_manifest)) ? (int) $row->dept_manifest : null,
+			);
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/manifests - list every manifest. Scope: positions:read.
+	 *
+	 * A sim can have several (crew, support craft, NPCs); departments attach to
+	 * one via departments.manifest_id. The snapshot's manifest tree carries
+	 * names but no ids, so until now there was no way to attach a department to
+	 * the right manifest.
+	 *
+	 * manifest_header_content and manifest_view are deliberately not returned:
+	 * manifest_view stores raw jQuery snippets rather than a view name, and
+	 * both are Nova presentation. Same for manifest_metadata, which is a
+	 * pipe-delimited list of bio field names to show beside each crew member.
+	 *
+	 * Filters: ?display=y|n (default: both), ?page=, ?per_page=.
+	 */
+	public function manifests()
+	{
+		$this->_gate();
+		$this->_requireMethod('GET');
+		$this->_authenticate('positions:read');
+
+		list($page, $perPage, $offset) = $this->_paging();
+
+		$this->db->from('manifests');
+		$display = $this->_displayFilter();
+		if ($display !== null) {
+			$this->db->where('manifest_display', $display);
+		}
+		$this->db->order_by('manifest_order', 'asc');
+		$this->db->order_by('manifest_id', 'asc');
+
+		$total = (int) $this->db->count_all_results('', false);
+		$rows  = $this->db->limit($perPage, $offset)->get()->result();
+
+		$data = array();
+		foreach ($rows as $row) {
+			$data[] = array(
+				'id'          => (int) $row->manifest_id,
+				'name'        => $this->_dec(isset($row->manifest_name) ? $row->manifest_name : ''),
+				'description' => isset($row->manifest_desc) ? $row->manifest_desc : null,
+				'order'       => isset($row->manifest_order) ? (int) $row->manifest_order : null,
+				'display'     => ( ! isset($row->manifest_display) || $row->manifest_display === 'y'),
+				'default'     => (isset($row->manifest_default) && $row->manifest_default === 'y'),
+			);
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/ranks - the sim's whole rank ladder. Scope: characters:read.
+	 *
+	 * Rank data otherwise reaches the API only denormalised onto characters
+	 * (rank_name / rank_short / rank_order) and as an image URL buried in the
+	 * snapshot's manifest - which between them cover only the ranks somebody is
+	 * currently wearing. Every unworn rung is invisible, so a consumer
+	 * mirroring this sim has nothing to promote anyone INTO.
+	 *
+	 * image_url is absolute and generated here, never a bare rank_image
+	 * filename: rank art resolves through
+	 * assets/common/{genre}/ranks/{set}/{image}{ext}, which depends on a sim
+	 * setting and a catalogue column no consumer can see. Null when the rank
+	 * has no image, or when the sim's rank set can't be resolved at all - see
+	 * MediaUrl::rank().
+	 *
+	 * The rank CATALOGUE (catalogue_ranks) is not exposed: a consumer imports
+	 * the artwork as one game-owned set rather than reproducing Nova's
+	 * catalogue.
+	 *
+	 * Filters: ?display=y|n (default: both), ?page=, ?per_page=.
+	 */
+	public function ranks()
+	{
+		$this->_gate();
+		$this->_requireMethod('GET');
+		$this->_authenticate('characters:read');
+
+		list($page, $perPage, $offset) = $this->_paging();
+
+		$this->db->from('ranks');
+		$display = $this->_displayFilter();
+		if ($display !== null) {
+			$this->db->where('rank_display', $display);
+		}
+		$this->db->order_by('rank_order', 'asc');
+		$this->db->order_by('rank_id', 'asc');
+
+		$total = (int) $this->db->count_all_results('', false);
+		$rows  = $this->db->limit($perPage, $offset)->get()->result();
+
+		$data = array();
+		foreach ($rows as $row) {
+			$data[] = array(
+				'id'         => (int) $row->rank_id,
+				'name'       => $this->_dec(isset($row->rank_name) ? $row->rank_name : ''),
+				'short_name' => $this->_dec(isset($row->rank_short_name) ? $row->rank_short_name : ''),
+				'order'      => isset($row->rank_order) ? (int) $row->rank_order : null,
+				'display'    => ( ! isset($row->rank_display) || $row->rank_display === 'y'),
+				'image_url'  => \nova_ext_sim_central\MediaUrl::rank(
+					isset($row->rank_image) ? $row->rank_image : ''
+				),
+			);
 		}
 		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
 	}
@@ -1526,10 +1728,14 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 * ('read'|'write'|'delete'): needs BOTH the .all scope on the token AND the
 	 * bound user flagged sysadmin. The scope is the security boundary; the
 	 * sysadmin flag is the permission.
+	 *
+	 * $resource defaults to 'posts' for the callers that predate v1.41.0.
+	 * Parameterised rather than copied so posts:*.all, logs:read.all and
+	 * missions:read.all cannot drift on what "sysadmin bypass" means.
 	 */
-	private function _canUseAll($token, $user, $family)
+	private function _canUseAll($token, $user, $family, $resource = 'posts')
 	{
-		return $this->_tokenHasScope($token, 'posts:'.$family.'.all')
+		return $this->_tokenHasScope($token, $resource.':'.$family.'.all')
 			&& isset($user->is_sysadmin) && $user->is_sysadmin === 'y';
 	}
 
@@ -1888,6 +2094,16 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		// existing consumers map those ids to an author picker - and the display
 		// names arrive alongside it as author_names.
 		$out['author_names'] = $this->_authorNames(isset($row->post_authors) ? $row->post_authors : '');
+		// v1.41.0. tags has been accepted on write - and hashed into
+		// content_hash - since post authoring shipped, but was never projected,
+		// so a tag written through this API could not be read back by anything.
+		// Returned as a list; the write side accepts either a list or a CSV.
+		$out['tags'] = $this->_tagsList(isset($row->post_tags) ? $row->post_tags : '');
+		// v1.41.0. post_participants is a CSV of USER ids - not character ids,
+		// unlike every other id CSV on this row. The key is named user_id so
+		// that cannot be misread. Nova only maintains this column when the sim
+		// has use_post_participants on, so [] is the common case.
+		$out['participants'] = $this->_participants(isset($row->post_participants) ? $row->post_participants : '');
 		// Activation timestamp. Only an activated post has been published, so a
 		// draft's post_date (its last save) is not reported as a publish time.
 		$out['published_at'] = (isset($row->post_status) && $row->post_status === 'activated' && ! empty($row->post_date))
@@ -1960,6 +2176,10 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$out = array(
 			'id'         => (int) $row->charid,
 			'first_name' => isset($row->first_name) ? $row->first_name : null,
+			// v1.41.0. Nova has always stored it; the API just never returned
+			// it, so a consumer keeping a formal full name alongside the
+			// display name had no way to reconstruct one.
+			'middle_name' => isset($row->middle_name) ? $row->middle_name : null,
 			'last_name'  => isset($row->last_name) ? $row->last_name : null,
 			'suffix'     => isset($row->suffix) ? $row->suffix : null,
 			'status'     => isset($row->crew_type) ? $row->crew_type : null,
@@ -1969,6 +2189,18 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			// visibility rule as the snapshot manifest's player.name - never
 			// email or account internals). Null when unowned/unlinked.
 			'user_name'  => ($userId !== null) ? $this->_publicUserName($userId) : null,
+			// v1.41.0: the same {name, discord_id} object the snapshot manifest
+			// carries, so a consumer can resolve a character's player to an
+			// account. user_id is Nova's internal id and user_name collides on
+			// duplicates, so the Discord id is the only identifier here that
+			// means anything off-site. Null for an unowned character;
+			// discord_id null when Discord Sign-In is off or unlinked.
+			//
+			// On the LIST as well as the single read, deliberately: the
+			// snapshot manifest covers active+npc only, so a consumer that
+			// needs every character - inactive and pending included - has
+			// nowhere else to learn who owns them.
+			'player'     => ($userId !== null) ? $this->_player($userId) : null,
 		);
 
 		$features = $this->_suiteFeatures();
@@ -2000,6 +2232,26 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 
 		$out['position_primary']   = $this->_positionObject(isset($row->position_1) ? $row->position_1 : null);
 		$out['position_secondary'] = $this->_positionObject(isset($row->position_2) ? $row->position_2 : null);
+
+		// v1.41.0. characters.images is a CSV of bare filenames an off-site
+		// consumer can't resolve, so it's returned as absolute URLs only.
+		// Element 0 is Nova's avatar. Empty array, never null. Until now the
+		// only avatar source was the snapshot, which covers active+npc and
+		// gives one image each.
+		$out['images'] = $this->_images(
+			isset($row->images) ? $row->images : '',
+			\nova_ext_sim_central\MediaUrl::CHARACTERS
+		);
+
+		// v1.41.0. When someone joined and left the crew. History for a
+		// retiring sim, not live fields - Nova leaves them 0 for characters
+		// that never went through activation, and iso() maps that to null.
+		$out['date_activate']   = \nova_ext_sim_central\SyncTrack::iso(
+			isset($row->date_activate) ? $row->date_activate : 0
+		);
+		$out['date_deactivate'] = \nova_ext_sim_central\SyncTrack::iso(
+			isset($row->date_deactivate) ? $row->date_deactivate : 0
+		);
 
 		// v1.39.0 change tracking. Covers the roster fields above AND every
 		// visible bio value, so editing a bio moves content_updated_at even
@@ -2265,10 +2517,38 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		return $out;
 	}
 
+	/**
+	 * Decode an admin-entered short label - a department, manifest, rank or
+	 * position name, a bio label - to plain text. Nova stores these
+	 * HTML-encoded, and the same decode is what the snapshot applies, so the
+	 * two surfaces spell a name the same way.
+	 *
+	 * Short labels only. Authored HTML bodies (a description, a post) are
+	 * returned raw as stored.
+	 */
+	private function _dec($s)
+	{
+		return html_entity_decode((string) $s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+	}
+
 	/** Decode an admin-entered bio label / section name to plain text. */
 	private function _bioText($s)
 	{
-		return html_entity_decode((string) $s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+		return $this->_dec($s);
+	}
+
+	/**
+	 * ?display=y|n as a column filter, or null for "don't filter".
+	 *
+	 * The structural endpoints (departments, manifests, ranks) default to
+	 * returning BOTH, because each row carries its own display flag and a
+	 * consumer mirroring a sim wants the hidden rows too. /positions predates
+	 * this and keeps its own y-default, which existing callers rely on.
+	 */
+	private function _displayFilter()
+	{
+		$display = $this->input->get('display', true);
+		return ($display === 'y' || $display === 'n') ? $display : null;
 	}
 
 	private function _projectMission($row)
@@ -2280,6 +2560,12 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			'status'      => isset($row->mission_status) ? $row->mission_status : null,
 			'start'       => ( ! empty($row->mission_start)) ? date('c', (int) $row->mission_start) : null,
 			'end'         => ( ! empty($row->mission_end)) ? date('c', (int) $row->mission_end) : null,
+			// v1.41.0. Same reasoning as characters.images: mission_images is a
+			// CSV of bare filenames, resolved sim-side into absolute URLs.
+			'images'      => $this->_images(
+				isset($row->mission_images) ? $row->mission_images : '',
+				\nova_ext_sim_central\MediaUrl::MISSIONS
+			),
 		);
 
 		// Total words across this mission's activated posts. Only exposed to
@@ -2352,9 +2638,14 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			'description'   => isset($row->pos_desc) ? $row->pos_desc : null,
 			'department_id' => ($deptId > 0) ? $deptId : null,
 			'department'    => ($deptId > 0 && ! empty($deptNames[$deptId])) ? $deptNames[$deptId] : null,
+			// The raw pos_open COUNT, not a boolean: a consumer works out a
+			// position's capacity as (current holders + open slots).
 			'open'          => isset($row->pos_open) ? (int) $row->pos_open : 0,
 			'type'          => isset($row->pos_type) ? $row->pos_type : null,
 			'order'         => isset($row->pos_order) ? (int) $row->pos_order : null,
+			// v1.41.0. Meaningful now that ?open=any can return positions the
+			// join page never shows.
+			'display'       => ( ! isset($row->pos_display) || $row->pos_display === 'y'),
 			'top_open'      => (isset($row->pos_top_open) && $row->pos_top_open === 'y'),
 		);
 	}
@@ -2367,24 +2658,45 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	private $_authToken = null;
 
 	/**
-	 * Per-request memoized lookup of a user's public display name
-	 * (users.name), entity-decoded to match the snapshot's player.name.
-	 * PK lookups, so even a 100-row character page stays cheap.
+	 * The public player identity behind a user id, or null: {name, discord_id}.
+	 *
+	 * Delegates to the snapshot builder, which has owned this visibility rule
+	 * since v1.32.0 and memoizes per user id. Sharing it is what makes a
+	 * character row's user_name and player.name the same value by
+	 * construction rather than by two implementations agreeing.
 	 */
-	private $_userNameCache = array();
+	private function _player($userId)
+	{
+		return \nova_ext_sim_central\AstrolabeSnapshot::player($userId);
+	}
+
+	/**
+	 * A user's public display name (users.name), entity-decoded. Null when the
+	 * user is gone or has no name. Memoized upstream, so even a full-page
+	 * character list stays cheap.
+	 */
 	private function _publicUserName($userId)
 	{
-		$userId = (int) $userId;
-		if ($userId <= 0) {
-			return null;
-		}
-		if ( ! array_key_exists($userId, $this->_userNameCache)) {
-			$row = $this->db->select('name')->get_where('users', array('userid' => $userId), 1)->row();
-			$this->_userNameCache[$userId] = ($row && $row->name !== '' && $row->name !== null)
-				? html_entity_decode((string) $row->name, ENT_QUOTES | ENT_HTML5, 'UTF-8')
-				: null;
-		}
-		return $this->_userNameCache[$userId];
+		$player = $this->_player($userId);
+		return ($player !== null) ? $player['name'] : null;
+	}
+
+	/**
+	 * Absolute https URLs for one of Nova's stored image CSVs (v1.41.0).
+	 *
+	 * Nova stores `characters.images` / `missions.mission_images` and friends
+	 * as a CSV of bare filenames, which an off-site consumer cannot resolve:
+	 * doing so means knowing APPFOLDER, the asset layout, and - for ranks -
+	 * two catalogue columns it can't see. So the API resolves them here and
+	 * hands out absolute URLs only, never a filename.
+	 *
+	 * Always an array, empty rather than null, so a consumer needn't
+	 * null-guard a list. Element 0 is Nova's primary image (avatar / hero).
+	 * $folder is a MediaUrl::* constant.
+	 */
+	private function _images($csv, $folder)
+	{
+		return \nova_ext_sim_central\MediaUrl::all($csv, $folder);
 	}
 
 	/** Per-request memoized charid -> owning user id (null when unowned). */
@@ -2493,6 +2805,35 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		return $names;
 	}
 
+	/**
+	 * post_participants as a list of {user_id, name} (v1.41.0).
+	 *
+	 * Careful: this column holds USER ids, while post_authors on the same row
+	 * holds CHARACTER ids. Resolving it with the character-name cache would
+	 * produce plausible, wrong names - hence the separate helper and the
+	 * explicit user_id key. Names come from _publicUserName(), which is
+	 * memoized, so a page costs one lookup per distinct participant.
+	 *
+	 * Ids that no longer resolve to a user are kept with a null name rather
+	 * than dropped: on a retiring sim this is the only surviving record that
+	 * someone took part.
+	 */
+	private function _participants($csv)
+	{
+		$out = array();
+		foreach (explode(',', (string) $csv) as $raw) {
+			$id = (int) trim($raw);
+			if ($id <= 0) {
+				continue;
+			}
+			$out[] = array(
+				'user_id' => $id,
+				'name'    => $this->_publicUserName($id),
+			);
+		}
+		return $out;
+	}
+
 	private $_featuresCache = null;
 	private function _suiteFeatures()
 	{
@@ -2514,15 +2855,22 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 
 	/**
 	 * Normalises ?page= and ?per_page= into [page, per_page, offset]. Caps
-	 * per_page at 100 to keep memory + payload bounded.
+	 * per_page at MAX_PER_PAGE to keep memory + payload bounded.
+	 *
+	 * v1.41.0 raised the cap from 100 to 500 for bulk consumers - a one-time
+	 * migration walking a whole sim pays ~800 requests at 100/page, and the
+	 * rate limiter turns that into a quarter of an hour of polling. Note this
+	 * is the one non-additive change in that release: a caller that already
+	 * sent per_page=500 used to get 100 back and page, and now gets 500 in a
+	 * single response.
 	 */
 	private function _paging()
 	{
 		$page    = (int) $this->input->get('page');
 		$perPage = (int) $this->input->get('per_page');
-		if ($page < 1)     { $page    = 1; }
-		if ($perPage < 1)  { $perPage = 25; }
-		if ($perPage > 100){ $perPage = 100; }
+		if ($page < 1)    { $page    = 1; }
+		if ($perPage < 1) { $perPage = 25; }
+		if ($perPage > self::MAX_PER_PAGE) { $perPage = self::MAX_PER_PAGE; }
 		return array($page, $perPage, ($page - 1) * $perPage);
 	}
 

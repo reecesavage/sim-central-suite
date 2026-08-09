@@ -91,7 +91,7 @@ class AstrolabeSnapshot
 		$ci->load->model('depts_model',       'sc_dept');
 		$ci->load->model('positions_model',   'sc_pos');
 		$ci->load->model('characters_model',  'sc_char');
-		$ci->load->model('ranks_model',       'sc_ranks');
+		// ranks_model is loaded by MediaUrl, which owns rank artwork URLs.
 		$ci->load->model('missions_model',    'sc_missions');
 		// count_mission_posts() lives on the POSTS model, not missions.
 		$ci->load->model('posts_model',       'sc_posts');
@@ -155,7 +155,6 @@ class AstrolabeSnapshot
 			return $out;
 		}
 
-		$rankMeta = self::rankMeta();
 		$usedSlugs = array();
 
 		foreach ($manifests->result() as $man) {
@@ -170,7 +169,7 @@ class AstrolabeSnapshot
 			$depts = $ci->sc_dept->get_all_depts();
 			if ($depts && $depts->num_rows() > 0) {
 				foreach ($depts->result() as $dept) {
-					$deptEntry = self::departmentEntry((int) $dept->dept_id, $dept->dept_name, $rankMeta);
+					$deptEntry = self::departmentEntry((int) $dept->dept_id, $dept->dept_name);
 					if ($deptEntry !== null) {
 						$departments[] = $deptEntry;
 					}
@@ -179,7 +178,7 @@ class AstrolabeSnapshot
 					$subs = $ci->sc_dept->get_sub_depts((int) $dept->dept_id);
 					if ($subs && $subs->num_rows() > 0) {
 						foreach ($subs->result() as $sub) {
-							$subEntry = self::departmentEntry((int) $sub->dept_id, $sub->dept_name, $rankMeta);
+							$subEntry = self::departmentEntry((int) $sub->dept_id, $sub->dept_name);
 							if ($subEntry !== null) {
 								$departments[] = $subEntry;
 							}
@@ -203,7 +202,7 @@ class AstrolabeSnapshot
 	 * flattened and de-duplicated by charid. Returns null when the department
 	 * has no shown characters (keeps empty departments out of the payload).
 	 */
-	private static function departmentEntry($deptId, $deptName, array $rankMeta)
+	private static function departmentEntry($deptId, $deptName)
 	{
 		$ci =& get_instance();
 		$positions = $ci->sc_pos->get_dept_positions($deptId);
@@ -230,7 +229,7 @@ class AstrolabeSnapshot
 					continue;
 				}
 				$seen[$cid] = true;
-				$characters[] = self::character($char, $pos->pos_name, $rankMeta);
+				$characters[] = self::character($char, $pos->pos_name);
 			}
 		}
 
@@ -244,7 +243,7 @@ class AstrolabeSnapshot
 		);
 	}
 
-	private static function character($char, $positionName, array $rankMeta)
+	private static function character($char, $positionName)
 	{
 		// Prefer the Display Name feature's override when present (parity with
 		// the public manifest), else First / Last / Suffix. No rank prefix.
@@ -257,7 +256,7 @@ class AstrolabeSnapshot
 			$rank = array(
 				'name'         => ! empty($char->rank_name) ? self::dec((string) $char->rank_name) : null,
 				'abbreviation' => ! empty($char->rank_short_name) ? self::dec((string) $char->rank_short_name) : null,
-				'image'        => self::rankImage(isset($char->rank_image) ? $char->rank_image : '', $rankMeta),
+				'image'        => self::rankImage(isset($char->rank_image) ? $char->rank_image : ''),
 			);
 		}
 
@@ -408,8 +407,15 @@ class AstrolabeSnapshot
 	 * apply for @mentions). discord_id is null when the feature is off, the
 	 * column doesn't exist, or the user hasn't linked. Or null entirely when
 	 * the character has no owning user.
+	 *
+	 * Public since v1.41.0: GET /characters returns the same object per row,
+	 * and Api::_publicUserName() reads its name from here. One source, so the
+	 * endpoint and the snapshot cannot disagree about who a player is - which
+	 * matters because a migration matches Nova players to accounts on the
+	 * Discord id alone, and the snapshot manifest lists active+npc characters
+	 * only. Never email, real name, or account internals.
 	 */
-	private static function player($userId)
+	public static function player($userId)
 	{
 		static $cache = array();
 		$userId = (int) $userId;
@@ -464,62 +470,29 @@ class AstrolabeSnapshot
 		return $names;
 	}
 
-	/** Resolve the sim's active rank set + file extension once per build. */
-	private static function rankMeta()
-	{
-		$ci =& get_instance();
-		$set = $ci->sc_settings->get_setting('display_rank');
-		$ext = '';
-		if ($set !== false && $set !== '') {
-			$cat = $ci->sc_ranks->get_rankcat($set);
-			if ($cat && isset($cat->rankcat_extension)) {
-				$ext = (string) $cat->rankcat_extension;
-			}
-		}
-		return array('set' => ($set !== false ? (string) $set : ''), 'ext' => $ext);
-	}
-
-	private static function rankImage($image, array $rankMeta)
-	{
-		$image = trim((string) $image);
-		if ($image === '' || $rankMeta['set'] === '' || $rankMeta['ext'] === '') {
-			return null;
-		}
-		$path = \Location::rank($rankMeta['set'], $image, $rankMeta['ext']);
-		return self::https(base_url($path));
-	}
-
-	/** Absolute https URL for a site-relative path. */
+	/**
+	 * Absolute https URL for a site-relative path.
+	 *
+	 * These three delegate to MediaUrl (v1.41.0), which the REST API's own
+	 * endpoints share, so the snapshot and the API cannot drift on what an
+	 * absolute URL looks like. Kept as named wrappers because the call sites
+	 * read better for it and absImg() pins the folder.
+	 */
 	private static function absUrl($path)
 	{
-		return self::https(site_url($path));
+		return MediaUrl::site($path);
 	}
 
-	/**
-	 * Absolute https avatar URL from a character's images CSV (first entry),
-	 * or null. Mirrors Nova's own rule: already-absolute stays, otherwise it's
-	 * an asset under images/characters.
-	 */
+	/** Absolute https avatar URL from a character's images CSV, or null. */
 	private static function absImg($imagesCsv)
 	{
-		$imagesCsv = (string) $imagesCsv;
-		if (trim($imagesCsv) === '') {
-			return null;
-		}
-		$first = trim(explode(',', $imagesCsv)[0]);
-		if ($first === '') {
-			return null;
-		}
-		if (stripos($first, 'http://') === 0 || stripos($first, 'https://') === 0) {
-			return self::https($first);
-		}
-		return self::https(base_url(\Location::asset('images/characters', $first)));
+		return MediaUrl::first($imagesCsv, MediaUrl::CHARACTERS);
 	}
 
-	/** Force http -> https so Astrolabe never drops a URL. */
-	private static function https($url)
+	/** Absolute https URL for a rank's artwork, or null. */
+	private static function rankImage($image)
 	{
-		return preg_replace('#^http://#i', 'https://', (string) $url);
+		return MediaUrl::rank($image);
 	}
 
 	/**

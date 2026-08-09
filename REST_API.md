@@ -65,10 +65,10 @@ Tokens carry an explicit scope list. Endpoints check for the scope they require 
 | `posts:read.all` | Read **any** post incl. others' drafts *(sysadmin only)* |
 | `posts:write.all` | Create/update **any** post, add a character to it *(sysadmin only)* |
 | `posts:delete.all` | Delete **any** post *(sysadmin only)* |
-| `characters:read` | List characters, view a single character (including bio fields) |
+| `characters:read` | List characters, view a single character (including bio fields), and read the sim's rank ladder *(v1.41.0+)* |
 | `logs:read` | List personal logs, view a single log &mdash; activated only *(v1.39.0+)* |
 | `missions:read` | List missions, view a single mission |
-| `positions:read` | List open crew positions (with a top-open filter) |
+| `positions:read` | List crew positions (open by default, or all of them), plus the departments and manifests they're organised into *(v1.41.0+)* |
 | `users:write` | Disable / reactivate users and their linked characters |
 | `webhooks:read` | List event webhooks and view their config |
 | `webhooks:write` | Create, update, and delete event webhooks |
@@ -141,6 +141,14 @@ All endpoints return JSON.
 | `500` | Bug. File an issue. |
 
 Write endpoints accept their body as JSON (`Content-Type: application/json`), form-encoded fields, or query-string params.
+
+### Images are always absolute URLs
+
+Every image field anywhere in this API — `Character.images`, `Mission.images`, `Rank.image_url`, and the snapshot's `avatar_url` / `rank.image` — is an **absolute `https://` URL, or `null`**. Never a bare filename, never `""`, never a site-relative path.
+
+That's deliberate: Nova stores these as filenames, and resolving one means knowing the install's app folder, its asset layout, its genre folder and — for rank art — a catalogue column no consumer can see. `http://` is rewritten to `https://` so a browser client never drops one to mixed content.
+
+Fields that hold a **list** of images are always an array: `[]` when there are none, never `null`. Fields that hold a single image are `null` when there is none.
 
 ---
 
@@ -255,7 +263,7 @@ List mission posts, most recent first. Scope: `posts:read`.
 | `content` | `1` | `0` (or `false`/`no`/`off`) omits each post's `content` from the response &mdash; metadata-only rows *(v1.36.0+)*. Default unchanged: bodies included |
 | `updated_since` | *(none)* | ISO 8601 datetime *(v1.39.0+)*. Only posts whose `content_hash` changed at or after this instant. See [Syncing incrementally](#syncing-incrementally) |
 | `page` | `1` | 1-indexed |
-| `per_page` | `25` | Capped at `100` |
+| `per_page` | `25` | Capped at `500` *(v1.41.0+; was `100`)* |
 
 `sort=order` matches what the sim itself shows on a mission page: with *Ordered Mission Posts* on it uses that mission's own scheme (day / date / stardate, then time), otherwise post date ascending. `post_date` is always the final tie-break, so paging can't reshuffle rows between pages. Combine it with `mission_id` &mdash; without a mission there's no per-mission scheme to apply, so it's just post date ascending.
 
@@ -273,6 +281,8 @@ List mission posts, most recent first. Scope: `posts:read`.
 | `mission_id` | int \| null | |
 | `authors` | string \| null | Comma-separated `charid` list (Nova's native format). **Unchanged** &mdash; map these ids to an author picker; for names read `author_names`. |
 | `author_names` | string[] | The authors' **display names**, in the stored order. `[]` when there are none, and ids that no longer resolve are dropped rather than null-padded. Honours the *Display Name* override when that feature is on. *(v1.36.0+)* |
+| `tags` | string[] | *(v1.41.0+)* The post's tags. Accepted on write — and hashed into `content_hash` — since post authoring shipped, but never returned until now, so a tag written through this API couldn't be read back by anything. Always an array; the write side still accepts a list **or** a comma-separated string |
+| `participants` | object[] | *(v1.41.0+)* `[{user_id, name}]`. ⚠️ These are **user** ids, not character ids — `post_participants` is the one id CSV on a post row that isn't character-keyed, hence the explicit `user_id` key. `name` is `null` if the user no longer resolves, and the entry is kept anyway. Nova only maintains this column when the sim has `use_post_participants` on, so `[]` is the common case |
 | `status` | string | `activated` / `saved` / `draft` |
 | `date` | ISO 8601 | UTC |
 | `published_at` | ISO 8601 \| null | UTC (`Z`) activation timestamp. `null` unless the post is `activated` &mdash; a draft's `date` is its last save, not a publication time. *(v1.36.0+)* |
@@ -401,7 +411,7 @@ List characters. Scope: `characters:read`.
 |---|---|---|
 | `status` | `active` | `crew_type`. `any` returns every character (active, inactive, pending, etc.) |
 | `page` | `1` | |
-| `per_page` | `25` | Capped at `100` |
+| `per_page` | `25` | Capped at `500` *(v1.41.0+; was `100`)* |
 
 **Character object:**
 
@@ -409,11 +419,17 @@ List characters. Scope: `characters:read`.
 |---|---|---|
 | `id` | int | `characters.charid` |
 | `first_name` | string \| null | |
+| `middle_name` | string \| null | *(v1.41.0+)* The one name part the API didn't previously return |
 | `last_name` | string \| null | |
 | `suffix` | string \| null | |
 | `status` | string | `crew_type`: `active`, `inactive`, `pending`, etc. |
-| `rank` | int \| null | `rank_id` &mdash; look up name separately if needed |
+| `rank` | int \| null | `rank_id` &mdash; resolve against `GET /ranks` *(v1.41.0+)*, or read `rank_name`/`rank_short` below |
 | `user_id` | int \| null | The Nova user that owns this character |
+| `user_name` | string \| null | The linked user's public display name. `null` when unowned/unlinked |
+| `player` | object \| null | *(v1.41.0+)* `{name, discord_id}` &mdash; see below |
+| `images` | string[] | *(v1.41.0+)* Absolute https URLs, stored order, element 0 is the avatar. Always an array; `[]` when there are none |
+| `date_activate` | ISO 8601 \| null | *(v1.41.0+)* When the character joined the crew. History, not a live field |
+| `date_deactivate` | ISO 8601 \| null | *(v1.41.0+)* When the character left the crew |
 | `display_name` | string \| null | **Only present when *Display Name* is enabled.** Raw value of the override column. |
 | `preferred_name` | string | **Only present when *Display Name* is enabled.** Precomputed: `display_name` if set, otherwise `first last suffix` joined. Use this if you just want "what to call this character." |
 | `rank_name` | string \| null | Resolved rank name, entity-decoded *(v1.39.0+)* |
@@ -425,6 +441,21 @@ List characters. Scope: `characters:read`.
 | `content_updated_at` | ISO 8601 \| null | When `content_hash` last changed, UTC with a `Z` *(v1.39.0+)*. What `?updated_since` filters on |
 
 The rank and position fields land on the **list** as well as the single read, which is the point: before v1.39.0 the list gave you a bare numeric `rank` id and no position at all, so building a departmental roster with working `characters/{id}` links meant joining the snapshot — which carries no ids — by display name. `GET /characters?status=any` is now enough on its own.
+
+#### `player` — matching a character to an account *(v1.41.0+)*
+
+```jsonc
+"player": {
+  "name": "Jane Doe",              // identical to user_name; both read one source
+  "discord_id": "182736451827364518"
+}
+```
+
+`null` when the character has no owning user. `discord_id` is `null` when the *Discord Sign-In* feature is off, the column is absent, or the user never linked — the same visibility rule the snapshot manifest and the event webhooks apply.
+
+This is the **only identifier here that means anything off-site**: `user_id` is Nova-internal, and `user_name` collides whenever two players share a display name. The snapshot manifest has carried the same object since v1.32.0, but it lists **active and NPC** characters only and has no character ids — so matching a full roster through it meant joining on normalised display name, which mis-assigns duplicates and loses ownership entirely for players whose characters are all inactive. `player` is present on every character here, inactive and pending included.
+
+Never email, real name, or account internals.
 
 **Query params** also accept `updated_since` *(v1.39.0+)*, same semantics as on `/posts`.
 
@@ -491,7 +522,7 @@ List missions, most recent start first. Scope: `missions:read`.
 |---|---|---|
 | `status` | *(any)* | `mission_status`: `current`, `upcoming`, `completed` |
 | `page` | `1` | |
-| `per_page` | `25` | Capped at `100` |
+| `per_page` | `25` | Capped at `500` *(v1.41.0+; was `100`)* |
 
 **Mission object:**
 
@@ -503,6 +534,7 @@ List missions, most recent start first. Scope: `missions:read`.
 | `status` | string | `current` / `upcoming` / `completed` |
 | `start` | ISO 8601 \| null | |
 | `end` | ISO 8601 \| null | |
+| `images` | string[] | *(v1.41.0+)* Absolute https URLs for the mission's images, stored order. Always an array; `[]` when there are none |
 | `posts_updated_at` | ISO 8601 \| null | When any post in this mission last changed *(v1.39.0+)* &mdash; the newest `content_updated_at` across them, UTC with a `Z`. `null` when the mission has no posts. **Scoped to what your token can enumerate:** without `posts:read.all` it rolls up activated posts only, so a mission can never report itself dirty and then hand you an empty delta. One `GET /missions` is the whole dirty check for a per-mission sync |
 | `summary_enabled` | bool | **Only present when *Mission Post Summary* is enabled.** Whether writers see the summary field on this mission's posts. |
 | `ordered` | object | **Only present when *Ordered Mission Posts* is enabled.** Keys: `config`, `numbering` (bool), `default_date`, `default_stardate`, `legacy_mode` (bool). |
@@ -528,7 +560,7 @@ List personal logs, newest first. Scope: `logs:read`.
 | `updated_since` | *(none)* | ISO 8601 datetime. Same semantics as on `/posts` |
 | `content` | `1` | `0` omits each log's `content`. `excerpt` and `word_count` still returned |
 | `page` | `1` | 1-indexed |
-| `per_page` | `25` | Capped at `100` |
+| `per_page` | `25` | Capped at `500` *(v1.41.0+; was `100`)* |
 
 **Log object:**
 
@@ -560,16 +592,19 @@ Single log by id. Scope: `logs:read`. A draft returns **404**, not 403 — sayin
 
 ### `GET /positions` *(v1.22.0+)*
 
-List a sim's **open crew positions** (positions with one or more unfilled slots). Scope: `positions:read`. Ordered by department, then roster order. Reuses Nova's own open-positions query, so results match what the site shows on the join page.
+List a sim's crew positions. Scope: `positions:read`. Ordered by department, then roster order.
+
+By default this returns **open positions only** (one or more unfilled slots), via Nova's own open-positions query, so results match what the site shows on the join page. Pass `open=any` *(v1.41.0+)* to get **every** position including filled ones — the filled positions are the ones the crew actually holds, so that's what a roster mirror or a migration wants.
 
 **Query params:**
 
 | Param | Default | Notes |
 |---|---|---|
-| `top` | `false` | `1` / `true` / `yes` &rarr; only **top open** positions (`pos_top_open = y`): the headline billets flagged in the roster admin |
-| `display` | `y` | `pos_display` filter: `y` for listed positions, `n` for hidden ones |
+| `open` | `1` | `1` &rarr; open positions only (unchanged behaviour). `any` &rarr; every position regardless of `pos_open` *(v1.41.0+)* |
+| `top` | `false` | `1` / `true` / `yes` &rarr; only **top open** positions (`pos_top_open = y`): the headline billets flagged in the roster admin. Ignored when `open=any` |
+| `display` | `y` | `pos_display` filter: `y` for listed positions, `n` for hidden ones. One or the other — to get both, make two calls |
 | `page` | `1` | |
-| `per_page` | `25` | Capped at `100` |
+| `per_page` | `25` | Capped at `500` *(v1.41.0+; was `100`)* |
 
 **Position object:**
 
@@ -578,11 +613,12 @@ List a sim's **open crew positions** (positions with one or more unfilled slots)
 | `id` | int | `positions.pos_id` |
 | `name` | string \| null | |
 | `description` | string \| null | |
-| `department_id` | int \| null | `pos_dept` |
+| `department_id` | int \| null | `pos_dept` — resolve against `GET /departments` *(v1.41.0+)* |
 | `department` | string \| null | Resolved department name |
-| `open` | int | Number of unfilled slots (`pos_open`) |
+| `open` | int | Number of unfilled slots (`pos_open`) — a **count**, not a flag. Capacity is (current holders + `open`); `0` for a filled position |
 | `type` | string \| null | `pos_type` |
 | `order` | int \| null | Roster sort order (`pos_order`) |
+| `display` | bool | Listed on the roster (`pos_display = y`) *(v1.41.0+)* |
 | `top_open` | bool | Flagged as a top open position (`pos_top_open = y`) |
 
 **Example — the sim's top open positions:**
@@ -590,6 +626,88 @@ List a sim's **open crew positions** (positions with one or more unfilled slots)
 ```
 GET /extensions/nova_ext_sim_central/Api/positions?top=1
 ```
+
+**Example — every position, filled ones included:**
+
+```
+GET /extensions/nova_ext_sim_central/Api/positions?open=any&per_page=500
+```
+
+---
+
+### `GET /departments` *(v1.41.0+)*
+
+List **every department** on the sim. Scope: `positions:read`. Ordered by roster order.
+
+Before this, department names reached the API only as sub-fields of a character's position and as labels in the snapshot manifest — so a department with nobody in it was invisible, and its description, ordering and manifest assignment were unavailable at any size. Child departments are included; Nova's own default department query returns top-level ones only.
+
+**Query params:**
+
+| Param | Default | Notes |
+|---|---|---|
+| `display` | *(both)* | `dept_display` filter: `y` or `n`. Omit to return both — each row carries its own `display` flag |
+| `manifest_id` | | Only departments attached to this manifest |
+| `page` | `1` | |
+| `per_page` | `25` | Capped at `500` |
+
+**Department object:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | `departments.dept_id` |
+| `name` | string | Entity-decoded, matching how the snapshot manifest spells it |
+| `description` | string \| null | Raw as stored — authored HTML, like `Post.content` |
+| `order` | int \| null | `dept_order` |
+| `display` | bool | `dept_display = y` |
+| `type` | string \| null | Nova's `playing` / `nonplaying` split. Provenance — ignore it if you have no counterpart |
+| `parent_id` | int \| null | `dept_parent`, null when top-level |
+| `manifest_id` | int \| null | Resolve against `GET /manifests`. Null when unassigned |
+
+---
+
+### `GET /manifests` *(v1.41.0+)*
+
+List **every manifest**. Scope: `positions:read`. A sim can have several — crew, support craft, NPCs — and departments attach to one via `manifest_id` on `GET /departments`. The snapshot's manifest tree carries names but no ids, so until now there was no way to attach a department to the right manifest.
+
+Nova's presentation-only columns are deliberately **not** returned: `manifest_view` stores raw jQuery snippets rather than a view name, and `manifest_metadata` is a pipe-delimited list of bio field names to render beside each crew member.
+
+**Query params:** `display` (`y`/`n`, omit for both), `page`, `per_page` (capped at `500`).
+
+**Manifest object:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | `manifests.manifest_id` |
+| `name` | string | Entity-decoded |
+| `description` | string \| null | Raw as stored |
+| `order` | int \| null | `manifest_order` |
+| `display` | bool | `manifest_display = y` |
+| `default` | bool | The sim's default manifest (`manifest_default = y`) |
+
+---
+
+### `GET /ranks` *(v1.41.0+)*
+
+The sim's **full rank ladder**, including rungs nobody currently wears. Scope: `characters:read`. Ordered by seniority.
+
+Rank data otherwise reaches the API only denormalised onto characters (`rank_name` / `rank_short` / `rank_order`) and as an image URL inside the snapshot manifest — which between them cover only the ranks somebody is wearing *right now*. A consumer mirroring the sim had nothing to promote anyone **into**.
+
+**Query params:** `display` (`y`/`n`, omit for both), `page`, `per_page` (capped at `500`).
+
+**Rank object:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | `ranks.rank_id` |
+| `name` | string | Entity-decoded, e.g. `Lieutenant Commander` |
+| `short_name` | string | e.g. `LtCmdr` |
+| `order` | int \| null | Ladder position, seniority ascending. Same value as `Character.rank_order` |
+| `display` | bool | `rank_display = y` |
+| `image_url` | string \| null | **Absolute https URL**, generated sim-side |
+
+⚠️ **`image_url` is never a bare filename.** Rank art resolves through `assets/common/{genre}/ranks/{set}/{image}{ext}`, which depends on a sim setting and a catalogue column no consumer can see — so building it client-side is not possible. It is `null` when the rank has no image, **and also** when the sim's configured rank set can't be resolved (most often a set belonging to a different genre). Null rather than a URL that would 404.
+
+The rank **catalogue** (`catalogue_ranks`) is not exposed. Import the artwork as one game-owned rank set rather than reproducing Nova's catalogue.
 
 ---
 
@@ -863,6 +981,8 @@ For an "is this token still working" health check, run a daily Schedule trigger 
 The API surface is versioned through the suite itself (`config.json` &rarr; `version`). Breaking changes to the response shape will only happen in a major version bump (e.g. 1.x &rarr; 2.0). Additive changes (new optional fields, new endpoints) ship in minor versions and won't break existing consumers.
 
 If you want to pin against a specific version, check the suite version on `GET /ping` (add your own version-fetch endpoint if needed) or read the GitHub release tag of your installed copy.
+
+**One caveat for v1.41.0.** Everything in that release is additive except the `per_page` cap, which went from `100` to `500`. No response *shape* changed, but a client that was already sending `per_page=500` used to get 100 rows back and page for the rest; now it gets 500 in a single response. If your client sizes a buffer, a timeout or a memory budget off the page it receives, check it before upgrading — particularly on `GET /posts` with bodies, which is the largest response this API can produce.
 
 ---
 
