@@ -792,13 +792,20 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$this->load->model('characters_model', 'characters');
 
 		$id = $this->uri->segment(5);
+
+		// Sub-resource before the numeric check. A hyphen is fine here - only
+		// segment 4 has to be a legal PHP method name - and non-numeric
+		// segments otherwise fall through to the list, which is long-standing
+		// behaviour worth leaving alone.
+		if ($id === 'bio-fields') {
+			$this->_bioFieldsEndpoint();
+		}
+
 		if ($id !== null && $id !== '' && ctype_digit((string) $id)) {
 			$row = $this->characters->get_character((int) $id);
 			if ( ! $row) {
 				$this->_emit(404, array('error' => 'Character not found.'));
 			}
-			// Bio fields on the single read only - on a list they would cost a
-			// query per row and dwarf the rest of the payload.
 			$this->_emit(200, $this->_projectCharacter($row, true));
 		}
 
@@ -806,6 +813,10 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		if ($status === null || $status === '') {
 			$status = 'active';
 		}
+		// v1.42.0: bios on the list, opt-in. Off by default because it is a
+		// much larger payload; see _bioValuesFor() for why it is not the
+		// per-row cost the docblock on _projectCharacter used to warn about.
+		$includeBio = ($this->input->get('include', true) === 'bio');
 		$since = $this->_updatedSince();
 		list($page, $perPage, $offset) = $this->_paging();
 
@@ -819,9 +830,96 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$total = (int) $this->db->count_all_results('', false);
 		$rows  = $this->db->limit($perPage, $offset)->get()->result();
 
+		// One query for the whole page's bio values, not one per character.
+		$bioValues = array();
+		if ($includeBio) {
+			$ids = array();
+			foreach ($rows as $row) { $ids[] = (int) $row->charid; }
+			$bioValues = $this->_bioValuesFor($ids);
+		}
+
 		$data = array();
 		foreach ($rows as $row) {
-			$data[] = $this->_projectCharacter($row);
+			if ($includeBio) {
+				$cid = (int) $row->charid;
+				$data[] = $this->_projectCharacter(
+					$row, true, isset($bioValues[$cid]) ? $bioValues[$cid] : array()
+				);
+			} else {
+				$data[] = $this->_projectCharacter($row);
+			}
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/characters/bio-fields - the sim's bio FORM, without any
+	 * character's answers. Scope: characters:read.
+	 *
+	 * GET /characters/{id} already returns a character's bio, but reconstructing
+	 * the form from those is one request per character, and the union of them
+	 * still cannot tell "empty for this character" from "does not exist" - nor
+	 * does it ever yield field order, help text, or a select's option list. A
+	 * field nobody has filled in is still part of the form.
+	 *
+	 * Hidden fields ARE included here, with display=false, because this
+	 * describes the form rather than a character. Filter with ?display=y|n.
+	 */
+	private function _bioFieldsEndpoint()
+	{
+		$this->_requireMethod('GET');
+
+		$display = $this->_displayFilter();
+		$fields  = $this->_bioFieldDefs($display === null ? '' : $display);
+		$options = $this->_bioFieldOptions();
+
+		list($page, $perPage, $offset) = $this->_paging();
+		$total = count($fields);
+		$slice = array_slice($fields, $offset, $perPage);
+
+		$data = array();
+		foreach ($slice as $f) {
+			$fid  = (int) $f->field_id;
+			$name = isset($f->field_name) ? (string) $f->field_name : '';
+			$label = $this->_dec(isset($f->field_label_page) ? $f->field_label_page : '');
+			$type  = isset($f->field_type) ? (string) $f->field_type : 'text';
+			$help  = $this->_dec(isset($f->field_help) ? $f->field_help : '');
+
+			$entry = array(
+				'id'      => $fid,
+				// The stable key: Nova renames labels, not field_name.
+				'name'    => $name,
+				'label'   => ($label !== '') ? $label : $name,
+				'type'    => $type,
+				'order'   => isset($f->field_order) ? (int) $f->field_order : null,
+				'display' => ( ! isset($f->field_display) || $f->field_display === 'y'),
+				'help'    => ($help !== '') ? $help : null,
+				// Textarea height. Meaningless for text/select, but Nova stores
+				// it for every field and it costs nothing to pass on.
+				'rows'    => isset($f->field_rows) ? (int) $f->field_rows : null,
+				'section' => array(
+					'id'    => isset($f->section_id) ? (int) $f->section_id : null,
+					'name'  => $this->_dec(isset($f->section_name) ? $f->section_name : ''),
+					'order' => isset($f->section_order) ? (int) $f->section_order : null,
+					'tab'   => array(
+						'id'      => isset($f->tab_id) ? (int) $f->tab_id : null,
+						'name'    => $this->_dec(isset($f->tab_name) ? $f->tab_name : ''),
+						'order'   => isset($f->tab_order) ? (int) $f->tab_order : null,
+						// Reported, not filtered on: a hidden tab's fields still
+						// belong to the form, and GET /characters/{id} has always
+						// listed them.
+						'display' => ( ! isset($f->tab_display) || $f->tab_display === 'y'),
+					),
+				),
+			);
+
+			// Only a select has options, and its `value` is exactly what turns
+			// up in a character's bio[].value for this field.
+			if ($type === 'select') {
+				$entry['options'] = isset($options[$fid]) ? $options[$fid] : array();
+			}
+
+			$data[] = $entry;
 		}
 		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
 	}
@@ -830,14 +928,18 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 * GET /Api/logs          - list personal logs, newest first
 	 * GET /Api/logs/{id}     - single log
 	 *
-	 * Scope: logs:read, which is a PUBLIC read - it sees activated logs only.
-	 * ?status is accepted for symmetry with /posts, but a draft is never
-	 * returned to this scope whatever it asks for: a personal log draft is
-	 * one writer's private work, and unlike posts there is no own/all tier
-	 * here to earn access with.
+	 * Scope: logs:read is a PUBLIC read - it sees activated logs only, and
+	 * ?status cannot talk it out of that. A personal log draft is one writer's
+	 * private work.
 	 *
-	 * Filters: ?character_id=, ?status=, ?updated_since=, ?content=0,
-	 * ?page=, ?per_page=.
+	 * v1.42.0 adds the tier that was missing rather than widening logs:read:
+	 * a token carrying logs:read.all AND bound to a sysadmin may ask for
+	 * drafts, exactly as posts:read.all works. That is the right bar - the sim
+	 * owner running an export of their own sim clears it, a third-party
+	 * integration does not - and it needs no new trust model.
+	 *
+	 * Filters: ?character_id=, ?status=activated|saved|pending|any (default
+	 * activated), ?updated_since=, ?content=0, ?page=, ?per_page=.
 	 */
 	public function logs()
 	{
@@ -845,13 +947,15 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$this->_requireMethod('GET');
 		$this->_authenticate('logs:read');
 
+		$canReadDrafts = $this->_tokenCanUseAll('logs');
+
 		$id = $this->uri->segment(5);
 		if ($id !== null && $id !== '' && ctype_digit((string) $id)) {
 			$row = $this->db->get_where('personallogs', array('log_id' => (int) $id), 1)->row();
 			// A draft 404s rather than 403s: logs:read cannot tell the
 			// difference between "no such log" and "a log you may not read",
 			// and saying which would leak that a draft exists.
-			if ( ! $row || (isset($row->log_status) && $row->log_status !== 'activated')) {
+			if ( ! $row || ( ! $canReadDrafts && isset($row->log_status) && $row->log_status !== 'activated')) {
 				$this->_emit(404, array('error' => 'Log not found.'));
 			}
 			$this->_emit(200, $this->_projectLog($row));
@@ -862,8 +966,17 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$since          = $this->_updatedSince();
 		list($page, $perPage, $offset) = $this->_paging();
 
+		// ?status is honoured ONLY for a token that earned the drafts tier.
+		// Everyone else gets activated, whatever they asked for.
+		$status = $this->input->get('status', true);
+		if ( ! $canReadDrafts || $status === null || $status === '') {
+			$status = 'activated';
+		}
+
 		$this->db->from('personallogs');
-		$this->db->where('log_status', 'activated');
+		if ($status !== 'any') {
+			$this->db->where('log_status', $status);
+		}
 		if ($charId > 0) {
 			$this->db->where('log_author_character', $charId);
 		}
@@ -883,6 +996,7 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	/**
 	 * GET /Api/missions          - list (filters: ?status=, ?page=, ?per_page=)
 	 * GET /Api/missions/{id}     - single
+	 * GET /Api/missions/groups   - the sim's mission groups (v1.42.0)
 	 *
 	 * Default status filter is 'any' since most sims have a small mission
 	 * list and consumers usually want all of them.
@@ -890,10 +1004,19 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	public function missions()
 	{
 		$this->_gate();
-		$this->_authenticate('missions:read');
+		$token = $this->_authenticate('missions:read');
 		$this->load->model('missions_model', 'missions');
 
 		$id = $this->uri->segment(5);
+
+		// Sub-resource before the numeric check. Named /missions/groups rather
+		// than a top-level path because Nova's router dispatches on segment 4,
+		// which has to be a legal PHP method name - it is a namespace, not a
+		// claim that a group belongs to a mission (it is the other way round).
+		if ($id === 'groups') {
+			$this->_missionGroupsEndpoint();
+		}
+
 		if ($id !== null && $id !== '' && ctype_digit((string) $id)) {
 			$row = $this->missions->get_mission((int) $id);
 			if ( ! $row) {
@@ -916,6 +1039,42 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		$data = array();
 		foreach ($rows as $row) {
 			$data[] = $this->_projectMission($row);
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/missions/groups - the sim's mission groups. Scope: missions:read.
+	 *
+	 * Nova's mission groups are story arcs: without them a long-running sim's
+	 * missions arrive as one flat list with no way to recover the seasons they
+	 * were written in. Attach missions via group_id on GET /missions.
+	 *
+	 * Filters: ?page=, ?per_page=.
+	 */
+	private function _missionGroupsEndpoint()
+	{
+		$this->_requireMethod('GET');
+
+		list($page, $perPage, $offset) = $this->_paging();
+
+		$this->db->from('mission_groups');
+		$this->db->order_by('misgroup_order', 'asc');
+		$this->db->order_by('misgroup_id', 'asc');
+
+		$total = (int) $this->db->count_all_results('', false);
+		$rows  = $this->db->limit($perPage, $offset)->get()->result();
+
+		$data = array();
+		foreach ($rows as $row) {
+			$data[] = array(
+				'id'          => (int) $row->misgroup_id,
+				'name'        => $this->_dec(isset($row->misgroup_name) ? $row->misgroup_name : ''),
+				'description' => isset($row->misgroup_desc) ? $row->misgroup_desc : null,
+				'order'       => isset($row->misgroup_order) ? (int) $row->misgroup_order : null,
+				// Nova nests groups one level. Null when top-level.
+				'parent_id'   => ( ! empty($row->misgroup_parent)) ? (int) $row->misgroup_parent : null,
+			);
 		}
 		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
 	}
@@ -1142,6 +1301,418 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 			);
 		}
 		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/news - the sim's news items. Scope: news:read.
+	 *
+	 * Nothing served news history before v1.42.0: the webhooks library read the
+	 * table to fire news.posted, and that was the only code that touched it.
+	 *
+	 * Filters: ?status=activated|saved|pending|any (default activated, like
+	 * /posts), ?category_id=, ?page=, ?per_page=.
+	 *
+	 * news_private is REPORTED, not filtered on. It marks an item the sim
+	 * showed members rather than visitors, and a consumer mirroring the sim
+	 * needs to know which so it can reproduce that - dropping them silently
+	 * would lose them on a sim that is retiring.
+	 */
+	public function news()
+	{
+		$this->_gate();
+		$this->_requireMethod('GET');
+		$this->_authenticate('news:read');
+
+		$status = $this->input->get('status', true);
+		if ($status === null || $status === '') {
+			$status = 'activated';
+		}
+		list($page, $perPage, $offset) = $this->_paging();
+
+		$this->db->from('news');
+		if ($status !== 'any') {
+			$this->db->where('news_status', $status);
+		}
+		$categoryId = $this->input->get('category_id', true);
+		if ($categoryId !== null && $categoryId !== '' && ctype_digit((string) $categoryId)) {
+			$this->db->where('news_cat', (int) $categoryId);
+		}
+		$this->db->order_by('news_date', 'desc');
+		$this->db->order_by('news_id', 'desc');
+
+		$total = (int) $this->db->count_all_results('', false);
+		$rows  = $this->db->limit($perPage, $offset)->get()->result();
+
+		$categories = $this->_newsCategories();
+
+		$data = array();
+		foreach ($rows as $row) {
+			$catId = ( ! empty($row->news_cat)) ? (int) $row->news_cat : null;
+			$data[] = array(
+				'id'                  => (int) $row->news_id,
+				'title'               => $this->_dec(isset($row->news_title) ? $row->news_title : ''),
+				// Raw as stored, like Post.content.
+				'content'             => isset($row->news_content) ? $row->news_content : null,
+				'date'                => \nova_ext_sim_central\SyncTrack::iso(
+					isset($row->news_date) ? $row->news_date : 0
+				),
+				'status'              => isset($row->news_status) ? $row->news_status : null,
+				'private'             => (isset($row->news_private) && $row->news_private === 'y'),
+				// Resolve the user against GET /characters' player.discord_id to
+				// match an author to an account.
+				'author_user_id'      => ( ! empty($row->news_author_user)) ? (int) $row->news_author_user : null,
+				'author_character_id' => ( ! empty($row->news_author_character)) ? (int) $row->news_author_character : null,
+				'category_id'         => $catId,
+				'category'            => ($catId !== null && isset($categories[$catId])) ? $categories[$catId] : null,
+				'tags'                => $this->_tagsList(isset($row->news_tags) ? $row->news_tags : ''),
+			);
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * newscat_id => name, read once per request. news_categories has exactly
+	 * three columns (id, name, display) - no ordering, no description - so
+	 * there is nothing here worth its own endpoint.
+	 */
+	private $_newsCatCache = null;
+	private function _newsCategories()
+	{
+		if ($this->_newsCatCache === null) {
+			$this->_newsCatCache = array();
+			foreach ($this->db->select('newscat_id, newscat_name')->get('news_categories')->result() as $c) {
+				$this->_newsCatCache[(int) $c->newscat_id] = $this->_dec($c->newscat_name);
+			}
+		}
+		return $this->_newsCatCache;
+	}
+
+	/**
+	 * GET /Api/awards           - the awards catalogue. Scope: awards:read.
+	 * GET /Api/awards/received  - who has been given what.
+	 *
+	 * awards_queue - pending and REJECTED nominations - is deliberately not
+	 * exposed by either: it is moderation state, not a record of an award.
+	 *
+	 * Filters (catalogue): ?display=y|n (default both), ?category=ic|ooc|both.
+	 * Filters (received):  ?character_id=, ?award_id=.
+	 */
+	public function awards()
+	{
+		$this->_gate();
+		$this->_requireMethod('GET');
+		$this->_authenticate('awards:read');
+
+		if ($this->uri->segment(5) === 'received') {
+			$this->_awardsReceivedEndpoint();
+		}
+
+		list($page, $perPage, $offset) = $this->_paging();
+
+		$this->db->from('awards');
+		$display = $this->_displayFilter();
+		if ($display !== null) {
+			$this->db->where('award_display', $display);
+		}
+		$category = $this->input->get('category', true);
+		if (in_array($category, array('ic', 'ooc', 'both'), true)) {
+			$this->db->where('award_cat', $category);
+		}
+		$this->db->order_by('award_order', 'asc');
+		$this->db->order_by('award_id', 'asc');
+
+		$total = (int) $this->db->count_all_results('', false);
+		$rows  = $this->db->limit($perPage, $offset)->get()->result();
+
+		$data = array();
+		foreach ($rows as $row) {
+			$data[] = array(
+				'id'          => (int) $row->award_id,
+				'name'        => $this->_dec(isset($row->award_name) ? $row->award_name : ''),
+				'description' => isset($row->award_desc) ? $row->award_desc : null,
+				// Nova's award_cat: in-character, out-of-character, or both.
+				'category'    => isset($row->award_cat) ? $row->award_cat : null,
+				'order'       => isset($row->award_order) ? (int) $row->award_order : null,
+				'display'     => ( ! isset($row->award_display) || $row->award_display === 'y'),
+				'image_url'   => \nova_ext_sim_central\MediaUrl::asset(
+					\nova_ext_sim_central\MediaUrl::AWARDS,
+					isset($row->award_image) ? $row->award_image : ''
+				),
+			);
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/awards/received - every award grant on the sim.
+	 *
+	 * The grant's own id matters more than usual and is always returned: the
+	 * same award can legitimately be given to the same character twice, so it
+	 * is the only thing that lets a consumer re-run an import without
+	 * duplicating grants.
+	 */
+	private function _awardsReceivedEndpoint()
+	{
+		list($page, $perPage, $offset) = $this->_paging();
+
+		$this->db->from('awards_received');
+		$charId = $this->input->get('character_id', true);
+		if ($charId !== null && $charId !== '' && ctype_digit((string) $charId)) {
+			$this->db->where('awardrec_character', (int) $charId);
+		}
+		$awardId = $this->input->get('award_id', true);
+		if ($awardId !== null && $awardId !== '' && ctype_digit((string) $awardId)) {
+			$this->db->where('awardrec_award', (int) $awardId);
+		}
+		$this->db->order_by('awardrec_date', 'desc');
+		$this->db->order_by('awardrec_id', 'desc');
+
+		$total = (int) $this->db->count_all_results('', false);
+		$rows  = $this->db->limit($perPage, $offset)->get()->result();
+
+		$data = array();
+		foreach ($rows as $row) {
+			$data[] = array(
+				'id'                   => (int) $row->awardrec_id,
+				'award_id'             => (int) $row->awardrec_award,
+				'character_id'         => ( ! empty($row->awardrec_character)) ? (int) $row->awardrec_character : null,
+				'user_id'              => ( ! empty($row->awardrec_user)) ? (int) $row->awardrec_user : null,
+				'nominated_by_user_id' => ( ! empty($row->awardrec_nominated_by)) ? (int) $row->awardrec_nominated_by : null,
+				'date'                 => \nova_ext_sim_central\SyncTrack::iso(
+					isset($row->awardrec_date) ? $row->awardrec_date : 0
+				),
+				'reason'               => isset($row->awardrec_reason) ? $row->awardrec_reason : null,
+			);
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/**
+	 * GET /Api/specs - ship specifications, flattened. Scope: specs:read.
+	 *
+	 * Includes the deck tour's DECKS, which despite the name hang off a spec
+	 * item rather than a tour item (tour_decks.deck_item is a specs_id - the
+	 * ACP's deck editor picks a ship). Decks therefore belong here, not on
+	 * GET /tour.
+	 *
+	 * Filters: ?display=y|n (default both), ?page=, ?per_page=.
+	 */
+	public function specs()
+	{
+		$this->_gate();
+		$this->_requireMethod('GET');
+		$this->_authenticate('specs:read');
+
+		$this->_eavCollection(array(
+			'items'    => 'specs',
+			'prefix'   => 'specs_',
+			'fields'   => 'specs_fields',
+			'sections' => 'specs_sections',
+			'data'     => 'specs_data',
+			'dataItem' => 'data_item',
+			'folder'   => \nova_ext_sim_central\MediaUrl::SPECS,
+			'decks'    => true,
+		));
+	}
+
+	/**
+	 * GET /Api/tour - the deck tour's locations, flattened. Scope: specs:read.
+	 *
+	 * Two differences from /specs, both structural in Nova rather than choices
+	 * made here: tour fields are ONE FLAT ORDERED LIST (tour_fields has no
+	 * field_section and there is no tour_sections table), so tour fields carry
+	 * no section; and decks are not here, they are on GET /specs. Each tour
+	 * location instead names the ship it belongs to via spec_item_id.
+	 *
+	 * Filters: ?display=y|n (default both), ?page=, ?per_page=.
+	 */
+	public function tour()
+	{
+		$this->_gate();
+		$this->_requireMethod('GET');
+		$this->_authenticate('specs:read');
+
+		$this->_eavCollection(array(
+			'items'    => 'tour',
+			'prefix'   => 'tour_',
+			'fields'   => 'tour_fields',
+			'sections' => null,
+			'data'     => 'tour_data',
+			// NOT data_item - the tour's FK column is named differently.
+			'dataItem' => 'data_tour_item',
+			'folder'   => \nova_ext_sim_central\MediaUrl::TOUR,
+			'decks'    => false,
+			'specLink' => 'tour_spec_item',
+		));
+	}
+
+	/**
+	 * Flatten one of Nova's EAV collections (specs, tour) into plain objects
+	 * and emit it. THREE queries for the whole page, plus one for decks.
+	 *
+	 * Nova's own renderer walks sections, then fields within a section, then
+	 * calls get_field_data() once per field per item - roughly 50 queries for a
+	 * single six-section spec, and 250 for a page of five. None of that is
+	 * reusable at API volume, so this reads the definitions once and the values
+	 * for the whole page in one IN, then folds in PHP.
+	 *
+	 * Parameterised rather than written twice because specs and tour differ in
+	 * exactly the three places a copy-paste gets wrong: the data table's FK
+	 * column name, whether there are sections at all, and where decks live.
+	 */
+	private function _eavCollection(array $cfg)
+	{
+		$p = $cfg['prefix'];
+
+		list($page, $perPage, $offset) = $this->_paging();
+
+		$this->db->from($cfg['items']);
+		$display = $this->_displayFilter();
+		if ($display !== null) {
+			$this->db->where($p.'display', $display);
+		}
+		$this->db->order_by($p.'order', 'asc');
+		$this->db->order_by($p.'id', 'asc');
+
+		$total = (int) $this->db->count_all_results('', false);
+		$rows  = $this->db->limit($perPage, $offset)->get()->result();
+
+		$ids = array();
+		foreach ($rows as $r) {
+			$ids[] = (int) $r->{$p.'id'};
+		}
+
+		$fields = $this->_eavFieldDefs($cfg);
+		$values = $this->_eavValues($cfg, $ids);
+		$decks  = ( ! empty($cfg['decks'])) ? $this->_eavDecks($ids) : array();
+
+		$data = array();
+		foreach ($rows as $row) {
+			$itemId = (int) $row->{$p.'id'};
+			$mine   = isset($values[$itemId]) ? $values[$itemId] : array();
+
+			$flat = array();
+			foreach ($fields as $f) {
+				$fid = (int) $f->field_id;
+				// Nova pre-creates a row per field per item, so an unflattened
+				// dump is mostly "". Empty values are omitted entirely rather
+				// than emitted as "" - the same condition Nova's own spec page
+				// renders on.
+				if ( ! isset($mine[$fid]) || $mine[$fid] === '') {
+					continue;
+				}
+				$label = $this->_dec(isset($f->field_label_page) ? $f->field_label_page : '');
+				$name  = isset($f->field_name) ? (string) $f->field_name : '';
+				$entry = array(
+					'name'  => $name,
+					'label' => ($label !== '') ? $label : $name,
+					'value' => $mine[$fid],
+					'order' => isset($f->field_order) ? (int) $f->field_order : null,
+				);
+				// Only specs have sections; tour fields are one flat list, so
+				// the key is absent rather than null there.
+				if ( ! empty($cfg['sections'])) {
+					$entry['section'] = $this->_dec(isset($f->section_name) ? $f->section_name : '');
+				}
+				$flat[] = $entry;
+			}
+
+			$entry = array(
+				'id'      => $itemId,
+				'name'    => $this->_dec(isset($row->{$p.'name'}) ? $row->{$p.'name'} : ''),
+				'summary' => isset($row->{$p.'summary'}) ? $row->{$p.'summary'} : null,
+				'order'   => isset($row->{$p.'order'}) ? (int) $row->{$p.'order'} : null,
+				'display' => ( ! isset($row->{$p.'display'}) || $row->{$p.'display'} === 'y'),
+				'images'  => $this->_images(
+					isset($row->{$p.'images'}) ? $row->{$p.'images'} : '', $cfg['folder']
+				),
+				'fields'  => $flat,
+			);
+
+			if ( ! empty($cfg['specLink'])) {
+				$entry['spec_item_id'] = ( ! empty($row->{$cfg['specLink']}))
+					? (int) $row->{$cfg['specLink']} : null;
+			}
+			if ( ! empty($cfg['decks'])) {
+				$entry['decks'] = isset($decks[$itemId]) ? $decks[$itemId] : array();
+			}
+
+			$data[] = $entry;
+		}
+		$this->_emit(200, $this->_paginate($data, $total, $page, $perPage));
+	}
+
+	/** Field definitions for an EAV collection, with sections when it has them. */
+	private function _eavFieldDefs(array $cfg)
+	{
+		$select = $cfg['fields'].'.field_id, '.$cfg['fields'].'.field_name, '
+			.$cfg['fields'].'.field_label_page, '.$cfg['fields'].'.field_order';
+		if ( ! empty($cfg['sections'])) {
+			$select .= ', '.$cfg['sections'].'.section_name, '.$cfg['sections'].'.section_order';
+		}
+
+		$this->db->select($select)->from($cfg['fields']);
+		if ( ! empty($cfg['sections'])) {
+			$this->db->join(
+				$cfg['sections'],
+				$cfg['sections'].'.section_id = '.$cfg['fields'].'.field_section',
+				'left'
+			);
+			$this->db->order_by($cfg['sections'].'.section_order', 'asc');
+		}
+		$this->db->where($cfg['fields'].'.field_display', 'y');
+		$this->db->order_by($cfg['fields'].'.field_order', 'asc');
+
+		return $this->db->get()->result();
+	}
+
+	/** itemId => [fieldId => value] for a whole page, in one query. */
+	private function _eavValues(array $cfg, array $ids)
+	{
+		if (empty($ids)) {
+			return array();
+		}
+		$col  = $cfg['dataItem'];
+		$out  = array();
+		$rows = $this->db->select($col.', data_field, data_value')
+			->from($cfg['data'])
+			->where_in($col, $ids)
+			->get()->result();
+		foreach ($rows as $r) {
+			$out[(int) $r->$col][(int) $r->data_field] =
+				($r->data_value === null) ? '' : (string) $r->data_value;
+		}
+		return $out;
+	}
+
+	/**
+	 * specs_id => [decks] for a whole page, in one query.
+	 *
+	 * tour_decks.deck_item points at specs.specs_id, NOT tour.tour_id - the
+	 * decks belong to the ship, while a tour location merely references the
+	 * same ship through tour_spec_item.
+	 */
+	private function _eavDecks(array $ids)
+	{
+		if (empty($ids)) {
+			return array();
+		}
+		$out  = array();
+		$rows = $this->db->select('deck_id, deck_name, deck_order, deck_content, deck_item')
+			->from('tour_decks')
+			->where_in('deck_item', $ids)
+			->order_by('deck_order', 'asc')
+			->order_by('deck_id', 'asc')
+			->get()->result();
+		foreach ($rows as $r) {
+			$out[(int) $r->deck_item][] = array(
+				'id'      => (int) $r->deck_id,
+				'name'    => $this->_dec(isset($r->deck_name) ? $r->deck_name : ''),
+				'order'   => isset($r->deck_order) ? (int) $r->deck_order : null,
+				'content' => isset($r->deck_content) ? $r->deck_content : null,
+			);
+		}
+		return $out;
 	}
 
 	/**
@@ -2165,11 +2736,16 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	}
 
 	/**
-	 * @param bool $includeBio Attach the character's bio fields. Single-character
-	 *                         reads only - on a list this would be one extra
-	 *                         query per row and a very large payload.
+	 * @param bool       $includeBio Attach the character's bio fields. Default on
+	 *                               the single read; on a list it is opt-in via
+	 *                               ?include=bio, because the payload is much
+	 *                               larger - not, since v1.42.0, because it costs
+	 *                               a query per row.
+	 * @param array|null $bioValues  This character's field_id => value map when
+	 *                               the caller pre-loaded a whole page in one
+	 *                               query. Null means "fetch your own".
 	 */
-	private function _projectCharacter($row, $includeBio = false)
+	private function _projectCharacter($row, $includeBio = false, $bioValues = null)
 	{
 		$userId = (isset($row->user) && (int) $row->user > 0) ? (int) $row->user : null;
 
@@ -2262,7 +2838,7 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		);
 
 		if ($includeBio) {
-			$out['bio'] = $this->_characterBio((int) $row->charid);
+			$out['bio'] = $this->_characterBio((int) $row->charid, $bioValues);
 		}
 
 		return $out;
@@ -2450,36 +3026,40 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 	 * sim has turned off, and they do not render on the site either. A field
 	 * the character has never filled in IS listed, with an empty value, so the
 	 * array always describes the sim's whole bio form.
+	 *
+	 * @param array|null $prefetched This character's field_id => value map, when
+	 *                               the caller has already loaded a whole page's
+	 *                               values in one query (?include=bio). Null on
+	 *                               the single read, which fetches its own.
 	 */
-	private function _characterBio($charId)
+	private function _characterBio($charId, $prefetched = null)
 	{
 		$charId = (int) $charId;
 		if ($charId <= 0) {
 			return array();
 		}
 
-		$fields = $this->db
-			->select('characters_fields.field_id, characters_fields.field_name,'
-				.' characters_fields.field_type, characters_fields.field_label_page,'
-				.' characters_sections.section_id, characters_sections.section_name,'
-				.' characters_tabs.tab_id, characters_tabs.tab_name')
-			->from('characters_fields')
-			->join('characters_sections', 'characters_sections.section_id = characters_fields.field_section', 'left')
-			->join('characters_tabs', 'characters_tabs.tab_id = characters_sections.section_tab', 'left')
-			->where('characters_fields.field_display', 'y')
-			->order_by('characters_tabs.tab_order', 'asc')
-			->order_by('characters_sections.section_order', 'asc')
-			->order_by('characters_fields.field_order', 'asc')
-			->get()->result();
-
+		// Visible fields only, and that is load-bearing rather than cosmetic:
+		// SyncTrack::bioValues() hashes visible fields only, so surfacing a
+		// hidden one here would make bio and content_hash describe different
+		// things. (GET /characters/bio-fields, which returns no values, does
+		// show hidden fields - it is describing the form, not a character.)
+		$fields = $this->_bioFieldDefs('y');
 		if (empty($fields)) {
 			return array();
 		}
 
-		$values = array();
-		foreach ($this->db->select('data_field, data_value')
-			->get_where('characters_data', array('data_char' => $charId))->result() as $r) {
-			$values[(int) $r->data_field] = ($r->data_value === null) ? '' : (string) $r->data_value;
+		// One query per character on the single read; on a list, the caller
+		// has already fetched the whole page's values in one go and passes
+		// them in. Never let this fall back to per-row on a list.
+		if ($prefetched !== null) {
+			$values = $prefetched;
+		} else {
+			$values = array();
+			foreach ($this->db->select('data_field, data_value')
+				->get_where('characters_data', array('data_char' => $charId))->result() as $r) {
+				$values[(int) $r->data_field] = ($r->data_value === null) ? '' : (string) $r->data_value;
+			}
 		}
 
 		$out = array();
@@ -2513,6 +3093,109 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 					),
 				),
 			);
+		}
+		return $out;
+	}
+
+	/**
+	 * The sim's bio FORM definitions - one row per field, joined to its section
+	 * and tab - in the order the bio page renders them (tab, then section
+	 * within the tab, then field within the section).
+	 *
+	 * Memoized per display filter, because a whole page of characters shares
+	 * one form: ?include=bio must not re-read this per row.
+	 *
+	 * @param string $display 'y' or 'n' to filter on field_display, '' for both.
+	 */
+	private $_bioFieldDefCache = array();
+	private function _bioFieldDefs($display = '')
+	{
+		$key = (string) $display;
+		if ( ! array_key_exists($key, $this->_bioFieldDefCache)) {
+			$this->db
+				->select('characters_fields.field_id, characters_fields.field_name,'
+					.' characters_fields.field_type, characters_fields.field_label_page,'
+					.' characters_fields.field_order, characters_fields.field_display,'
+					.' characters_fields.field_help, characters_fields.field_rows,'
+					.' characters_sections.section_id, characters_sections.section_name,'
+					.' characters_sections.section_order,'
+					.' characters_tabs.tab_id, characters_tabs.tab_name,'
+					.' characters_tabs.tab_order, characters_tabs.tab_display')
+				->from('characters_fields')
+				->join('characters_sections', 'characters_sections.section_id = characters_fields.field_section', 'left')
+				->join('characters_tabs', 'characters_tabs.tab_id = characters_sections.section_tab', 'left');
+			if ($display === 'y' || $display === 'n') {
+				$this->db->where('characters_fields.field_display', $display);
+			}
+			$this->_bioFieldDefCache[$key] = $this->db
+				->order_by('characters_tabs.tab_order', 'asc')
+				->order_by('characters_sections.section_order', 'asc')
+				->order_by('characters_fields.field_order', 'asc')
+				->get()->result();
+		}
+		return $this->_bioFieldDefCache[$key];
+	}
+
+	/**
+	 * Select-field options, as field_id => [{value, label, order, selected}].
+	 *
+	 * Reads characters_values whole and groups in PHP. That is deliberate: the
+	 * table holds a few dozen rows on any real sim, so one unfiltered read
+	 * beats a WHERE IN per select field - and beats a query per field by a
+	 * mile. `value` is what a character's bio value actually contains; `label`
+	 * is what the sim's own dropdown displays.
+	 */
+	private $_bioOptionCache = null;
+	private function _bioFieldOptions()
+	{
+		if ($this->_bioOptionCache === null) {
+			$this->_bioOptionCache = array();
+			$rows = $this->db
+				->select('value_field, value_field_value, value_content, value_order, value_selected')
+				->from('characters_values')
+				->order_by('value_field', 'asc')
+				->order_by('value_order', 'asc')
+				->get()->result();
+			foreach ($rows as $r) {
+				$this->_bioOptionCache[(int) $r->value_field][] = array(
+					'value'    => isset($r->value_field_value) ? (string) $r->value_field_value : '',
+					'label'    => $this->_dec(isset($r->value_content) ? $r->value_content : ''),
+					'order'    => isset($r->value_order) ? (int) $r->value_order : null,
+					'selected' => (isset($r->value_selected) && $r->value_selected !== '' && $r->value_selected !== '0'),
+				);
+			}
+		}
+		return $this->_bioOptionCache;
+	}
+
+	/**
+	 * field_id => value maps for a whole page of characters, in ONE query.
+	 *
+	 * The alternative - calling _characterBio() per row - is a query per
+	 * character, which at the 500-row page cap is 500 queries for one request.
+	 * Returns charid => [field_id => value]; a character with nothing filled in
+	 * is absent, and the caller treats that as an empty map.
+	 */
+	private function _bioValuesFor(array $charIds)
+	{
+		$ids = array();
+		foreach ($charIds as $id) {
+			$id = (int) $id;
+			if ($id > 0) { $ids[$id] = true; }
+		}
+		if (empty($ids)) {
+			return array();
+		}
+
+		$out = array();
+		$rows = $this->db
+			->select('data_char, data_field, data_value')
+			->from('characters_data')
+			->where_in('data_char', array_keys($ids))
+			->get()->result();
+		foreach ($rows as $r) {
+			$out[(int) $r->data_char][(int) $r->data_field] =
+				($r->data_value === null) ? '' : (string) $r->data_value;
 		}
 		return $out;
 	}
@@ -2566,7 +3249,20 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 				isset($row->mission_images) ? $row->mission_images : '',
 				\nova_ext_sim_central\MediaUrl::MISSIONS
 			),
+			// v1.42.0. Nova's mission groups map onto a story arc; without this
+			// a ten-year sim's missions arrive as one flat list. Deleting a
+			// group resets this to 0 while the install default is NULL, so
+			// BOTH mean ungrouped.
+			'group_id'    => ( ! empty($row->mission_group)) ? (int) $row->mission_group : null,
 		);
+
+		// v1.42.0. GM-only writing notes. Nova renders these in the members'
+		// writing area and the ACP, behind a use_mission_notes permission, and
+		// on no public page - so unlike everything else on this object they are
+		// NOT public, and a plain missions:read token must not see them.
+		if ($this->_tokenCanUseAll('missions')) {
+			$out['notes'] = isset($row->mission_notes) ? $row->mission_notes : null;
+		}
 
 		// Total words across this mission's activated posts. Only exposed to
 		// tokens that can read all posts (posts:read / posts:read.all): a
@@ -2993,6 +3689,39 @@ class __extensions__nova_ext_sim_central__Api extends CI_Controller
 		}
 		return $this->_tokenHasScope($this->_authToken, 'posts:read')
 			|| $this->_tokenHasScope($this->_authToken, 'posts:read.all');
+	}
+
+	/**
+	 * Whether THIS request's token carries a `.all` sysadmin bypass for a
+	 * resource, answered softly - false rather than a 409/403 (v1.42.0).
+	 *
+	 * The hard path (_requireSysadminToken) is right when the whole endpoint is
+	 * privileged. This is for the other shape: an endpoint anyone may call
+	 * where one field, or one filter value, is privileged. A token without the
+	 * bypass gets the ordinary answer, not an error.
+	 *
+	 * Memoized per resource - a mission list would otherwise re-read the bound
+	 * user once per row.
+	 */
+	private $_canUseAllCache = array();
+	private function _tokenCanUseAll($resource, $family = 'read')
+	{
+		$key = $resource.':'.$family;
+		if ( ! array_key_exists($key, $this->_canUseAllCache)) {
+			$ok    = false;
+			$token = $this->_authToken;
+			if (isset($token) && $this->_tokenHasScope($token, $key.'.all')) {
+				$uid  = isset($token->user_id) ? (int) $token->user_id : 0;
+				$user = ($uid > 0)
+					? $this->db->select('is_sysadmin')->get_where('users', array('userid' => $uid), 1)->row()
+					: null;
+				// Same gate as posts:*.all - the scope is the boundary, the
+				// sysadmin flag is the permission.
+				$ok = $this->_canUseAll($token, $user, $family, $resource);
+			}
+			$this->_canUseAllCache[$key] = $ok;
+		}
+		return $this->_canUseAllCache[$key];
 	}
 
 	/**

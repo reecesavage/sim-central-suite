@@ -67,7 +67,12 @@ Tokens carry an explicit scope list. Endpoints check for the scope they require 
 | `posts:delete.all` | Delete **any** post *(sysadmin only)* |
 | `characters:read` | List characters, view a single character (including bio fields), and read the sim's rank ladder *(v1.41.0+)* |
 | `logs:read` | List personal logs, view a single log &mdash; activated only *(v1.39.0+)* |
-| `missions:read` | List missions, view a single mission |
+| `logs:read.all` | Read **any** personal log incl. others' drafts *(sysadmin only, v1.42.0+)* |
+| `news:read` | Read news items, including which were private to members *(v1.42.0+)* |
+| `awards:read` | Read the awards catalogue and the record of who received what *(v1.42.0+)* |
+| `specs:read` | Read ship specifications and the deck tour *(v1.42.0+)* |
+| `missions:read` | List missions, view a single mission, and list the groups they're organised into *(v1.42.0+)* |
+| `missions:read.all` | Additionally read a mission's **GM-only writing notes** *(sysadmin only, v1.42.0+)* |
 | `positions:read` | List crew positions (open by default, or all of them), plus the departments and manifests they're organised into *(v1.41.0+)* |
 | `users:write` | Disable / reactivate users and their linked characters |
 | `webhooks:read` | List event webhooks and view their config |
@@ -84,7 +89,9 @@ The `*:write` / `*:delete` scopes mutate sim state — grant them sparingly. Web
 
 The `posts:read.own` / `posts:write` / `posts:delete` scopes act **as a specific Nova user**. Bind the user when you create the token (ACP → *REST API → Configure* → "Act as user"). These scopes are rejected at creation time if no user is selected, and return `409` at request time if the binding is missing. `GET /me` reports who a token is bound to.
 
-The `*.all` scopes are a **sysadmin bypass**: they widen what a token can see/target, but only when the token carries the `.all` scope **and** the bound user is a sysadmin. The scope is the security boundary; the sysadmin flag is the permission. `/me` still returns only the bound user's own characters.
+The `*.all` scopes are a **sysadmin bypass**: they widen what a token can see/target, but only when the token carries the `.all` scope **and** the bound user is a sysadmin. The scope is the security boundary; the sysadmin flag is the permission.
+
+`logs:read.all` and `missions:read.all` *(v1.42.0+)* work the same way, and are the only two scopes here that reach content the sim shows **nobody** — a writer's unpublished drafts, and a GM's private writing notes. They degrade silently rather than erroring: a token that carries the scope but isn't sysadmin-bound gets the ordinary public answer, not a 403. Neither is included in the Sim Central grant, so an upgrade never widens an existing token into them — they have to be minted deliberately. `/me` still returns only the bound user's own characters.
 
 ---
 
@@ -410,6 +417,7 @@ List characters. Scope: `characters:read`.
 | Param | Default | Notes |
 |---|---|---|
 | `status` | `active` | `crew_type`. `any` returns every character (active, inactive, pending, etc.) |
+| `include` | | `include=bio` attaches each row's `bio` array *(v1.42.0+)*. Off by default because the payload is much larger — **not** because it's slow: the whole page's bio values are read in one query, not one per row |
 | `page` | `1` | |
 | `per_page` | `25` | Capped at `500` *(v1.41.0+; was `100`)* |
 
@@ -535,6 +543,8 @@ List missions, most recent start first. Scope: `missions:read`.
 | `start` | ISO 8601 \| null | |
 | `end` | ISO 8601 \| null | |
 | `images` | string[] | *(v1.41.0+)* Absolute https URLs for the mission's images, stored order. Always an array; `[]` when there are none |
+| `group_id` | int \| null | *(v1.42.0+)* The story arc this mission belongs to — resolve against `GET /missions/groups`. `null` when ungrouped (Nova records that as `0` or `NULL` depending on how it got there; both come back `null`) |
+| `notes` | string \| null | *(v1.42.0+)* The GM's private writing notes. **Only returned to a `missions:read.all` token bound to a sysadmin** — the key is absent entirely otherwise. Unlike everything else here these are not public: Nova shows them in the members' writing area and the ACP, behind a permission, and on no public page |
 | `posts_updated_at` | ISO 8601 \| null | When any post in this mission last changed *(v1.39.0+)* &mdash; the newest `content_updated_at` across them, UTC with a `Z`. `null` when the mission has no posts. **Scoped to what your token can enumerate:** without `posts:read.all` it rolls up activated posts only, so a mission can never report itself dirty and then hand you an empty delta. One `GET /missions` is the whole dirty check for a per-mission sync |
 | `summary_enabled` | bool | **Only present when *Mission Post Summary* is enabled.** Whether writers see the summary field on this mission's posts. |
 | `ordered` | object | **Only present when *Ordered Mission Posts* is enabled.** Keys: `config`, `numbering` (bool), `default_date`, `default_stardate`, `legacy_mode` (bool). |
@@ -549,14 +559,16 @@ Single mission by id. Scope: `missions:read`.
 
 List personal logs, newest first. Scope: `logs:read`.
 
-`logs:read` is a **public** read: it sees activated logs only. `status` is accepted for symmetry with `/posts` but never widens what you get — a draft personal log is one writer's private work, and unlike posts there is no `own`/`all` tier here to earn access with.
+`logs:read` is a **public** read: it sees activated logs only, and `status` can't talk it out of that — a draft personal log is one writer's private work.
+
+*(v1.42.0+)* Drafts are reachable, but through the tier that was missing rather than by widening `logs:read`: a token carrying **`logs:read.all`** *and* bound to a **sysadmin** may pass `?status`, exactly as `posts:read.all` works. That's the right bar — a sim owner exporting their own sim clears it, a third-party integration doesn't — and it needs no new trust model. On a retiring sim, a draft nobody can export is a draft that's simply lost.
 
 **Query params:**
 
 | Param | Default | Notes |
 |---|---|---|
 | `character_id` | *(none)* | Only logs authored by this character |
-| `status` | `activated` | Accepted for symmetry; activated is what you get regardless |
+| `status` | `activated` | `activated`, `saved`, `pending`, or `any`. Honoured **only** for a `logs:read.all` token bound to a sysadmin *(v1.42.0+)*; any other token gets activated regardless |
 | `updated_since` | *(none)* | ISO 8601 datetime. Same semantics as on `/posts` |
 | `content` | `1` | `0` omits each log's `content`. `excerpt` and `word_count` still returned |
 | `page` | `1` | 1-indexed |
@@ -708,6 +720,145 @@ Rank data otherwise reaches the API only denormalised onto characters (`rank_nam
 ⚠️ **`image_url` is never a bare filename.** Rank art resolves through `assets/common/{genre}/ranks/{set}/{image}{ext}`, which depends on a sim setting and a catalogue column no consumer can see — so building it client-side is not possible. It is `null` when the rank has no image, **and also** when the sim's configured rank set can't be resolved (most often a set belonging to a different genre). Null rather than a URL that would 404.
 
 The rank **catalogue** (`catalogue_ranks`) is not exposed. Import the artwork as one game-owned rank set rather than reproducing Nova's catalogue.
+
+---
+
+### `GET /characters/bio-fields` *(v1.42.0+)*
+
+The sim's **bio form**, without any character's answers. Scope: `characters:read`. Ordered the way the bio page renders: tab, then section within the tab, then field within the section.
+
+`GET /characters/{id}` already returns a *character's* bio. Reconstructing the **form** from those is one request per character — and the union of them still can't tell "empty for this character" apart from "doesn't exist", nor does it ever yield field order, help text, or a select's option list. A field nobody has filled in is still part of the form.
+
+Unlike the `bio` array on a character, **hidden fields are included here** (with `display: false`), because this describes the form rather than a character.
+
+**Query params:** `display` (`y`/`n`, omit for both), `page`, `per_page`.
+
+**Bio field definition:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | `characters_fields.field_id` |
+| `name` | string | Machine name — the **stable key**. Nova renames labels, not this |
+| `label` | string | Human label, entity-decoded. Falls back to `name` when blank |
+| `type` | string | `text`, `textarea`, or `select` |
+| `order` | int \| null | Sort order within its section |
+| `display` | bool | Whether the sim shows this field |
+| `help` | string \| null | Help text under the field. `null` when blank |
+| `rows` | int \| null | Textarea height. Nova stores it for every field, so it's meaningless on text/select |
+| `section` | object | `{id, name, order, tab: {id, name, order, display}}`. Ids are `null` if the section or tab was deleted out from under the field |
+| `options` | object[] | **Only present when `type` is `select`** — absent otherwise. `[{value, label, order, selected}]` |
+
+`options[].value` is exactly what turns up in a character's `bio[].value` for that field; `options[].label` is what the sim's own dropdown displays.
+
+---
+
+### `GET /missions/groups` *(v1.42.0+)*
+
+The sim's **mission groups** — story arcs. Scope: `missions:read`. Attach missions via `group_id` on `GET /missions`. Without these, a ten-year sim's sixty missions arrive as one flat list with no way to recover the seasons they were written in.
+
+> **On the path.** A group *contains* missions, so the nesting reads backwards at first glance. It's a namespace, not a containment claim: Nova's extension router dispatches on the path segment that has to be a legal PHP method name, so a compound resource has to hang off an existing one. `/users/disable` is namespaced the same way.
+
+**Mission group object:** `id`, `name` (entity-decoded), `description` (raw as stored), `order`, `parent_id` (`null` when top-level).
+
+---
+
+### `GET /news` *(v1.42.0+)*
+
+The sim's **news items**, newest first. Scope: `news:read`. Nothing served news history before this — the webhooks library read the table to fire `news.posted`, and that was the only code that touched it.
+
+**Query params:** `status` (`activated` default, or `saved`/`pending`/`any`), `category_id`, `page`, `per_page`.
+
+**News object:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | `news.news_id` |
+| `title` | string | Entity-decoded |
+| `content` | string \| null | Raw as stored, like `Post.content` |
+| `date` | ISO 8601 \| null | UTC with a `Z` |
+| `status` | string | `activated` / `saved` / `pending` |
+| `private` | bool | The sim showed this to members rather than visitors |
+| `author_user_id` | int \| null | Resolve against a character's `player.discord_id` to match the author to an account |
+| `author_character_id` | int \| null | |
+| `category_id` | int \| null | |
+| `category` | string \| null | Resolved name. `null` when uncategorised or the category is gone |
+| `tags` | string[] | Always an array |
+
+`private` is **reported, never filtered on**. It marks what the sim showed members rather than visitors, and a consumer mirroring the sim needs to know which so it can reproduce that — silently dropping them would lose them for good on a sim that's retiring. Same reasoning for `?status=any`: import unpublished news *as* unpublished rather than not at all.
+
+---
+
+### `GET /awards` *(v1.42.0+)*
+
+The **awards catalogue** — every award the sim can give. Scope: `awards:read`.
+
+**Query params:** `display` (`y`/`n`, omit for both), `category` (`ic`/`ooc`/`both`), `page`, `per_page`.
+
+**Award object:** `id`, `name` (entity-decoded), `description` (raw), `category` (Nova's `award_cat`: `ic`, `ooc`, or `both`), `order`, `display`, `image_url` (**absolute https or `null`**, never a bare filename).
+
+---
+
+### `GET /awards/received` *(v1.42.0+)*
+
+Every **award grant** on the sim, newest first, with reason and date. Scope: `awards:read`.
+
+**Query params:** `character_id`, `award_id`, `page`, `per_page`.
+
+**Grant object:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | The **grant's** id — see below |
+| `award_id` | int | Resolve against `GET /awards` |
+| `character_id` | int \| null | |
+| `user_id` | int \| null | |
+| `nominated_by_user_id` | int \| null | |
+| `date` | ISO 8601 \| null | UTC with a `Z` |
+| `reason` | string \| null | Raw as stored |
+
+⚠️ **`id` matters more than usual.** The same award can legitimately be given to the same character twice, so the grant id is the only thing that lets you re-run an import without duplicating grants. Key on it.
+
+Pending and **rejected** nominations (Nova's awards queue) are deliberately not exposed by this or any endpoint — that's moderation state, not a record of an award.
+
+---
+
+### `GET /specs` *(v1.42.0+)*
+
+**Ship specifications**, with their fields already flattened out of Nova's EAV tables into plain label/value pairs. Scope: `specs:read`.
+
+Flattened sim-side because the field definitions live in tables a consumer can't see. Nova pre-creates a row per field per item, so **empty values are omitted entirely** rather than returned as `""` — an unflattened dump is mostly blanks.
+
+**Query params:** `display` (`y`/`n`, omit for both), `page`, `per_page`.
+
+**Spec object:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | int | `specs.specs_id` |
+| `name` | string | Entity-decoded |
+| `summary` | string \| null | Raw as stored |
+| `order` | int \| null | |
+| `display` | bool | |
+| `images` | string[] | Absolute https URLs. Always an array |
+| `fields` | object[] | `[{name, label, value, order, section}]`. `name` is the stable key; `value` is never empty |
+| `decks` | object[] | `[{id, name, order, content}]` — see below |
+
+⚠️ **Decks are here, not on `/tour`.** Despite belonging to the "deck tour" feature, Nova hangs a deck off a **ship** (a spec item), not off a tour location — its own deck editor picks a ship from the specs list. So they're returned with the ship.
+
+---
+
+### `GET /tour` *(v1.42.0+)*
+
+The **deck tour's locations**, flattened the same way. Scope: `specs:read`.
+
+Two differences from `/specs`, both structural in Nova rather than choices made here:
+
+1. **Tour fields carry no `section`.** There's no tour sections table — tour fields are one flat ordered list — so the key is *absent*, not `null`.
+2. **No `decks`.** They're on `/specs`, per the note above. Each tour location instead names the ship it belongs to via `spec_item_id`.
+
+**Query params:** `display` (`y`/`n`, omit for both), `page`, `per_page`.
+
+**Tour object:** `id`, `name`, `summary`, `order`, `display`, `spec_item_id`, `images[]`, `fields[]`.
 
 ---
 
