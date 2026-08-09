@@ -43,6 +43,15 @@ class SimCentralAccess
 	 * write/save Nova posts from Astrolabe with native attribution, locking,
 	 * and moderation. Minting requires the granted token's bound admin to be
 	 * a sysadmin (enforced at request time, like every tokens:* call).
+	 *
+	 * news:read + awards:read + specs:read (v1.42.0): the rest of what a sim
+	 * publishes - announcements, its awards record, ship specs and deck tour.
+	 * All read-only and all public on the sim's own site.
+	 *
+	 * Deliberately ABSENT: logs:read.all and missions:read.all. Those reach a
+	 * writer's unpublished drafts and a GM's private writing notes - things the
+	 * sim shows nobody - so they must be minted deliberately by a sysadmin for
+	 * a specific job, never widened into an existing grant by an upgrade.
 	 */
 	public static function scopes()
 	{
@@ -51,6 +60,9 @@ class SimCentralAccess
 			'characters:read',
 			'missions:read',
 			'positions:read',
+			'news:read',
+			'awards:read',
+			'specs:read',
 			'astrolabe:read',
 			'webhooks:read',
 			'webhooks:write',

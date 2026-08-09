@@ -381,6 +381,12 @@ class Migrations
 					),
 					'characters'   => array('sc_characters_updated' => '(`sc_content_updated_at`)'),
 					'personallogs' => array('sc_logs_updated'       => '(`sc_content_updated_at`)'),
+					// v1.42.0: GET /characters?include=bio reads a whole page's
+					// bio values with one WHERE data_char IN (...). Nova ships
+					// characters_data with a PRIMARY KEY on data_id and nothing
+					// else, so without this that is a full table scan - and the
+					// table is (fields x characters) rows, the largest in a bio.
+					'characters_data' => array('sc_chardata_char' => '(`data_char`)'),
 				),
 				// Seeds sc_content_updated_at for rows that predate the feature.
 				// Deliberately does NOT compute hashes: that would mean reading
